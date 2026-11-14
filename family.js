@@ -1,0 +1,376 @@
+import {
+  RATES_KEY,
+  storageKeys,
+  formatHkDate,
+  formatHkTime,
+  formatHkWeekday,
+  monthKey,
+  normalizeRecords,
+  normalizeRates,
+  mergeRecords,
+  monthsWithRecords,
+  defaultMonth,
+  filterByMonth,
+  selectRate,
+  computeCost,
+  summarizeRecords,
+  toCsv,
+  isRecentDuplicate,
+  dropSyncedPending,
+  readStored,
+  writeStored,
+} from './logic.js';
+import {
+  fetchFamilyData,
+  postRecord,
+  deleteRecord,
+  syncTesla,
+} from './api.js';
+import { byId, showToast, setStatus, setBusy } from './ui.js';
+
+export function initFamily({ apiUrl, carId }) {
+  const storage = (() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  })();
+  const keys = storageKeys(carId);
+  const cached = readStored(storage, keys.cache);
+  const queued = readStored(storage, keys.pending);
+  const cachedRates = readStored(storage, RATES_KEY);
+  if (cached.corrupt) storage?.removeItem(keys.cache);
+  if (queued.corrupt) storage?.removeItem(keys.pending);
+  if (cachedRates.corrupt) storage?.removeItem(RATES_KEY);
+
+  const state = {
+    car: { id: carId, name: carId, active: true },
+    server: normalizeRecords(cached.value),
+    pending: normalizeRecords(queued.value),
+    rates: normalizeRates(cachedRates.value),
+    syncedOnce: false,
+    connecting: Boolean(apiUrl),
+    syncing: false,
+    deleting: new Set(),
+    offline: false,
+    selectedMonth: null,
+  };
+
+  const els = {
+    startBtn: byId('startBtn'),
+    syncBtn: byId('syncBtn'),
+    status: byId('familyStatus'),
+    carName: byId('familyCarName'),
+    kwh: byId('familyKwh'),
+    cost: byId('familyCost'),
+    count: byId('familyCount'),
+    split: byId('familySplit'),
+    rateNote: byId('familyRateNote'),
+    recentList: byId('recentList'),
+    empty: byId('familyEmpty'),
+    monthSelect: byId('monthSelect'),
+    exportBtn: byId('exportBtn'),
+    exportHint: byId('exportHint'),
+    toast: byId('familyToast'),
+  };
+
+  function persist() {
+    writeStored(storage, keys.cache, state.server);
+    writeStored(storage, keys.pending, state.pending);
+    writeStored(storage, RATES_KEY, state.rates);
+  }
+
+  function rateFor(record) {
+    return selectRate(monthKey(record.teslaStartAt || record.startAt), state.rates);
+  }
+
+  function recordMeta(record) {
+    if (record.kWh === null) return { text: '待配對 · —', pending: true };
+    const picked = rateFor(record);
+    const cost = picked.rate ? computeCost(record, picked.rate) : null;
+    return {
+      text: `${record.kWh.toFixed(2)} kWh${cost === null ? '' : ` · $${cost.toFixed(2)}`}`,
+      pending: false,
+    };
+  }
+
+  function makeRow(record) {
+    const li = document.createElement('li');
+    const main = document.createElement('span');
+    main.className = 'record-main';
+    const date = document.createElement('span');
+    date.className = 'record-date';
+    date.textContent = formatHkDate(record.startAt);
+    const weekday = document.createElement('span');
+    weekday.className = 'record-weekday';
+    weekday.textContent = formatHkWeekday(record.startAt);
+    date.append(weekday);
+    const info = recordMeta(record);
+    const meta = document.createElement('span');
+    meta.className = info.pending ? 'record-meta pending' : 'record-meta';
+    meta.textContent = info.text;
+    main.append(date, meta);
+
+    const right = document.createElement('span');
+    right.className = 'record-right';
+    const time = document.createElement('span');
+    time.className = 'record-time';
+    time.textContent = formatHkTime(record.startAt);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'delete-btn';
+    const deleting = state.deleting.has(record.id);
+    remove.classList.toggle('loading', deleting);
+    remove.disabled = deleting;
+    remove.textContent = deleting ? '' : '×';
+    remove.setAttribute(
+      'aria-label',
+      `刪除 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 紀錄`,
+    );
+    remove.addEventListener('click', () => onDelete(record));
+    right.append(time, remove);
+    li.append(main, right);
+    return li;
+  }
+
+  function render() {
+    els.carName.textContent = state.car.name || carId;
+    els.syncBtn.hidden = !apiUrl;
+    const status = !apiUrl
+      ? '未設定'
+      : state.connecting || state.syncing
+        ? '連線中'
+        : state.offline
+          ? '離線'
+          : state.pending.length > 0 || !state.syncedOnce
+            ? '未同步'
+            : '已連接';
+    setStatus(els.status, status);
+    setBusy(els.startBtn, state.syncing, '同步中…', '⚡ 開始充電');
+    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新 Tesla');
+
+    const records = mergeRecords(state.server, state.pending);
+    const current = monthKey(new Date().toISOString());
+    const summary = summarizeRecords(records, state.rates, current);
+    els.kwh.textContent = summary.matched > 0 ? summary.kWh.toFixed(1) : '0';
+    els.cost.textContent = summary.cost === null ? '—' : `$${summary.cost.toFixed(2)}`;
+    els.count.textContent = String(summary.count);
+    els.split.textContent = summary.matched > 0
+      ? `非高峰 ${summary.offPeakKWh.toFixed(1)} kWh · 高峰 ${summary.peakKWh.toFixed(1)} kWh（按時段比例估算）`
+      : '本月未有已配對嘅充電 session。';
+
+    const picked = selectRate(current, state.rates);
+    if (!picked.rate) {
+      els.rateNote.textContent = '未設定費率；電費暫不顯示。';
+    } else {
+      const baseline = Number(picked.rate.basicOffPeak) + Number(picked.rate.fuelAdjustment);
+      const peak = Number(picked.rate.basicPeak) + Number(picked.rate.fuelAdjustment);
+      const rebate = Number(picked.rate.rebate) || 0;
+      const label = picked.fallback
+        ? `按 CLP ${picked.rate.month} 費率估算（沿用）`
+        : `按 CLP ${picked.rate.month} 費率估算`;
+      els.rateNote.textContent = `${label}；非高峰 $${((baseline - rebate) / 100).toFixed(3)}/kWh；高峰 $${((peak - rebate) / 100).toFixed(3)}/kWh；實際電費以中電賬單為準。`;
+    }
+
+    const months = monthsWithRecords(records);
+    const selected = state.selectedMonth === 'all' || months.includes(state.selectedMonth)
+      ? state.selectedMonth
+      : defaultMonth(records, new Date());
+    const options = ['all', ...months];
+    els.monthSelect.replaceChildren();
+    for (const month of options) {
+      const option = document.createElement('option');
+      option.value = month;
+      option.textContent = month === 'all' ? '全部月份' : month;
+      els.monthSelect.append(option);
+    }
+    els.monthSelect.value = options.includes(selected) ? selected : 'all';
+    state.selectedMonth = els.monthSelect.value;
+    const selectedRecords = filterByMonth(records, els.monthSelect.value);
+    els.exportBtn.disabled = selectedRecords.length === 0;
+    els.exportHint.textContent = selectedRecords.length > 0
+      ? `${selectedRecords.length} 筆紀錄；Excel 可直接開啟。`
+      : '所選月份未有紀錄。';
+
+    els.recentList.replaceChildren();
+    for (const record of records.slice(0, 5)) els.recentList.append(makeRow(record));
+    els.empty.hidden = records.length > 0;
+    els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
+  }
+
+  async function retryPending() {
+    if (!apiUrl || state.pending.length === 0) return;
+    let changed = false;
+    for (const record of [...state.pending]) {
+      try {
+        await postRecord(apiUrl, record, carId);
+        state.pending = state.pending.filter((row) => row.id !== record.id);
+        state.server = [record, ...state.server];
+        changed = true;
+      } catch {
+        state.offline = true;
+        break;
+      }
+    }
+    if (changed) persist();
+  }
+
+  async function fetchData() {
+    const data = await fetchFamilyData(apiUrl, carId);
+    state.server = data.records;
+    state.car = data.car;
+    state.rates = data.rates;
+    state.pending = dropSyncedPending(state.pending, state.server);
+    state.offline = false;
+    state.syncedOnce = true;
+    await retryPending();
+    persist();
+    render();
+  }
+
+  async function runSync(auto) {
+    if (!apiUrl || state.syncing) return;
+    state.syncing = true;
+    render();
+    try {
+      const result = await syncTesla(apiUrl, { car: carId });
+      await fetchData();
+      if (!auto) {
+        const matched = Number(result.matched) || 0;
+        showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電 session。` : '冇新嘅充電 session。');
+      }
+    } catch (error) {
+      showToast(els.toast, error.message || 'Tesla 同步失敗。');
+    } finally {
+      state.syncing = false;
+      render();
+    }
+  }
+
+  async function load() {
+    render();
+    if (!apiUrl) return;
+    state.connecting = true;
+    render();
+    try {
+      await fetchData();
+      state.connecting = false;
+      render();
+      if (!state.offline) void runSync(true);
+    } catch (error) {
+      state.offline = true;
+      state.connecting = false;
+      render();
+      showToast(els.toast, error.message || '未能連接，已顯示本機紀錄。');
+    }
+  }
+
+  async function onStart() {
+    const startAt = new Date().toISOString();
+    const records = mergeRecords(state.server, state.pending);
+    if (isRecentDuplicate(records[0]?.startAt, Date.now())) {
+      showToast(els.toast, '已經記錄咗，請稍等 2 秒再試。');
+      return;
+    }
+    const record = {
+      id: crypto.randomUUID(),
+      car: carId,
+      startAt,
+      date: formatHkDate(startAt),
+      time: formatHkTime(startAt),
+      kWh: null,
+      durationSec: null,
+      teslaStartAt: null,
+      teslaEndAt: null,
+      peakKWh: null,
+      offPeakKWh: null,
+      teslaKey: null,
+      source: 'manual',
+    };
+    state.pending = [record, ...state.pending];
+    persist();
+    render();
+    showToast(els.toast, '已記錄開始時間。');
+    if (!apiUrl) return;
+    setBusy(els.startBtn, true, '同步中…', '⚡ 開始充電');
+    try {
+      await postRecord(apiUrl, record, carId);
+      state.pending = state.pending.filter((row) => row.id !== record.id);
+      state.server = [record, ...state.server];
+      persist();
+      render();
+    } catch (error) {
+      state.offline = true;
+      render();
+      showToast(els.toast, error.message || '暫時未能同步，會自動重試。');
+    }
+  }
+
+  async function onDelete(record) {
+    const message = record.teslaKey
+      ? '刪除呢筆紀錄？Tesla session 亦會被忽略，之後唔會再自動匯入。'
+      : '刪除呢筆紀錄？';
+    if (!window.confirm(message)) return;
+    state.deleting.add(record.id);
+    render();
+    try {
+      if (apiUrl) await deleteRecord(apiUrl, record.id, { car: carId });
+      state.pending = state.pending.filter((row) => row.id !== record.id);
+      state.server = state.server.filter((row) => row.id !== record.id);
+      persist();
+      render();
+      showToast(els.toast, '已刪除。');
+    } catch (error) {
+      showToast(els.toast, error.message || '刪除失敗，請重試。');
+    } finally {
+      state.deleting.delete(record.id);
+      render();
+    }
+  }
+
+  function downloadCsv(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.rel = 'noopener';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function onExport() {
+    const records = mergeRecords(state.server, state.pending);
+    const month = els.monthSelect.value || 'all';
+    const selected = filterByMonth(records, month);
+    if (selected.length === 0) return;
+    downloadCsv(
+      toCsv(selected, {
+        carNames: { [carId]: state.car.name || carId },
+        rates: state.rates,
+      }),
+      `ev-charge-${carId}-${month}.csv`,
+    );
+    showToast(els.toast, 'CSV 已下載。');
+  }
+
+  els.startBtn.addEventListener('click', onStart);
+  els.syncBtn.addEventListener('click', () => { void runSync(false); });
+  els.exportBtn.addEventListener('click', onExport);
+  els.monthSelect.addEventListener('change', () => {
+    state.selectedMonth = els.monthSelect.value;
+    render();
+  });
+  window.addEventListener('online', () => {
+    if (!apiUrl) return;
+    state.offline = false;
+    void load();
+  });
+
+  if (cached.corrupt || queued.corrupt) showToast(els.toast, '本機紀錄格式有誤，已忽略。');
+  if (cachedRates.corrupt) showToast(els.toast, '費率快取格式有誤，已忽略。');
+  void load();
+}
