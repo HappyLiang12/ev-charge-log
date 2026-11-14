@@ -1,0 +1,384 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { createAppsScriptEnv } from './fake-apps-script.mjs';
+
+const codeSource = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const response = (status, body) => ({ getResponseCode: () => status, getContentText: () => body });
+const TOKEN_URL = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token';
+const FUEL_URL = 'https://www.clp.com.hk/zh/help-support/bills-payment-tariffs/fuel-cost-adjustment';
+const TARIFF_URL = 'https://www.clp.com.hk/zh/emobility/bills-payment-tariffs-emobility/tariff-for-ev/ev-residential-tariff';
+const SESSION_START = '2026-11-14T05:05:00.000Z';
+
+const LOG_HEADER = [
+  'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
+  'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+];
+const CARS_HEADER = ['id', 'name', 'active', 'createdAt'];
+const RATES_HEADER = [
+  'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+  'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+];
+const RATE_ROW = ['2026-11', 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-14T00:00:00.000Z', 'FALSE'];
+const row = (overrides = {}) => [
+  'rec-1', '2026-11-14T05:00:00.000Z', '2026-11-14', '13:00', 'model3',
+  20, 7200, '2026-11-14T05:00:00.000Z', '2026-11-14T07:00:00.000Z',
+  10, 10, 'din:rec-1', 'tesla+manual',
+].map((value, index) => (overrides[index] !== undefined ? overrides[index] : value));
+
+function setup({ sheets = {}, props = {}, fetch } = {}) {
+  const env = createAppsScriptEnv({
+    sheets,
+    props: {
+      OWNER_KEY: 'owner-secret',
+      MATCH_WINDOW_MINUTES: '30',
+      TESLA_SITE_ID: 'site-1',
+      TESLA_CLIENT_ID: 'id',
+      TESLA_CLIENT_SECRET: 'secret',
+      TESLA_REFRESH_TOKEN: 'refresh',
+      ...props,
+    },
+    fetch,
+  });
+  env.context.ContentService.MimeType = { JSON: 'application/json' };
+  env.run = (source) => vm.runInContext(source, env.context);
+  env.run(codeSource);
+  return env;
+}
+
+const send = (env, body) => JSON.parse(env.call('doPost', {
+  postData: { contents: JSON.stringify(body) },
+}).getContent());
+const receive = (env, parameter) => JSON.parse(env.call('doGet', { parameter }).getContent());
+
+test('doGet returns only the requested car records and the owner returns all records', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row(),
+        row({ 0: 'leaf-1', 4: 'leaf', 11: 'din:leaf-1' }),
+        ['old-1', '2026-11-01T00:00:00.000Z', '2026-11-01', '08:00', '', '', '', '', '', '', '', '', 'legacy'],
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const family = receive(env, { car: 'model3' });
+  assert.equal(family.ok, true);
+  assert.equal(family.car.name, 'Model 3');
+  assert.equal(family.records.length, 1);
+  assert.equal(family.records[0].id, 'rec-1');
+  assert.equal(family.rates.length, 1);
+  assert.ok(family.serverTime);
+
+  const owner = receive(env, { owner: 'owner-secret' });
+  assert.equal(owner.ok, true);
+  assert.equal(owner.cars.length, 2);
+  assert.equal(owner.records.length, 3);
+  assert.equal(receive(env, { car: 'missing' }).ok, false);
+  assert.match(receive(env, { car: 'missing' }).error, /Unknown car: missing/);
+  assert.match(receive(env, { car: 'BAD CAR' }).error, /Invalid car id/);
+  const badOwner = receive(env, { owner: 'wrong' });
+  assert.equal(badOwner.ok, false);
+  assert.doesNotMatch(badOwner.error, /owner-secret/);
+});
+
+test('doGet and doPost both serialize on the script lock', () => {
+  const events = [];
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  env.context.LockService = {
+    getScriptLock: () => ({
+      waitLock: () => events.push('wait'),
+      releaseLock: () => events.push('release'),
+    }),
+  };
+  receive(env, { car: 'model3' });
+  send(env, { id: 'lock-1', car: 'model3', startAt: '2026-11-14T05:00:00.000Z', date: '2026-11-14', time: '13:00' });
+  assert.deepEqual(events, ['wait', 'release', 'wait', 'release']);
+});
+
+test('family append cannot reuse an id that belongs to another car', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'leaf-1', 4: 'leaf', 11: 'din:leaf-1' })],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+    },
+  });
+  const result = send(env, {
+    id: 'leaf-1',
+    car: 'model3',
+    startAt: '2026-11-14T05:00:00.000Z',
+    date: '2026-11-14',
+    time: '13:00',
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /does not belong to this car/);
+  assert.equal(plain(env.call('readLog_')).length, 1);
+});
+
+test('append is idempotent and rejects a Hong Kong date/time mismatch', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const body = {
+    id: 'new-1',
+    car: 'model3',
+    startAt: '2026-11-14T05:00:00.000Z',
+    date: '2026-11-14',
+    time: '13:00',
+  };
+  const first = send(env, body);
+  assert.equal(first.ok, true);
+  assert.equal(first.record.id, 'new-1');
+  const second = send(env, body);
+  assert.equal(second.ok, true);
+  assert.equal(plain(env.call('readLog_')).filter((record) => record.id === 'new-1').length, 1);
+  const mismatch = send(env, { ...body, id: 'new-2', time: '00:00' });
+  assert.equal(mismatch.ok, false);
+  assert.match(mismatch.error, /Date\/time mismatch/);
+});
+
+test('family delete is scoped to its car and records the Tesla key as ignored', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row(),
+        row({ 0: 'leaf-1', 4: 'leaf', 11: 'din:leaf-1' }),
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+    },
+  });
+  const wrong = send(env, { action: 'delete', id: 'leaf-1', car: 'model3' });
+  assert.equal(wrong.ok, false);
+  const result = send(env, { action: 'delete', id: 'rec-1', car: 'model3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.deleted, true);
+  assert.deepEqual(plain(env.call('readIgnored_')), ['din:rec-1']);
+  assert.equal(plain(env.call('readLog_')).some((record) => record.id === 'rec-1'), false);
+});
+
+test('owner assign merges a nearby pending manual row', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'unassigned-1', 4: 'unassigned', 11: 'din:a',
+          7: '2026-11-14T05:05:00.000Z', 8: '2026-11-14T07:05:00.000Z',
+        }),
+        row({
+          0: 'manual-1', 4: 'leaf', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+    },
+  });
+  const result = send(env, {
+    action: 'assign',
+    ownerKey: 'owner-secret',
+    id: 'unassigned-1',
+    car: 'leaf',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.merged, true);
+  const records = plain(env.call('readLog_'));
+  const target = records.find((record) => record.id === 'unassigned-1');
+  assert.equal(target.car, 'leaf');
+  assert.equal(target.source, 'tesla+manual');
+  assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(records.some((record) => record.id === 'manual-1'), false);
+});
+
+test('owner ignore requires a Tesla key and removes the record', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const result = send(env, { action: 'ignore', ownerKey: 'owner-secret', id: 'unassigned-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.ignored, true);
+  assert.deepEqual(plain(env.call('readIgnored_')), ['din:a']);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('sync matches a manual row, updates the cursor, and exposes the full result shape', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'manual-1', 4: 'model3', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600, refresh_token: 'refresh-2' }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 7200 },
+              energy_added_wh: 20000,
+              target_id: 'target-1',
+              din: 'din:sync',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'sync', ownerKey: 'owner-secret' });
+  assert.equal(result.ok, true);
+  assert.equal(result.matched, 1);
+  assert.equal(result.unassigned, 0);
+  assert.equal(result.fetched, 1);
+  assert.equal(result.skipped, false);
+  assert.equal(result.reconciled, 0);
+  assert.equal(result.skippedExisting, 0);
+  assert.equal(result.skippedIgnored, 0);
+  assert.equal(result.pendingManual, 0);
+  const target = plain(env.call('readLog_')).find((record) => record.id === 'manual-1');
+  assert.equal(target.kWh, 20);
+  assert.equal(target.source, 'tesla+manual');
+  assert.equal(target.teslaKey, `din:sync:${Math.floor(Date.parse(SESSION_START) / 1000)}`);
+  assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(target.teslaStartAt, SESSION_START);
+  assert.ok(env.props.SYNC_CURSOR);
+});
+
+test('sync reconciles an existing unassigned session into the matching manual row', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'unassigned-old', 4: 'unassigned', 11: 'din:old', 12: 'tesla',
+          7: '2026-11-14T05:05:00.000Z', 8: '2026-11-14T07:05:00.000Z',
+        }),
+        row({
+          0: 'manual-new', 4: 'leaf', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['leaf', 'Leaf', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({ response: { telemetry_history: [] } }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'sync', ownerKey: 'owner-secret' });
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciled, 1);
+  assert.equal(result.matched, 0);
+  assert.equal(result.unassigned, 0);
+  assert.equal(result.fetched, 0);
+  assert.equal(result.skipped, false);
+  assert.equal(result.skippedExisting, 0);
+  assert.equal(result.skippedIgnored, 0);
+  assert.equal(result.pendingManual, 0);
+  const records = plain(env.call('readLog_'));
+  const target = records.find((record) => record.id === 'manual-new');
+  assert.equal(target.car, 'leaf');
+  assert.equal(target.source, 'tesla+manual');
+  assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(target.teslaKey, 'din:old');
+  assert.equal(target.kWh, 20);
+  assert.equal(records.some((record) => record.id === 'unassigned-old'), false);
+});
+
+test('owner refreshRates updates the Rates tab and is owner-only', () => {
+  const fuelPage = `
+2026年每月燃料調整費
+2026年
+1月
+2月
+3月
+4月
+5月
+6月
+7月
+8月
+9月
+10月
+11月
+燃料調整費
+(每度電港仙)
+39.4
+39.4
+39.2
+39.8
+40.4
+42.6
+43.5
+45.0*
+45.1*
+46.2*
+47.4
+2026年11月1日起，燃料調整費為每度電47.4港仙。
+`;
+  const tariffPage = `
+非高峰用電時間
+（每日晚上十一時至翌日下午四時）
+94.5
+高峰用電時間
+（每日下午四時至晚上十一時）
+137.5
+`;
+  const env = setup({
+    sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] },
+    fetch: (url) => {
+      if (url === FUEL_URL) return response(200, fuelPage);
+      if (url === TARIFF_URL) return response(200, tariffPage);
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  assert.equal(send(env, { action: 'refreshRates', ownerKey: 'wrong' }).ok, false);
+  const result = send(env, { action: 'refreshRates', ownerKey: 'owner-secret' });
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, 11);
+  assert.equal(plain(env.call('readRates_')).length, 11);
+});
