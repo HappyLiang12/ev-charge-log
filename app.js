@@ -223,10 +223,16 @@ function init() {
     render();
   });
 
+  window.addEventListener('online', () => {
+    state.offline = false;
+    void sync();
+  });
+
   render();
   if (cacheRead.corrupt || pendingRead.corrupt) {
     showToast('本機資料損壞，已重新載入');
   }
+  void sync();
 
   function merged() {
     return mergeRecords(state.server, state.pending);
@@ -238,6 +244,44 @@ function init() {
 
   function persistPending() {
     writeStored(storage, STORAGE_KEYS.pending, state.pending);
+  }
+
+  async function sync() {
+    if (!apiUrl) return;
+    try {
+      const records = await fetchRecords(apiUrl);
+      state.server = records;
+      state.pending = dropSyncedPending(state.pending, records);
+      state.offline = false;
+      state.syncedOnce = true;
+      persistCache();
+      persistPending();
+      render();
+      await retryPending();
+    } catch {
+      state.offline = true;
+      render();
+    }
+  }
+
+  async function retryPending() {
+    let changed = false;
+    for (const record of [...state.pending]) {
+      try {
+        await postRecord(apiUrl, record);
+        state.pending = state.pending.filter((item) => item.id !== record.id);
+        state.server = [record, ...state.server];
+        changed = true;
+      } catch {
+        state.offline = true;
+        break;
+      }
+    }
+    if (changed) {
+      persistCache();
+      persistPending();
+      render();
+    }
   }
 
   function render() {
@@ -313,6 +357,21 @@ function init() {
     persistPending();
     render();
     showToast(`已記錄 ${formatLocalTime(record.startAt)}`);
+    if (!apiUrl) return;
+    try {
+      await postRecord(apiUrl, record);
+      state.pending = state.pending.filter((item) => item.id !== record.id);
+      state.server = [record, ...state.server];
+      state.offline = false;
+      state.syncedOnce = true;
+      persistCache();
+      persistPending();
+      render();
+    } catch {
+      state.offline = true;
+      render();
+      showToast('未能同步，會自動重試；請檢查網絡或 API 設定');
+    }
   }
 
   function onExport() {
