@@ -2501,7 +2501,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     els.unassignedEmpty.hidden = unassigned.length > 0;
     els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '冇未分配 session。';
 
-    const pending = filtered.filter((record) => record.car !== 'unassigned' && record.kWh === null);
+    const pending = filtered.filter((record) => record.car && record.car !== 'unassigned' && record.kWh === null);
     els.pending.replaceChildren();
     for (const record of pending) els.pending.append(makePendingRow(record));
     els.pendingEmpty.hidden = pending.length > 0;
