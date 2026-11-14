@@ -1,0 +1,265 @@
+var LOG_COLUMNS = [
+  'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
+  'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+];
+var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt'];
+var RATES_COLUMNS = [
+  'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+  'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+];
+var IGNORED_COLUMNS = ['teslaKey', 'ignoredAt', 'reason'];
+
+function openSpreadsheet_() {
+  return SpreadsheetApp.openById(SHEET_ID);
+}
+
+function ensureHeader_(sheet, columns) {
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, columns.length).setValues([columns]);
+    sheet.setFrozenRows(1);
+    return;
+  }
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (value) { return String(value || '').trim(); });
+  var missing = columns.filter(function (column) { return header.indexOf(column) === -1; });
+  if (!missing.length) return;
+  sheet.getRange(1, sheet.getLastColumn() + 1, 1, missing.length).setValues([missing]);
+}
+
+function sheetNamed_(spreadsheet, name, columns) {
+  var sheet = spreadsheet.getSheetByName(name);
+  if (!sheet) sheet = spreadsheet.insertSheet(name);
+  ensureHeader_(sheet, columns);
+  return sheet;
+}
+
+function readObjects_(sheet, columns) {
+  ensureHeader_(sheet, columns);
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var objects = [];
+  for (var i = 1; i < values.length; i += 1) {
+    var row = values[i];
+    var empty = true;
+    for (var j = 0; j < row.length; j += 1) {
+      if (String(row[j] === undefined || row[j] === null ? '' : row[j]).trim() !== '') {
+        empty = false;
+        break;
+      }
+    }
+    if (empty) continue;
+    var object = {};
+    for (var k = 0; k < header.length; k += 1) object[header[k]] = row[k];
+    objects.push(object);
+  }
+  return objects;
+}
+
+function logValue_(record, column) {
+  if (column === '日期') return record.date;
+  if (column === '時間') return record.time;
+  return record[column];
+}
+
+function normalizeLogRow_(row) {
+  var car = row.car ? String(row.car).trim() : '';
+  var source = row.source ? String(row.source).trim() : (car ? 'manual' : 'legacy');
+  var startAt = String(row.startAt || '').trim();
+  return {
+    id: String(row.id || '').trim(),
+    car: car,
+    startAt: startAt,
+    date: String(row['日期'] || '').trim() || (validIso_(startAt) ? hkDateString_(startAt) : ''),
+    time: String(row['時間'] || '').trim() || (validIso_(startAt) ? hkTimeString_(startAt) : ''),
+    kWh: numberOrNull_(row.kWh),
+    durationSec: numberOrNull_(row.durationSec),
+    teslaStartAt: validIso_(row.teslaStartAt) ? String(row.teslaStartAt) : null,
+    teslaEndAt: validIso_(row.teslaEndAt) ? String(row.teslaEndAt) : null,
+    peakKWh: numberOrNull_(row.peakKWh),
+    offPeakKWh: numberOrNull_(row.offPeakKWh),
+    teslaKey: row.teslaKey ? String(row.teslaKey) : null,
+    source: source,
+  };
+}
+
+function readLog_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
+  var rows = readObjects_(sheet, LOG_COLUMNS);
+  var records = [];
+  for (var i = 0; i < rows.length; i += 1) {
+    var record = normalizeLogRow_(rows[i]);
+    if (!record.id || !validIso_(record.startAt)) continue;
+    records.push(record);
+  }
+  return records;
+}
+
+function appendLog_(record) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
+  var row = LOG_COLUMNS.map(function (column) {
+    var value = logValue_(record, column);
+    return value === undefined || value === null ? '' : value;
+  });
+  sheet.appendRow(row);
+}
+
+function updateLog_(id, patch) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return null;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var idCol = header.indexOf('id');
+  if (idCol === -1) return null;
+  for (var i = 1; i < values.length; i += 1) {
+    if (String(values[i][idCol] || '') !== String(id)) continue;
+    var current = {};
+    for (var j = 0; j < header.length; j += 1) current[header[j]] = values[i][j];
+    if (!current.date && current['日期']) current.date = current['日期'];
+    if (!current.time && current['時間']) current.time = current['時間'];
+    for (var key in patch) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) current[key] = patch[key];
+    }
+    if (!current.date && validIso_(current.startAt)) current.date = hkDateString_(current.startAt);
+    if (!current.time && validIso_(current.startAt)) current.time = hkTimeString_(current.startAt);
+    var row = LOG_COLUMNS.map(function (column) {
+      var value = logValue_(current, column);
+      return value === undefined || value === null ? '' : value;
+    });
+    sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+    return normalizeLogRow_(current);
+  }
+  return null;
+}
+
+function deleteLog_(id) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return false;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var idCol = header.indexOf('id');
+  if (idCol === -1) return false;
+  for (var i = 1; i < values.length; i += 1) {
+    if (String(values[i][idCol] || '') === String(id)) {
+      sheet.deleteRow(i + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeCarRow_(row) {
+  var id = String(row.id || '').trim();
+  var name = String(row.name || '').trim();
+  if (!validCarId_(id) || !name || id === 'unassigned') return null;
+  return {
+    id: id,
+    name: name,
+    active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
+  };
+}
+
+function readCars_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Cars', CARS_COLUMNS);
+  var rows = readObjects_(sheet, CARS_COLUMNS);
+  var cars = [];
+  for (var i = 0; i < rows.length; i += 1) {
+    var car = normalizeCarRow_(rows[i]);
+    if (car) cars.push(car);
+  }
+  return cars;
+}
+
+function normalizeRateRow_(row) {
+  var month = String(row.month || '').trim();
+  if (!validMonth_(month)) return null;
+  var basicOffPeak = numberOrNull_(row.basicOffPeak);
+  var basicPeak = numberOrNull_(row.basicPeak);
+  var fuelAdjustment = numberOrNull_(row.fuelAdjustment);
+  if (basicOffPeak === null || basicPeak === null || fuelAdjustment === null) return null;
+  var peakStart = String(row.peakStart || DEFAULT_PEAK_START_).trim();
+  var peakEnd = String(row.peakEnd || DEFAULT_PEAK_END_).trim();
+  if (parseHm_(peakStart) === null) peakStart = DEFAULT_PEAK_START_;
+  if (parseHm_(peakEnd) === null) peakEnd = DEFAULT_PEAK_END_;
+  return {
+    month: month,
+    basicOffPeak: basicOffPeak,
+    basicPeak: basicPeak,
+    fuelAdjustment: fuelAdjustment,
+    rebate: numberOrNull_(row.rebate) || 0,
+    peakStart: peakStart,
+    peakEnd: peakEnd,
+    sourceUrl: String(row.sourceUrl || ''),
+    fetchedAt: String(row.fetchedAt || ''),
+    manualOverride: String(row.manualOverride || '').toUpperCase() === 'TRUE',
+  };
+}
+
+function readRates_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Rates', RATES_COLUMNS);
+  var rows = readObjects_(sheet, RATES_COLUMNS);
+  var rates = [];
+  for (var i = 0; i < rows.length; i += 1) {
+    var rate = normalizeRateRow_(rows[i]);
+    if (rate) rates.push(rate);
+  }
+  return rates;
+}
+
+function upsertRates_(rates) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Rates', RATES_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var monthCol = header.indexOf('month');
+  var manualCol = header.indexOf('manualOverride');
+  var updated = 0;
+  for (var r = 0; r < rates.length; r += 1) {
+    var rate = rates[r];
+    if (!rate || !validMonth_(rate.month)) continue;
+    var found = -1;
+    var manual = false;
+    for (var i = 1; i < values.length; i += 1) {
+      if (String(values[i][monthCol] || '') === rate.month) {
+        found = i;
+        manual = String(values[i][manualCol] || '').toUpperCase() === 'TRUE';
+        break;
+      }
+    }
+    if (manual) continue;
+    var row = RATES_COLUMNS.map(function (column) {
+      var value = column === 'manualOverride'
+        ? (rate.manualOverride ? 'TRUE' : 'FALSE')
+        : rate[column];
+      return value === undefined || value === null ? '' : value;
+    });
+    if (found >= 0) {
+      sheet.getRange(found + 1, 1, 1, row.length).setValues([row]);
+    } else {
+      sheet.appendRow(row);
+      values = sheet.getDataRange().getValues();
+    }
+    updated += 1;
+  }
+  return updated;
+}
+
+function readIgnored_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
+  var rows = readObjects_(sheet, IGNORED_COLUMNS);
+  var keys = [];
+  for (var i = 0; i < rows.length; i += 1) {
+    var key = String(rows[i].teslaKey || '').trim();
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+function addIgnored_(teslaKey, reason) {
+  if (!teslaKey) return;
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
+  var rows = readObjects_(sheet, IGNORED_COLUMNS);
+  for (var i = 0; i < rows.length; i += 1) {
+    if (String(rows[i].teslaKey || '').trim() === teslaKey) return;
+  }
+  sheet.appendRow([teslaKey, new Date().toISOString(), reason || '']);
+}
