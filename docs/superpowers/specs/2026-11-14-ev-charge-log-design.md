@@ -55,7 +55,7 @@ type Record = { id: string; startAt: string } // startAt = ISO 8601 UTC (toISOSt
 ### Google Sheet layout
 
 - One sheet named `Log`; header row created by the script if missing.
-- Columns: `id`, `startAt` (ISO UTC), `日期` (`YYYY-MM-DD` local), `時間` (`HH:mm` local), `receivedAt` (ISO UTC).
+- Columns: `id`, `startAt` (ISO UTC), `日期` (`YYYY-MM-DD` local), `時間` (`HH:mm` local).
 - `日期` and `時間` are computed by the client from the device-local time and stored as text so the user can read and calculate in the Sheet directly.
 - Deleting or editing rows in the Sheet is the supported correction path; the app picks changes up on the next load.
 
@@ -71,7 +71,7 @@ type Record = { id: string; startAt: string } // startAt = ISO 8601 UTC (toISOSt
 
 ## 3. UI
 
-Single screen, mobile-first, dark theme with one electric-green accent, zh-HK copy, 24-hour time.
+Single screen, mobile-first, dark theme with one electric-green accent, zh-HK copy, 24-hour time. Layout is a single column with no horizontal scroll; the primary button is full-width and thumb-reachable; `env(safe-area-inset-*)` padding for notched devices; designed and verified at 390x844.
 
 Elements:
 
