@@ -16,6 +16,10 @@ import {
   toCsv,
   isRecentDuplicate,
   dropSyncedPending,
+  readStored,
+  writeStored,
+  fetchRecords,
+  postRecord,
 } from '../app.js';
 
 const atLocal = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min).toISOString();
@@ -107,4 +111,89 @@ test('dropSyncedPending removes ids already present on the server', () => {
   const a = rec('a', atLocal(2026, 11, 1, 1, 0));
   const b = rec('b', atLocal(2026, 11, 2, 1, 0));
   assert.deepEqual(dropSyncedPending([a, b], [a]).map((r) => r.id), ['b']);
+});
+
+function fakeStorage(initial = {}) {
+  const map = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => map.set(key, String(value)),
+    removeItem: (key) => map.delete(key),
+  };
+}
+
+const fakeResponse = (body, { ok = true, status = 200 } = {}) => ({
+  ok,
+  status,
+  json: async () => body,
+});
+
+test('readStored handles missing, corrupt, and valid data', () => {
+  const storage = fakeStorage();
+  assert.deepEqual(readStored(storage, 'missing'), { value: null, corrupt: false });
+  storage.setItem('bad', '{oops');
+  assert.deepEqual(readStored(storage, 'bad'), { value: null, corrupt: true });
+  storage.setItem('good', '[1,2]');
+  assert.deepEqual(readStored(storage, 'good'), { value: [1, 2], corrupt: false });
+  assert.deepEqual(readStored(null, 'good'), { value: null, corrupt: false });
+});
+
+test('writeStored returns false when storage throws', () => {
+  assert.equal(writeStored({ setItem() { throw new Error('quota'); } }, 'k', 1), false);
+  assert.equal(writeStored(null, 'k', 1), false);
+});
+
+test('fetchRecords sends GET and returns validated records', async () => {
+  const iso = atLocal(2026, 11, 14, 9, 0);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return fakeResponse({ ok: true, records: [{ id: 'a', startAt: iso }] });
+  };
+  const records = await fetchRecords('https://example.test/api', fetchImpl);
+  assert.deepEqual(records, [{ id: 'a', startAt: iso }]);
+  assert.equal(calls[0].url, 'https://example.test/api');
+  assert.equal(calls[0].init.method, 'GET');
+});
+
+test('fetchRecords throws on HTTP and envelope failures', async () => {
+  await assert.rejects(
+    fetchRecords('u', async () => fakeResponse(null, { ok: false, status: 500 })),
+    /HTTP 500/,
+  );
+  await assert.rejects(
+    fetchRecords('u', async () => fakeResponse({ ok: false })),
+    /Invalid API response/,
+  );
+});
+
+test('postRecord sends a text/plain body with local date and time', async () => {
+  const iso = atLocal(2026, 11, 14, 9, 5);
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init };
+    return fakeResponse({ ok: true });
+  };
+  await postRecord('https://example.test/api', { id: 'a', startAt: iso }, fetchImpl);
+  assert.equal(captured.url, 'https://example.test/api');
+  assert.equal(captured.init.method, 'POST');
+  assert.equal(captured.init.headers['Content-Type'], 'text/plain;charset=utf-8');
+  assert.deepEqual(JSON.parse(captured.init.body), {
+    id: 'a',
+    startAt: iso,
+    date: '2026-11-14',
+    time: '09:05',
+  });
+});
+
+test('postRecord rejects HTTP and API-level errors', async () => {
+  const record = { id: 'a', startAt: atLocal(2026, 11, 14, 9, 5) };
+  await assert.rejects(
+    postRecord('u', record, async () => fakeResponse(null, { ok: false, status: 502 })),
+    /HTTP 502/,
+  );
+  await assert.rejects(
+    postRecord('u', record, async () => fakeResponse({ ok: false, error: 'nope' })),
+    /nope/,
+  );
 });

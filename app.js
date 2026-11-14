@@ -106,3 +106,66 @@ export function dropSyncedPending(pending, serverRecords) {
   const synced = new Set(normalizeRecords(serverRecords).map((record) => record.id));
   return normalizeRecords(pending).filter((record) => !synced.has(record.id));
 }
+
+export function readStored(storage, key) {
+  if (!storage) return { value: null, corrupt: false };
+  let raw = null;
+  try {
+    raw = storage.getItem(key);
+  } catch {
+    return { value: null, corrupt: false };
+  }
+  if (raw === null || raw === '') return { value: null, corrupt: false };
+  try {
+    return { value: JSON.parse(raw), corrupt: false };
+  } catch {
+    return { value: null, corrupt: true };
+  }
+}
+
+export function writeStored(storage, key, value) {
+  if (!storage) return false;
+  try {
+    storage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchRecords(apiUrl, fetchImpl = fetch) {
+  const response = await fetchImpl(apiUrl, { method: 'GET', redirect: 'follow' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error('Invalid JSON');
+  }
+  return parseServerRecords(payload);
+}
+
+export async function postRecord(apiUrl, record, fetchImpl = fetch) {
+  const body = JSON.stringify({
+    id: record.id,
+    startAt: record.startAt,
+    date: formatLocalDate(record.startAt),
+    time: formatLocalTime(record.startAt),
+  });
+  const response = await fetchImpl(apiUrl, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body,
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error('Invalid JSON');
+  }
+  if (!payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'API error');
+  }
+}
