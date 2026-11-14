@@ -169,3 +169,174 @@ export async function postRecord(apiUrl, record, fetchImpl = fetch) {
     throw new Error((payload && payload.error) || 'API error');
   }
 }
+
+if (typeof document !== 'undefined') {
+  init();
+}
+
+function init() {
+  const cfg = window.APP_CONFIG || {};
+  const apiUrl = typeof cfg.API_URL === 'string' ? cfg.API_URL.trim() : '';
+  const sheetUrl = typeof cfg.SHEET_URL === 'string' ? cfg.SHEET_URL.trim() : '';
+  let storage = null;
+  try {
+    storage = window.localStorage;
+  } catch {
+    storage = null;
+  }
+
+  const els = {
+    startBtn: document.getElementById('startBtn'),
+    exportBtn: document.getElementById('exportBtn'),
+    monthSelect: document.getElementById('monthSelect'),
+    statusChip: document.getElementById('statusChip'),
+    toast: document.getElementById('toast'),
+    summaryMonth: document.getElementById('summaryMonth'),
+    summaryTotal: document.getElementById('summaryTotal'),
+    summaryLast: document.getElementById('summaryLast'),
+    recentList: document.getElementById('recentList'),
+    emptyState: document.getElementById('emptyState'),
+    emptyHint: document.getElementById('emptyHint'),
+    sheetLink: document.getElementById('sheetLink'),
+  };
+
+  const state = { server: [], pending: [], offline: false, syncedOnce: false };
+  let toastTimer = 0;
+  let monthTouched = false;
+
+  const cacheRead = readStored(storage, STORAGE_KEYS.cache);
+  const pendingRead = readStored(storage, STORAGE_KEYS.pending);
+  if (cacheRead.corrupt) storage?.removeItem(STORAGE_KEYS.cache);
+  if (pendingRead.corrupt) storage?.removeItem(STORAGE_KEYS.pending);
+  state.server = normalizeRecords(cacheRead.value);
+  state.pending = normalizeRecords(pendingRead.value);
+
+  if (sheetUrl) {
+    els.sheetLink.href = sheetUrl;
+    els.sheetLink.hidden = false;
+  }
+
+  els.startBtn.addEventListener('click', onStart);
+  els.exportBtn.addEventListener('click', onExport);
+  els.monthSelect.addEventListener('change', () => {
+    monthTouched = true;
+    render();
+  });
+
+  render();
+  if (cacheRead.corrupt || pendingRead.corrupt) {
+    showToast('本機資料損壞，已重新載入');
+  }
+
+  function merged() {
+    return mergeRecords(state.server, state.pending);
+  }
+
+  function persistCache() {
+    writeStored(storage, STORAGE_KEYS.cache, state.server);
+  }
+
+  function persistPending() {
+    writeStored(storage, STORAGE_KEYS.pending, state.pending);
+  }
+
+  function render() {
+    const records = merged();
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    const monthCount = records.filter((record) => monthKey(record.startAt) === currentMonth).length;
+
+    els.summaryMonth.textContent = String(monthCount);
+    els.summaryTotal.textContent = String(records.length);
+    els.summaryLast.textContent = records.length
+      ? `${formatLocalDate(records[0].startAt)} ${formatLocalTime(records[0].startAt)}`
+      : '—';
+
+    let status = '已連接';
+    if (!apiUrl) status = '未設定';
+    else if (state.pending.length) status = '未同步';
+    else if (state.offline) status = '離線';
+    else if (!state.syncedOnce) status = '未同步';
+    els.statusChip.textContent = status;
+    els.statusChip.dataset.state = status === '已連接' ? 'ok' : status === '未設定' ? 'idle' : 'warn';
+
+    els.recentList.replaceChildren(
+      ...records.slice(0, 5).map((record) => {
+        const li = document.createElement('li');
+        const left = document.createElement('span');
+        const date = document.createElement('span');
+        date.className = 'record-date';
+        date.textContent = formatLocalDate(record.startAt);
+        const weekday = document.createElement('span');
+        weekday.className = 'record-weekday';
+        weekday.textContent = formatWeekday(record.startAt);
+        left.append(date, weekday);
+        const time = document.createElement('span');
+        time.className = 'record-time';
+        time.textContent = formatLocalTime(record.startAt);
+        li.append(left, time);
+        return li;
+      }),
+    );
+
+    els.emptyState.hidden = records.length > 0;
+    els.emptyHint.hidden = Boolean(apiUrl);
+    els.emptyHint.textContent = apiUrl ? '' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
+
+    const months = monthsWithRecords(records);
+    const previous = els.monthSelect.value;
+    const options = months.map((month) => ({
+      value: month,
+      label: `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`,
+    }));
+    options.push({ value: 'all', label: '全部月份' });
+    els.monthSelect.replaceChildren(...options.map((option) => new Option(option.label, option.value)));
+    const preferred = monthTouched && previous && options.some((option) => option.value === previous)
+      ? previous
+      : defaultMonth(records, now);
+    els.monthSelect.value = preferred;
+
+    const exportable = filterByMonth(records, preferred);
+    els.exportBtn.disabled = exportable.length === 0;
+    els.exportBtn.textContent = exportable.length ? `匯出 CSV (${exportable.length})` : '匯出 CSV';
+  }
+
+  async function onStart() {
+    const records = merged();
+    const nowMs = Date.now();
+    if (records.length && isRecentDuplicate(records[0].startAt, nowMs)) {
+      showToast('啱啱已經記錄咗');
+      return;
+    }
+    const record = { id: crypto.randomUUID(), startAt: new Date(nowMs).toISOString() };
+    state.pending = [record, ...state.pending];
+    persistPending();
+    render();
+    showToast(`已記錄 ${formatLocalTime(record.startAt)}`);
+  }
+
+  function onExport() {
+    const records = merged();
+    const month = els.monthSelect.value;
+    const filtered = filterByMonth(records, month);
+    if (!filtered.length) return;
+    const csv = toCsv(filtered);
+    const filename = month === 'all' ? 'ev-charge-all.csv' : `ev-charge-${month}.csv`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function showToast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2500);
+  }
+}
