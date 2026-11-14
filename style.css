@@ -102,7 +102,7 @@ button:focus-visible, select:focus-visible, a:focus-visible {
   outline-offset: 2px;
 }
 
-.stats { display: grid; grid-template-columns: 1fr 1fr 1.8fr; gap: 10px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
 .stat {
   background: var(--surface);
@@ -116,7 +116,6 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 }
 
 .stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.stat-last { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-label { color: var(--muted); font-size: 12px; }
 
 .panel {

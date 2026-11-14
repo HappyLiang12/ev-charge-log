@@ -28,6 +28,20 @@ import {
 } from './api.js';
 import { byId, showToast, setStatus, setBusy } from './ui.js';
 
+function monthLabel(month) {
+  if (month === 'all') return '全部月份';
+  const [year, value] = month.split('-');
+  return `${year} 年 ${Number(value)} 月`;
+}
+
+function friendlyError(error, fallback) {
+  const raw = String((error && error.message) || '');
+  if (/inactive|停用/i.test(raw)) return '此車輛已停用，請聯絡車主。';
+  if (/unknown car|404|連結無效/i.test(raw)) return '車輛連結無效，請向車主索取新連結。';
+  if (/[\u4e00-\u9fff]/.test(raw) && !/^HTTP \d+$/i.test(raw)) return raw;
+  return fallback;
+}
+
 export function initFamily({ apiUrl, carId }) {
   const storage = (() => {
     try {
@@ -55,6 +69,7 @@ export function initFamily({ apiUrl, carId }) {
     deleting: new Set(),
     offline: false,
     selectedMonth: null,
+    monthTouched: false,
   };
 
   const els = {
@@ -124,9 +139,12 @@ export function initFamily({ apiUrl, carId }) {
     remove.classList.toggle('loading', deleting);
     remove.disabled = deleting;
     remove.textContent = deleting ? '' : '×';
+    remove.setAttribute('aria-busy', deleting ? 'true' : 'false');
     remove.setAttribute(
       'aria-label',
-      `刪除 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 紀錄`,
+      deleting
+        ? '刪除中…'
+        : `刪除 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 紀錄`,
     );
     remove.addEventListener('click', () => onDelete(record));
     right.append(time, remove);
@@ -174,19 +192,18 @@ export function initFamily({ apiUrl, carId }) {
     }
 
     const months = monthsWithRecords(records);
-    const selected = state.selectedMonth === 'all' || months.includes(state.selectedMonth)
+    const options = ['all', ...months];
+    const selected = state.monthTouched && options.includes(state.selectedMonth)
       ? state.selectedMonth
       : defaultMonth(records, new Date());
-    const options = ['all', ...months];
     els.monthSelect.replaceChildren();
     for (const month of options) {
       const option = document.createElement('option');
       option.value = month;
-      option.textContent = month === 'all' ? '全部月份' : month;
+      option.textContent = monthLabel(month);
       els.monthSelect.append(option);
     }
     els.monthSelect.value = options.includes(selected) ? selected : 'all';
-    state.selectedMonth = els.monthSelect.value;
     const selectedRecords = filterByMonth(records, els.monthSelect.value);
     els.exportBtn.disabled = selectedRecords.length === 0;
     els.exportHint.textContent = selectedRecords.length > 0
@@ -218,7 +235,8 @@ export function initFamily({ apiUrl, carId }) {
 
   async function fetchData() {
     const data = await fetchFamilyData(apiUrl, carId);
-    state.server = data.records;
+    if (data.car.active === false) throw new Error('inactive car');
+    state.server = data.records.filter((record) => !state.deleting.has(record.id));
     state.car = data.car;
     state.rates = data.rates;
     state.pending = dropSyncedPending(state.pending, state.server);
@@ -241,7 +259,8 @@ export function initFamily({ apiUrl, carId }) {
         showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電 session。` : '冇新嘅充電 session。');
       }
     } catch (error) {
-      showToast(els.toast, error.message || 'Tesla 同步失敗。');
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, 'Tesla 同步失敗，請檢查網絡後重試。'));
     } finally {
       state.syncing = false;
       render();
@@ -262,7 +281,7 @@ export function initFamily({ apiUrl, carId }) {
       state.offline = true;
       state.connecting = false;
       render();
-      showToast(els.toast, error.message || '未能連接，已顯示本機紀錄。');
+      showToast(els.toast, friendlyError(error, '未能連接，請檢查網絡後重試。'));
     }
   }
 
@@ -303,7 +322,7 @@ export function initFamily({ apiUrl, carId }) {
     } catch (error) {
       state.offline = true;
       render();
-      showToast(els.toast, error.message || '暫時未能同步，會自動重試。');
+      showToast(els.toast, friendlyError(error, '已喺本機記錄；暫時未能同步，會自動重試。'));
     }
   }
 
@@ -315,14 +334,17 @@ export function initFamily({ apiUrl, carId }) {
     state.deleting.add(record.id);
     render();
     try {
-      if (apiUrl) await deleteRecord(apiUrl, record.id, { car: carId });
+      const localOnly = state.pending.some((row) => row.id === record.id);
+      if (apiUrl && !localOnly) await deleteRecord(apiUrl, record.id, { car: carId });
       state.pending = state.pending.filter((row) => row.id !== record.id);
       state.server = state.server.filter((row) => row.id !== record.id);
       persist();
       render();
       showToast(els.toast, '已刪除。');
     } catch (error) {
-      showToast(els.toast, error.message || '刪除失敗，請重試。');
+      state.offline = true;
+      render();
+      showToast(els.toast, friendlyError(error, '刪除失敗，請檢查網絡後重試。'));
     } finally {
       state.deleting.delete(record.id);
       render();
@@ -361,6 +383,7 @@ export function initFamily({ apiUrl, carId }) {
   els.syncBtn.addEventListener('click', () => { void runSync(false); });
   els.exportBtn.addEventListener('click', onExport);
   els.monthSelect.addEventListener('change', () => {
+    state.monthTouched = true;
     state.selectedMonth = els.monthSelect.value;
     render();
   });
