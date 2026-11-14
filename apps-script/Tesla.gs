@@ -1,9 +1,14 @@
 var TESLA_TOKEN_URL_ = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token';
 var DEFAULT_TESLA_BASE_URL_ = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+var TESLA_SCOPE_ = 'openid offline_access energy_device_data';
 var TESLA_MAX_LOOKBACK_DAYS_ = 90;
 
 function scriptProperty_(key) {
   return PropertiesService.getScriptProperties().getProperty(key);
+}
+
+function teslaBaseUrl_() {
+  return (scriptProperty_('TESLA_BASE_URL') || DEFAULT_TESLA_BASE_URL_).replace(/\/+$/, '');
 }
 
 function refreshAccessToken_() {
@@ -18,6 +23,8 @@ function refreshAccessToken_() {
       client_id: props.getProperty('TESLA_CLIENT_ID'),
       client_secret: props.getProperty('TESLA_CLIENT_SECRET'),
       refresh_token: props.getProperty('TESLA_REFRESH_TOKEN'),
+      audience: teslaBaseUrl_(),
+      scope: TESLA_SCOPE_,
     },
     muteHttpExceptions: true,
   });
@@ -37,8 +44,7 @@ function refreshAccessToken_() {
 }
 
 function teslaGet_(path, params) {
-  var base = scriptProperty_('TESLA_BASE_URL') || DEFAULT_TESLA_BASE_URL_;
-  var url = base.replace(/\/$/, '') + path;
+  var url = teslaBaseUrl_() + path;
   var query = [];
   for (var key in params || {}) {
     if (Object.prototype.hasOwnProperty.call(params, key) && params[key] !== undefined && params[key] !== null) {
@@ -58,20 +64,128 @@ function teslaGet_(path, params) {
   return JSON.parse(response.getContentText());
 }
 
+function wallConnectorSiteIds_(node, found) {
+  if (Array.isArray(node)) {
+    for (var i = 0; i < node.length; i += 1) wallConnectorSiteIds_(node[i], found);
+    return found;
+  }
+  if (!node || typeof node !== 'object') return found;
+  if (node.energy_site_id !== undefined && node.energy_site_id !== null
+      && node.resource_type === 'wall_connector') {
+    found[node.energy_site_id] = true;
+  }
+  var keys = Object.keys(node);
+  for (var k = 0; k < keys.length; k += 1) wallConnectorSiteIds_(node[keys[k]], found);
+  return found;
+}
+
 function discoverSiteId_() {
   var props = PropertiesService.getScriptProperties();
   var configured = props.getProperty('TESLA_SITE_ID');
   if (configured) return configured;
   var payload = teslaGet_('/api/1/products', {});
-  var products = payload.response || [];
-  for (var i = 0; i < products.length; i += 1) {
-    var product = products[i];
-    if (product.energy_site_id) {
-      props.setProperty('TESLA_SITE_ID', String(product.energy_site_id));
-      return String(product.energy_site_id);
+  var found = wallConnectorSiteIds_(payload.response || payload, {});
+  var siteIds = Object.keys(found);
+  if (siteIds.length === 1) {
+    props.setProperty('TESLA_SITE_ID', siteIds[0]);
+    return siteIds[0];
+  }
+  throw new Error(
+    'Expected exactly one Tesla Wall Connector energy site (resource_type=wall_connector)'
+    + ' in /api/1/products, found ' + siteIds.length + '; set the TESLA_SITE_ID Script Property',
+  );
+}
+
+function looksLikeSession_(item) {
+  var keys = Object.keys(item);
+  for (var i = 0; i < keys.length; i += 1) {
+    if (/(^|_)(start|end|energy|session|charge)/i.test(keys[i])) return true;
+  }
+  return false;
+}
+
+function collectChargeSessions_(payload) {
+  var arrays = [];
+
+  function visit(node) {
+    if (Array.isArray(node)) {
+      var allObjects = node.length > 0;
+      for (var i = 0; i < node.length && allObjects; i += 1) {
+        if (!node[i] || typeof node[i] !== 'object' || Array.isArray(node[i])) allObjects = false;
+      }
+      if (allObjects) {
+        for (var j = 0; j < node.length; j += 1) {
+          if (looksLikeSession_(node[j])) {
+            arrays.push(node);
+            break;
+          }
+        }
+      }
+      for (var m = 0; m < node.length; m += 1) visit(node[m]);
+      return;
+    }
+    if (node && typeof node === 'object') {
+      var keys = Object.keys(node);
+      for (var k = 0; k < keys.length; k += 1) visit(node[keys[k]]);
     }
   }
-  throw new Error('No Tesla Wall Connector energy site found');
+
+  visit(payload);
+  if (!arrays.length) return [];
+  arrays.sort(function (a, b) { return b.length - a.length; });
+  return arrays[0];
+}
+
+function scalarText_(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (typeof value === 'object') {
+    var keys = ['text', 'value', 'id', 'uuid', 'name'];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (value[keys[i]] !== undefined && value[keys[i]] !== null) return scalarText_(value[keys[i]]);
+    }
+    try {
+      return JSON.stringify(value);
+    } catch (ignored) {
+      return '';
+    }
+  }
+  return String(value);
+}
+
+function secondsOf_(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'number') return isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === 'object') {
+    var keys = ['seconds', 'value'];
+    for (var i = 0; i < keys.length; i += 1) {
+      var nested = secondsOf_(value[keys[i]]);
+      if (nested !== null) return nested;
+    }
+  }
+  return null;
+}
+
+function energyWhOf_(value) {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === 'number') return isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : 0;
+  }
+  if (typeof value === 'object') {
+    var keys = ['value', 'wh', 'energy_added_wh', 'watt_hours'];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (value[keys[i]] !== undefined && value[keys[i]] !== null) return energyWhOf_(value[keys[i]]);
+    }
+  }
+  return 0;
 }
 
 function fetchSessions_(siteId, startIso, endIso) {
@@ -84,29 +198,25 @@ function fetchSessions_(siteId, startIso, endIso) {
       time_zone: 'Asia/Hong_Kong',
     },
   );
-  var data = payload.response || {};
-  var rows = data.telemetry_history || data.data || [];
+  var rows = collectChargeSessions_(payload);
   var sessions = [];
   for (var i = 0; i < rows.length; i += 1) {
     var row = rows[i];
-    var start = row.start_date_time || row.start_date || row.start_time;
-    if (!validIso_(start)) continue;
-    var startAt = new Date(start).toISOString();
-    var duration = Number(row.duration != null ? row.duration : row.duration_s);
-    if (!isFinite(duration) || duration <= 0) continue;
-    var energy = Number(row.charge_energy_added != null ? row.charge_energy_added : row.energy_added);
-    if (!isFinite(energy)) continue;
-    var targetId = String(row.target_id || '');
-    var din = String(row.din || '');
-    var endAt = validIso_(row.end_date_time)
-      ? new Date(row.end_date_time).toISOString()
-      : new Date(Date.parse(startAt) + duration * 1000).toISOString();
+    var startSeconds = secondsOf_(row.charge_start_time);
+    var durationSec = secondsOf_(row.charge_duration);
+    var energyWh = energyWhOf_(row.energy_added_wh);
+    if (startSeconds === null || !isFinite(startSeconds)) continue;
+    if (durationSec === null || !(durationSec > 0)) continue;
+    if (!(energyWh > 0)) continue;
+    var startMs = startSeconds * 1000;
+    var targetId = scalarText_(row.target_id);
+    var din = scalarText_(row.din);
     sessions.push({
-      teslaKey: (din || targetId) + ':' + Math.floor(Date.parse(startAt) / 1000),
-      startAt: startAt,
-      endAt: endAt,
-      durationSec: duration,
-      kWh: energy,
+      teslaKey: (din || targetId) + ':' + Math.floor(startSeconds),
+      startAt: new Date(startMs).toISOString(),
+      endAt: new Date(startMs + durationSec * 1000).toISOString(),
+      durationSec: durationSec,
+      kWh: round6_(energyWh / 1000),
       targetId: targetId,
       din: din,
     });
@@ -124,12 +234,25 @@ function selectRateRow_(month, rates) {
   return best;
 }
 
+function tinyHash_(text) {
+  var hash = 5381;
+  for (var i = 0; i < text.length; i += 1) {
+    hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+function teslaRecordId_(session) {
+  return 'tesla-' + Math.floor(Date.parse(session.startAt) / 1000) + '-' + tinyHash_(session.teslaKey);
+}
+
 function syncTesla_() {
   var props = PropertiesService.getScriptProperties();
   var records = readLog_();
   var ignored = new Set(readIgnored_());
   var manualRows = records.filter(function (record) {
-    return record.source === 'manual' && record.kWh === null && !record.teslaKey;
+    return record.source === 'manual' && record.car && record.car !== 'unassigned'
+      && record.kWh === null && !record.teslaKey;
   });
   var cursor = props.getProperty('SYNC_CURSOR');
   var syncFrom = props.getProperty('SYNC_FROM');
@@ -137,33 +260,7 @@ function syncTesla_() {
   var lookback = new Date(now.getTime() - TESLA_MAX_LOOKBACK_DAYS_ * 86400000);
   var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
 
-  // A driver can record a start after an earlier sync already imported the
-  // Tesla session as unassigned. Reconcile those rows without another fetch.
-  var reconciled = 0;
-  var unassignedRows = records.filter(function (record) {
-    return record.car === 'unassigned' && record.teslaKey && record.kWh != null;
-  });
-  for (var u = 0; u < unassignedRows.length; u += 1) {
-    var candidate = closestManualCandidate_(
-      unassignedRows[u].teslaStartAt || unassignedRows[u].startAt,
-      manualRows,
-      windowMs,
-    );
-    if (!candidate) continue;
-    updateLog_(unassignedRows[u].id, {
-      car: candidate.car,
-      startAt: candidate.startAt,
-      date: candidate.date,
-      time: candidate.time,
-      source: 'tesla+manual',
-    });
-    deleteLog_(candidate.id);
-    var candidateIndex = manualRows.indexOf(candidate);
-    if (candidateIndex >= 0) manualRows.splice(candidateIndex, 1);
-    reconciled += 1;
-  }
-
-  var lower;
+  var lower = null;
   if (cursor && validIso_(cursor)) {
     lower = new Date(Math.max(Date.parse(cursor) - 2 * 86400000, lookback.getTime()));
   } else if (syncFrom && validIso_(syncFrom)) {
@@ -173,33 +270,91 @@ function syncTesla_() {
       return Math.min(min, Date.parse(row.startAt));
     }, Infinity);
     lower = new Date(Math.max(earliest - 2 * 86400000, lookback.getTime()));
-  } else {
-    return { matched: reconciled, unassigned: 0, fetched: 0, skipped: true };
+  }
+  if (!lower) {
+    return {
+      matched: 0,
+      unassigned: 0,
+      fetched: 0,
+      skipped: true,
+      reconciled: 0,
+      skippedExisting: 0,
+      skippedIgnored: 0,
+      pendingManual: manualRows.length,
+    };
   }
 
+  // The fetch must succeed before any Sheet write; a failure surfaces with Log intact.
   var siteId = discoverSiteId_();
   var sessions = fetchSessions_(siteId, lower.toISOString(), now.toISOString());
+
+  var reconciled = 0;
+  var unassignedRows = records.filter(function (record) {
+    return record.source === 'tesla' && record.car === 'unassigned' && record.teslaKey && record.kWh != null;
+  });
+  for (var u = 0; u < unassignedRows.length; u += 1) {
+    var unassignedRow = unassignedRows[u];
+    var candidate = closestManualCandidate_(
+      unassignedRow.teslaStartAt || unassignedRow.startAt,
+      manualRows,
+      windowMs,
+    );
+    if (!candidate) continue;
+    var updated = updateLog_(candidate.id, {
+      kWh: unassignedRow.kWh,
+      durationSec: unassignedRow.durationSec,
+      teslaStartAt: unassignedRow.teslaStartAt,
+      teslaEndAt: unassignedRow.teslaEndAt,
+      peakKWh: unassignedRow.peakKWh,
+      offPeakKWh: unassignedRow.offPeakKWh,
+      teslaKey: unassignedRow.teslaKey,
+      source: 'tesla+manual',
+    });
+    if (!updated) continue;
+    deleteLog_(unassignedRow.id);
+    candidate.kWh = updated.kWh;
+    candidate.durationSec = updated.durationSec;
+    candidate.teslaStartAt = updated.teslaStartAt;
+    candidate.teslaEndAt = updated.teslaEndAt;
+    candidate.peakKWh = updated.peakKWh;
+    candidate.offPeakKWh = updated.offPeakKWh;
+    candidate.teslaKey = updated.teslaKey;
+    candidate.source = updated.source;
+    var candidateIndex = manualRows.indexOf(candidate);
+    if (candidateIndex >= 0) manualRows.splice(candidateIndex, 1);
+    var unassignedIndex = records.indexOf(unassignedRow);
+    if (unassignedIndex >= 0) records.splice(unassignedIndex, 1);
+    reconciled += 1;
+  }
+
+  var knownKeys = {};
+  for (var k = 0; k < records.length; k += 1) {
+    if (records[k].teslaKey) knownKeys[records[k].teslaKey] = true;
+  }
+
   var rates = readRates_();
-  var matched = reconciled;
+  var matched = 0;
   var unassigned = 0;
-  var highest = cursor && validIso_(cursor) ? Date.parse(cursor) : 0;
+  var skippedExisting = 0;
+  var skippedIgnored = 0;
 
   for (var i = 0; i < sessions.length; i += 1) {
     var session = sessions[i];
-    highest = Math.max(highest, Date.parse(session.startAt));
-    if (ignored.has(session.teslaKey)) continue;
-    var duplicate = false;
-    for (var d = 0; d < records.length; d += 1) {
-      if (records[d].teslaKey === session.teslaKey) { duplicate = true; break; }
+    if (ignored.has(session.teslaKey)) {
+      skippedIgnored += 1;
+      continue;
     }
-    if (duplicate) continue;
+    if (knownKeys[session.teslaKey]) {
+      skippedExisting += 1;
+      continue;
+    }
     var rate = selectRateRow_(hkMonth_(session.startAt), rates);
     var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
     var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
     var split = splitPeakKwh_(session.startAt, session.durationSec, session.kWh, peakStart, peakEnd);
     var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
     if (manual) {
-      updateLog_(manual.id, {
+      var filled = updateLog_(manual.id, {
         car: manual.car,
         startAt: manual.startAt,
         date: manual.date,
@@ -213,32 +368,42 @@ function syncTesla_() {
         teslaKey: session.teslaKey,
         source: 'tesla+manual',
       });
-      var index = manualRows.indexOf(manual);
-      if (index >= 0) manualRows.splice(index, 1);
-      matched += 1;
-    } else {
-      appendLog_({
-        id: 'tesla-' + Math.floor(Date.parse(session.startAt) / 1000),
-        car: 'unassigned',
-        startAt: session.startAt,
-        date: hkDateString_(session.startAt),
-        time: hkTimeString_(session.startAt),
-        kWh: session.kWh,
-        durationSec: session.durationSec,
-        teslaStartAt: session.startAt,
-        teslaEndAt: session.endAt,
-        peakKWh: split.peakKWh,
-        offPeakKWh: split.offPeakKWh,
-        teslaKey: session.teslaKey,
-        source: 'tesla',
-      });
-      unassigned += 1;
+      if (filled) {
+        knownKeys[session.teslaKey] = true;
+        var index = manualRows.indexOf(manual);
+        if (index >= 0) manualRows.splice(index, 1);
+        matched += 1;
+        continue;
+      }
     }
+    appendLog_({
+      id: teslaRecordId_(session),
+      car: 'unassigned',
+      startAt: session.startAt,
+      date: hkDateString_(session.startAt),
+      time: hkTimeString_(session.startAt),
+      kWh: session.kWh,
+      durationSec: session.durationSec,
+      teslaStartAt: session.startAt,
+      teslaEndAt: session.endAt,
+      peakKWh: split.peakKWh,
+      offPeakKWh: split.offPeakKWh,
+      teslaKey: session.teslaKey,
+      source: 'tesla',
+    });
+    knownKeys[session.teslaKey] = true;
+    unassigned += 1;
   }
 
-  props.setProperty(
-    'SYNC_CURSOR',
-    new Date(Math.max(highest, lookback.getTime())).toISOString(),
-  );
-  return { matched: matched, unassigned: unassigned, fetched: sessions.length, skipped: false };
+  props.setProperty('SYNC_CURSOR', now.toISOString());
+  return {
+    matched: matched,
+    unassigned: unassigned,
+    fetched: sessions.length,
+    skipped: false,
+    reconciled: reconciled,
+    skippedExisting: skippedExisting,
+    skippedIgnored: skippedIgnored,
+    pendingManual: manualRows.length,
+  };
 }

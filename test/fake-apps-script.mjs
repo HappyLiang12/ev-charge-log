@@ -89,9 +89,5 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
       const sheet = sheetMap.get(name);
       return sheet ? sheet.getDataRange().getValues() : [];
     },
-    run(source) {
-      vm.runInContext(source, context);
-      context.SHEET_ID = 'fake-sheet';
-    },
   };
 }
