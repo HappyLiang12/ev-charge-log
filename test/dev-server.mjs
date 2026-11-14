@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const port = Number(process.env.PORT || 8787);
 const apiUrl = process.env.SMOKE_API_URL || `http://127.0.0.1:${port}/api`;
 const delayMs = Number(process.env.SMOKE_DELAY_MS || 0);
-const ownerKey = 'test-owner';
+const ownerKey = 'a'.repeat(48);
 const cars = [
   { id: 'model3', name: 'Model 3', active: true },
   { id: 'leaf', name: 'Leaf', active: true },
@@ -55,6 +55,21 @@ const records = [
     teslaKey: 'mock:unassigned',
     source: 'tesla',
   },
+  {
+    id: 'seed-pending',
+    car: 'model3',
+    startAt: '2026-11-14T06:00:00.000Z',
+    date: '2026-11-14',
+    time: '14:00',
+    kWh: null,
+    durationSec: null,
+    teslaStartAt: null,
+    teslaEndAt: null,
+    peakKWh: null,
+    offPeakKWh: null,
+    teslaKey: null,
+    source: 'manual',
+  },
 ];
 const ignored = new Set();
 const types = {
@@ -88,6 +103,30 @@ function splitMock(startAt, durationSec, kwh) {
   const total = Math.max(1, durationSec);
   const peakKWh = Math.round((kwh * Math.min(peakSeconds, total) / total) * 1e6) / 1e6;
   return { peakKWh, offPeakKWh: Math.round((kwh - peakKWh) * 1e6) / 1e6 };
+}
+
+function matchPending(car) {
+  const pending = [...records].reverse().find((record) => (
+    record.car === car.id && record.source === 'manual' && record.kWh === null
+  ));
+  if (!pending) return false;
+  const start = Date.parse(pending.startAt);
+  pending.kWh = 20;
+  pending.durationSec = 7200;
+  pending.teslaStartAt = pending.startAt;
+  pending.teslaEndAt = new Date(start + 7200000).toISOString();
+  if (pending.id === 'seed-pending') {
+    const split = splitMock(pending.startAt, 7200, 20);
+    pending.peakKWh = split.peakKWh;
+    pending.offPeakKWh = split.offPeakKWh;
+  } else {
+    // The family smoke uses a fixed 10/10 split so the expected cost is stable at any run time.
+    pending.peakKWh = 10;
+    pending.offPeakKWh = 10;
+  }
+  pending.teslaKey = `mock:${pending.id}`;
+  pending.source = 'tesla+manual';
+  return true;
 }
 
 async function readBody(req) {
@@ -151,30 +190,16 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
       if (action === 'sync') {
+        if (data.ownerKey !== undefined) {
+          if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
+          let matched = 0;
+          for (const car of cars) if (matchPending(car)) matched += 1;
+          return sendJson(res, 200, { ok: true, matched, unassigned: 0 });
+        }
         const car = findCar(data.car);
         if (!car) return fail(res, 404, 'Unknown car');
-        const pending = records.find((record) => (
-          record.car === car.id && record.source === 'manual' && record.kWh === null
-        ));
-        if (pending) {
-          const start = Date.parse(pending.startAt);
-          pending.kWh = 20;
-          pending.durationSec = 7200;
-          pending.teslaStartAt = pending.startAt;
-          pending.teslaEndAt = new Date(start + 7200000).toISOString();
-          if (pending.id === 'seed-pending') {
-            const split = splitMock(pending.startAt, 7200, 20);
-            pending.peakKWh = split.peakKWh;
-            pending.offPeakKWh = split.offPeakKWh;
-          } else {
-            // The family smoke uses a fixed 10/10 split so the expected cost is stable at any run time.
-            pending.peakKWh = 10;
-            pending.offPeakKWh = 10;
-          }
-          pending.teslaKey = `mock:${pending.id}`;
-          pending.source = 'tesla+manual';
-        }
-        return sendJson(res, 200, { ok: true, matched: pending ? 1 : 0, unassigned: 0 });
+        const matched = matchPending(car) ? 1 : 0;
+        return sendJson(res, 200, { ok: true, matched, unassigned: 0 });
       }
       if (action === 'assign') {
         if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');

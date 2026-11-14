@@ -1,0 +1,438 @@
+import {
+  formatHkDate,
+  formatHkTime,
+  filterByMonth,
+  monthsWithRecords,
+  defaultMonth,
+  summarizeRecords,
+  toCsv,
+} from './logic.js';
+import {
+  fetchOwnerData,
+  syncTesla,
+  refreshRates,
+  assignSession,
+  ignoreSession,
+} from './api.js';
+import { byId, showToast, setStatus, setBusy } from './ui.js';
+
+export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
+  const state = {
+    cars: [],
+    records: [],
+    rates: [],
+    loading: Boolean(apiUrl),
+    offline: false,
+    busy: false,
+    selectedMonth: null,
+    monthTouched: false,
+  };
+
+  const els = {
+    status: byId('ownerStatus'),
+    syncBtn: byId('ownerSyncBtn'),
+    ratesBtn: byId('ownerRatesBtn'),
+    sheetLink: byId('ownerSheetLink'),
+    month: byId('ownerMonth'),
+    exportBtn: byId('ownerExportBtn'),
+    carTotals: byId('ownerCarTotals'),
+    legacy: byId('ownerLegacy'),
+    unassigned: byId('ownerUnassigned'),
+    unassignedEmpty: byId('ownerUnassignedEmpty'),
+    pending: byId('ownerPending'),
+    pendingEmpty: byId('ownerPendingEmpty'),
+    rates: byId('ownerRates'),
+    rateSource: byId('ownerRateSource'),
+    links: byId('ownerLinks'),
+    toast: byId('ownerToast'),
+  };
+
+  function textRow(label, value) {
+    const row = document.createElement('div');
+    row.className = 'owner-card-row';
+    const left = document.createElement('span');
+    left.textContent = label;
+    const right = document.createElement('strong');
+    right.textContent = value;
+    row.append(left, right);
+    return row;
+  }
+
+  function emptyLabel(message) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = message;
+    return p;
+  }
+
+  function makeCarCard(car, rows) {
+    const summary = summarizeRecords(rows, state.rates, 'all');
+    const card = document.createElement('div');
+    card.className = 'owner-card';
+    const head = document.createElement('div');
+    head.className = 'owner-card-head';
+    const title = document.createElement('span');
+    title.className = 'owner-card-title';
+    title.textContent = car.name;
+    const total = document.createElement('span');
+    total.className = 'owner-card-total';
+    total.textContent = summary.cost === null ? '—' : `$${summary.cost.toFixed(2)}`;
+    head.append(title, total);
+    card.append(head);
+    card.append(textRow('次數 / 已配對', `${summary.count} / ${summary.matched}`));
+    card.append(textRow('kWh', summary.kWh.toFixed(1)));
+    card.append(textRow('非高峰 / 高峰', `${summary.offPeakKWh.toFixed(1)} / ${summary.peakKWh.toFixed(1)} kWh`));
+    if (summary.pending > 0) card.append(textRow('待配對', String(summary.pending)));
+    if (summary.missingRate > 0) card.append(textRow('缺少費率', `${summary.missingRate} 筆`));
+    return card;
+  }
+
+  function makeRateCard(rate) {
+    const card = document.createElement('div');
+    card.className = 'owner-card';
+    const head = document.createElement('div');
+    head.className = 'owner-card-head';
+    const title = document.createElement('span');
+    title.className = 'owner-card-title';
+    title.textContent = rate.month;
+    const badge = document.createElement('span');
+    badge.className = 'owner-card-total';
+    badge.textContent = rate.manualOverride ? '手動' : '自動';
+    head.append(title, badge);
+    card.append(head);
+    const rebate = Number(rate.rebate) || 0;
+    const off = (Number(rate.basicOffPeak) + Number(rate.fuelAdjustment) - rebate) / 100;
+    const peak = (Number(rate.basicPeak) + Number(rate.fuelAdjustment) - rebate) / 100;
+    card.append(textRow('非高峰', `$${off.toFixed(3)}/kWh`));
+    card.append(textRow('高峰', `$${peak.toFixed(3)}/kWh`));
+    card.append(textRow('燃料調整 / 回贈', `${Number(rate.fuelAdjustment).toFixed(1)} / ${rebate.toFixed(1)} 港仙`));
+    card.append(textRow('高峰時段', `${rate.peakStart}–${rate.peakEnd}`));
+    card.append(textRow('來源', rate.manualOverride ? '手動設定' : 'CLP 官方'));
+    card.append(textRow('更新', rate.fetchedAt || '—'));
+    return card;
+  }
+
+  function makeLinkCard(car) {
+    const card = document.createElement('div');
+    card.className = 'owner-link';
+    const head = document.createElement('div');
+    head.className = 'owner-link-head';
+    const title = document.createElement('span');
+    title.className = 'owner-card-title';
+    title.textContent = car.name;
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = '複製連結';
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.searchParams.set('car', car.id);
+    url.hash = '';
+    copy.addEventListener('click', () => { void onCopy(url.toString()); });
+    head.append(title, copy);
+    const link = document.createElement('a');
+    link.className = 'owner-link-url';
+    link.href = url.toString();
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = url.toString();
+    card.append(head, link);
+    return card;
+  }
+
+  function makeUnassignedRow(record) {
+    const li = document.createElement('li');
+    const head = document.createElement('div');
+    head.className = 'owner-row-head';
+    const when = document.createElement('span');
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    const kwh = document.createElement('strong');
+    kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
+    head.append(when, kwh);
+
+    const meta = document.createElement('div');
+    meta.className = 'owner-row-meta';
+    const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
+    meta.textContent = `Tesla session · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+
+    const actions = document.createElement('div');
+    actions.className = 'owner-row-actions';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', '分配車輛');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '選擇車輛';
+    select.append(placeholder);
+    for (const car of state.cars.filter((item) => item.active)) {
+      const option = document.createElement('option');
+      option.value = car.id;
+      option.textContent = car.name;
+      select.append(option);
+    }
+    select.disabled = state.busy;
+    const assign = document.createElement('button');
+    assign.type = 'button';
+    assign.textContent = '分配';
+    assign.disabled = state.busy;
+    assign.addEventListener('click', () => { void onAssign(record, select); });
+    const ignore = document.createElement('button');
+    ignore.type = 'button';
+    ignore.className = 'danger';
+    ignore.textContent = '忽略';
+    ignore.disabled = state.busy;
+    ignore.addEventListener('click', () => { void onIgnore(record); });
+    actions.append(select, assign, ignore);
+    li.append(head, meta, actions);
+    return li;
+  }
+
+  function makePendingRow(record) {
+    const li = document.createElement('li');
+    const head = document.createElement('div');
+    head.className = 'owner-row-head';
+    const when = document.createElement('span');
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    const car = state.cars.find((item) => item.id === record.car);
+    const title = document.createElement('strong');
+    title.textContent = car ? car.name : record.car;
+    head.append(when, title);
+    const meta = document.createElement('div');
+    meta.className = 'owner-row-meta';
+    meta.textContent = '手動開始紀錄，等待 Tesla session 配對。';
+    li.append(head, meta);
+    return li;
+  }
+
+  function render() {
+    const status = !apiUrl
+      ? '未設定'
+      : state.loading
+        ? '連線中'
+        : state.offline
+          ? '離線'
+          : '已連接';
+    setStatus(els.status, status);
+    setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新 Tesla');
+    setBusy(els.ratesBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新費率');
+    if (sheetUrl) {
+      els.sheetLink.href = sheetUrl;
+      els.sheetLink.hidden = false;
+    } else {
+      els.sheetLink.hidden = true;
+    }
+
+    const records = state.records;
+    const months = monthsWithRecords(records);
+    const selected = state.monthTouched
+      && (state.selectedMonth === 'all' || months.includes(state.selectedMonth))
+      ? state.selectedMonth
+      : defaultMonth(records, new Date());
+    const options = ['all', ...months];
+    els.month.replaceChildren();
+    for (const month of options) {
+      const option = document.createElement('option');
+      option.value = month;
+      option.textContent = month === 'all'
+        ? '全部月份'
+        : `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`;
+      els.month.append(option);
+    }
+    els.month.value = options.includes(selected) ? selected : 'all';
+    els.month.disabled = state.loading || state.busy;
+    state.selectedMonth = els.month.value;
+    const filtered = filterByMonth(records, els.month.value);
+    const billable = filtered.filter((record) => (
+      record.car && record.car !== 'unassigned' && record.source !== 'legacy'
+    ));
+    els.exportBtn.disabled = billable.length === 0;
+
+    const activeCars = state.cars.filter((car) => car.active);
+    els.carTotals.replaceChildren();
+    if (activeCars.length === 0) {
+      els.carTotals.append(emptyLabel('未有車輛；請在 Google Sheet 的 Cars 工作表加入。'));
+    } else {
+      for (const car of activeCars) {
+        els.carTotals.append(makeCarCard(car, filtered.filter((record) => record.car === car.id)));
+      }
+    }
+
+    const legacy = filtered.filter((record) => record.source === 'legacy' || !record.car).length;
+    els.legacy.textContent = legacy > 0 ? `Legacy 紀錄 ${legacy} 筆，未計入以上月結。` : '';
+
+    const unassigned = filtered.filter((record) => record.car === 'unassigned');
+    els.unassigned.replaceChildren();
+    for (const record of unassigned) els.unassigned.append(makeUnassignedRow(record));
+    els.unassignedEmpty.hidden = unassigned.length > 0;
+    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '冇未分配 session。';
+
+    const pending = filtered.filter((record) => record.car && record.car !== 'unassigned' && record.kWh === null);
+    els.pending.replaceChildren();
+    for (const record of pending) els.pending.append(makePendingRow(record));
+    els.pendingEmpty.hidden = pending.length > 0;
+
+    els.rates.replaceChildren();
+    const sortedRates = state.rates.slice().sort((a, b) => b.month.localeCompare(a.month));
+    if (sortedRates.length === 0) {
+      els.rates.append(emptyLabel('未有費率；請按「更新費率」。'));
+    } else {
+      for (const rate of sortedRates) els.rates.append(makeRateCard(rate));
+    }
+    const latest = sortedRates[0];
+    els.rateSource.textContent = latest
+      ? `來源：CLP 官方網站 · 最後更新 ${latest.fetchedAt || '未記錄'}`
+      : '未有費率資料。';
+
+    els.links.replaceChildren();
+    if (activeCars.length === 0) {
+      els.links.append(emptyLabel('未有車輛連結。'));
+    } else {
+      for (const car of activeCars) els.links.append(makeLinkCard(car));
+    }
+  }
+
+  async function refreshData() {
+    const data = await fetchOwnerData(apiUrl, ownerKey);
+    state.cars = data.cars;
+    state.records = data.records;
+    state.rates = data.rates;
+    state.offline = false;
+  }
+
+  async function load() {
+    render();
+    if (!apiUrl) return;
+    state.loading = true;
+    render();
+    try {
+      await refreshData();
+      state.loading = false;
+      render();
+    } catch (error) {
+      state.loading = false;
+      state.offline = true;
+      render();
+      showToast(els.toast, '未能載入管理資料，請確認管理連結及網絡。');
+    }
+  }
+
+  async function onSync() {
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      const result = await syncTesla(apiUrl, { ownerKey });
+      await refreshData();
+      showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
+    } catch {
+      state.offline = true;
+      showToast(els.toast, 'Tesla 同步失敗，請檢查網絡後重試。');
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onRates() {
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      const result = await refreshRates(apiUrl, ownerKey);
+      await refreshData();
+      showToast(els.toast, `已更新 ${Number(result.updated) || 0} 個月份費率。`);
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '費率更新失敗，請檢查網絡後重試。');
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onAssign(record, select) {
+    const car = select.value;
+    if (!car) {
+      showToast(els.toast, '請先選擇車輛。');
+      return;
+    }
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      await assignSession(apiUrl, ownerKey, record.id, car);
+      await refreshData();
+      showToast(els.toast, '已分配。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '分配失敗，請檢查網絡後重試。');
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onIgnore(record) {
+    if (!window.confirm('忽略呢個 session？之後唔會再匯入。')) return;
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      await ignoreSession(apiUrl, ownerKey, record.id);
+      await refreshData();
+      showToast(els.toast, '已忽略。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '忽略失敗，請檢查網絡後重試。');
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onCopy(url) {
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast(els.toast, '連結已複製。');
+    } catch {
+      showToast(els.toast, '未能複製，請長按選取連結。');
+    }
+  }
+
+  function downloadCsv(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.rel = 'noopener';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function onExport() {
+    const month = els.month.value || 'all';
+    const billable = filterByMonth(state.records, month).filter((record) => (
+      record.car && record.car !== 'unassigned' && record.source !== 'legacy'
+    ));
+    if (billable.length === 0) return;
+    const carNames = {};
+    for (const car of state.cars) carNames[car.id] = car.name;
+    const filename = month === 'all' ? 'ev-charge-all.csv' : `ev-charge-all-${month}.csv`;
+    downloadCsv(toCsv(billable, { carNames, rates: state.rates }), filename);
+    showToast(els.toast, 'CSV 已下載。');
+  }
+
+  els.month.addEventListener('change', () => {
+    state.monthTouched = true;
+    state.selectedMonth = els.month.value;
+    render();
+  });
+  els.exportBtn.addEventListener('click', onExport);
+  els.syncBtn.addEventListener('click', () => { void onSync(); });
+  els.ratesBtn.addEventListener('click', () => { void onRates(); });
+  window.addEventListener('online', () => {
+    if (apiUrl) void load();
+  });
+  void load();
+}
