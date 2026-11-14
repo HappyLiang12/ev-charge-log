@@ -2,8 +2,8 @@ import {
   formatHkDate,
   formatHkTime,
   filterByMonth,
+  monthKey,
   monthsWithRecords,
-  defaultMonth,
   summarizeRecords,
   toCsv,
 } from './logic.js';
@@ -65,6 +65,12 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     return p;
   }
 
+  function formatStamp(value) {
+    return value && !Number.isNaN(Date.parse(value))
+      ? `${formatHkDate(value)} ${formatHkTime(value)}`
+      : '未記錄';
+  }
+
   function makeCarCard(car, rows) {
     const summary = summarizeRecords(rows, state.rates, 'all');
     const card = document.createElement('div');
@@ -108,7 +114,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     card.append(textRow('燃料調整 / 回贈', `${Number(rate.fuelAdjustment).toFixed(1)} / ${rebate.toFixed(1)} 港仙`));
     card.append(textRow('高峰時段', `${rate.peakStart}–${rate.peakEnd}`));
     card.append(textRow('來源', rate.manualOverride ? '手動設定' : 'CLP 官方'));
-    card.append(textRow('更新', rate.fetchedAt || '—'));
+    card.append(textRow('更新', formatStamp(rate.fetchedAt)));
     return card;
   }
 
@@ -222,11 +228,13 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
 
     const records = state.records;
     const months = monthsWithRecords(records);
+    const currentMonth = monthKey(new Date().toISOString());
+    const monthOptions = [...new Set([...months, currentMonth])].sort().reverse();
     const selected = state.monthTouched
-      && (state.selectedMonth === 'all' || months.includes(state.selectedMonth))
+      && (state.selectedMonth === 'all' || monthOptions.includes(state.selectedMonth))
       ? state.selectedMonth
-      : defaultMonth(records, new Date());
-    const options = ['all', ...months];
+      : currentMonth;
+    const options = ['all', ...monthOptions];
     els.month.replaceChildren();
     for (const month of options) {
       const option = document.createElement('option');
@@ -258,16 +266,19 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     const legacy = filtered.filter((record) => record.source === 'legacy' || !record.car).length;
     els.legacy.textContent = legacy > 0 ? `Legacy 紀錄 ${legacy} 筆，未計入以上月結。` : '';
 
-    const unassigned = filtered.filter((record) => record.car === 'unassigned');
+    const unassigned = state.records.filter((record) => record.car === 'unassigned');
     els.unassigned.replaceChildren();
     for (const record of unassigned) els.unassigned.append(makeUnassignedRow(record));
     els.unassignedEmpty.hidden = unassigned.length > 0;
-    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '冇未分配 session。';
+    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配 session。';
 
-    const pending = filtered.filter((record) => record.car && record.car !== 'unassigned' && record.kWh === null);
+    const pending = state.records.filter((record) => (
+      record.car && record.car !== 'unassigned' && record.kWh === null && record.source !== 'legacy'
+    ));
     els.pending.replaceChildren();
     for (const record of pending) els.pending.append(makePendingRow(record));
     els.pendingEmpty.hidden = pending.length > 0;
+    els.pendingEmpty.textContent = '所有月份都冇待配對記錄。';
 
     els.rates.replaceChildren();
     const sortedRates = state.rates.slice().sort((a, b) => b.month.localeCompare(a.month));
@@ -278,7 +289,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     }
     const latest = sortedRates[0];
     els.rateSource.textContent = latest
-      ? `來源：CLP 官方網站 · 最後更新 ${latest.fetchedAt || '未記錄'}`
+      ? `來源：${latest.manualOverride ? '手動設定' : 'CLP 官方網站'} · 最後更新 ${formatStamp(latest.fetchedAt)}`
       : '未有費率資料。';
 
     els.links.replaceChildren();
@@ -295,6 +306,15 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     state.records = data.records;
     state.rates = data.rates;
     state.offline = false;
+  }
+
+  async function refreshOrWarn(message) {
+    try {
+      await refreshData();
+    } catch {
+      state.offline = true;
+      showToast(els.toast, message);
+    }
   }
 
   async function load() {
@@ -320,8 +340,8 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     render();
     try {
       const result = await syncTesla(apiUrl, { ownerKey });
-      await refreshData();
       showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
+      await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
     } catch {
       state.offline = true;
       showToast(els.toast, 'Tesla 同步失敗，請檢查網絡後重試。');
@@ -337,8 +357,8 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     render();
     try {
       const result = await refreshRates(apiUrl, ownerKey);
-      await refreshData();
       showToast(els.toast, `已更新 ${Number(result.updated) || 0} 個月份費率。`);
+      await refreshOrWarn('費率已更新，但未能載入最新資料，請重新載入。');
     } catch {
       state.offline = true;
       showToast(els.toast, '費率更新失敗，請檢查網絡後重試。');
@@ -359,8 +379,8 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     render();
     try {
       await assignSession(apiUrl, ownerKey, record.id, car);
-      await refreshData();
       showToast(els.toast, '已分配。');
+      await refreshOrWarn('已分配，但未能載入最新資料，請重新載入。');
     } catch {
       state.offline = true;
       showToast(els.toast, '分配失敗，請檢查網絡後重試。');
@@ -377,8 +397,8 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     render();
     try {
       await ignoreSession(apiUrl, ownerKey, record.id);
-      await refreshData();
       showToast(els.toast, '已忽略。');
+      await refreshOrWarn('已忽略，但未能載入最新資料，請重新載入。');
     } catch {
       state.offline = true;
       showToast(els.toast, '忽略失敗，請檢查網絡後重試。');
