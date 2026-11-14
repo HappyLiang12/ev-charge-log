@@ -503,17 +503,45 @@ test('syncTesla_ skips sessions listed in Ignored', () => {
   assert.equal(plain(env.call('readLog_')).length, 0);
 });
 
+test('teslaGet_ retries once after a 401 and then reports authorization expiry on 403', () => {
+  const calls = [];
+  const env = createAppsScriptEnv({
+    props: cachedTeslaProps(),
+    fetch: (url) => {
+      calls.push(url);
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-2', expires_in: 3600 }));
+      }
+      if (url === `${FLEET_URL}/retry`) {
+        const attempts = calls.filter((item) => item === `${FLEET_URL}/retry`).length;
+        return attempts === 1 ? response(401, '') : response(200, JSON.stringify({ ok: true }));
+      }
+      if (url === `${FLEET_URL}/forbidden`) return response(403, '');
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  assert.deepEqual(plain(env.call('teslaGet_', '/retry', {})), { ok: true });
+  assert.equal(calls.filter((item) => item === `${FLEET_URL}/retry`).length, 2);
+  assert.ok(calls.includes(TOKEN_URL));
+  assert.throws(
+    () => env.call('teslaGet_', '/forbidden', {}),
+    /Tesla authorization expired; re-run the local setup tool/,
+  );
+});
+
 test('syncTesla_ fetches from SYNC_CURSOR minus two days and never sets the cursor to a session start', () => {
   const calls = [];
   const started = Date.now();
+  const cursor = new Date(started - 24 * 3600 * 1000).toISOString();
+  const sessionStart = new Date(started - 12 * 3600 * 1000).toISOString();
   const env = createAppsScriptEnv({
-    props: cachedTeslaProps({ SYNC_CURSOR: '2026-11-14T00:00:00.000Z' }),
+    props: cachedTeslaProps({ SYNC_CURSOR: cursor }),
     sheets: {
       Log: logSheet([logRow({ id: 'm1', startAt: '2026-11-10T05:00:00.000Z', car: 'carA' })]),
       Rates: ratesSheet(),
     },
     fetch: telemetryFetch({
-      sessions: [verifiedSession({ charge_start_time: { seconds: Math.floor(Date.parse('2026-11-13T05:00:00.000Z') / 1000) } })],
+      sessions: [verifiedSession({ charge_start_time: { seconds: Math.floor(Date.parse(sessionStart) / 1000) } })],
       calls,
     }),
   });
@@ -525,11 +553,11 @@ test('syncTesla_ fetches from SYNC_CURSOR minus two days and never sets the curs
   assert.equal(result.pendingManual, 1);
   const telemetryCall = calls.find((call) => call.url.includes('/telemetry_history'));
   const params = new URL(telemetryCall.url).searchParams;
-  assert.equal(params.get('start_date'), '2026-11-12T00:00:00.000Z');
+  assert.equal(params.get('start_date'), new Date(Date.parse(cursor) - 2 * 86400000).toISOString());
   assert.equal(env.props.SYNC_CURSOR, params.get('end_date'));
   assert.ok(Date.parse(env.props.SYNC_CURSOR) >= started);
   assert.ok(Date.parse(env.props.SYNC_CURSOR) <= finished);
-  assert.notEqual(env.props.SYNC_CURSOR, '2026-11-13T05:00:00.000Z');
+  assert.notEqual(env.props.SYNC_CURSOR, sessionStart);
 });
 
 test('syncTesla_ gives same-second sessions distinct deterministic ids with the tesla- prefix', () => {

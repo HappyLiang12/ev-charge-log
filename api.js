@@ -75,6 +75,10 @@ export async function assignSession(apiUrl, ownerKey, id, car, fetchImpl = fetch
   return apiPost(apiUrl, { action: 'assign', ownerKey, id, car }, fetchImpl);
 }
 
+export async function claimSession(apiUrl, car, id, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'claim', car, id }, fetchImpl);
+}
+
 export async function ignoreSession(apiUrl, ownerKey, id, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'ignore', ownerKey, id }, fetchImpl);
 }

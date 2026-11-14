@@ -60,6 +60,7 @@ test('doGet returns only the requested car records and the owner returns all rec
         LOG_HEADER,
         row(),
         row({ 0: 'leaf-1', 4: 'leaf', 11: 'din:leaf-1' }),
+        row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:u', 12: 'tesla' }),
         ['old-1', '2026-11-01T00:00:00.000Z', '2026-11-01', '08:00', '', '', '', '', '', '', '', '', 'legacy'],
       ],
       Cars: [
@@ -75,13 +76,15 @@ test('doGet returns only the requested car records and the owner returns all rec
   assert.equal(family.car.name, 'Model 3');
   assert.equal(family.records.length, 1);
   assert.equal(family.records[0].id, 'rec-1');
+  assert.equal(family.unassigned.length, 1);
+  assert.equal(family.unassigned[0].id, 'unassigned-1');
   assert.equal(family.rates.length, 1);
   assert.ok(family.serverTime);
 
   const owner = receive(env, { owner: 'owner-secret' });
   assert.equal(owner.ok, true);
   assert.equal(owner.cars.length, 2);
-  assert.equal(owner.records.length, 3);
+  assert.equal(owner.records.length, 4);
   assert.equal(receive(env, { car: 'missing' }).ok, false);
   assert.match(receive(env, { car: 'missing' }).error, /Unknown car: missing/);
   assert.match(receive(env, { car: 'BAD CAR' }).error, /Invalid car id/);
@@ -211,11 +214,94 @@ test('owner assign merges a nearby pending manual row', () => {
   assert.equal(result.ok, true);
   assert.equal(result.merged, true);
   const records = plain(env.call('readLog_'));
-  const target = records.find((record) => record.id === 'unassigned-1');
+  const target = records.find((record) => record.id === 'manual-1');
   assert.equal(target.car, 'leaf');
   assert.equal(target.source, 'tesla+manual');
   assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
-  assert.equal(records.some((record) => record.id === 'manual-1'), false);
+  assert.equal(target.kWh, 20);
+  assert.equal(target.teslaKey, 'din:a');
+  assert.equal(records.some((record) => record.id === 'unassigned-1'), false);
+  assert.equal(records.some((record) => record.id === 'manual-1'), true);
+});
+
+test('family claim merges an unassigned session into its nearby manual row', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'unassigned-1', 4: 'unassigned', 11: 'din:a',
+          7: '2026-11-14T05:05:00.000Z', 8: '2026-11-14T07:05:00.000Z',
+        }),
+        row({
+          0: 'manual-1', 4: 'leaf', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+    },
+  });
+  const result = send(env, { action: 'claim', car: 'leaf', id: 'unassigned-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.merged, true);
+  const records = plain(env.call('readLog_'));
+  const target = records.find((record) => record.id === 'manual-1');
+  assert.equal(target.car, 'leaf');
+  assert.equal(target.source, 'tesla+manual');
+  assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(target.kWh, 20);
+  assert.equal(target.teslaKey, 'din:a');
+  assert.equal(records.some((record) => record.id === 'unassigned-1'), false);
+});
+
+test('family claim assigns an unassigned session directly when there is no manual row', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a', 12: 'tesla' }),
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['leaf', 'Leaf', 'TRUE', 'x'],
+      ],
+    },
+  });
+  const result = send(env, { action: 'claim', car: 'leaf', id: 'unassigned-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.merged, false);
+  const records = plain(env.call('readLog_'));
+  const target = records.find((record) => record.id === 'unassigned-1');
+  assert.equal(target.car, 'leaf');
+  assert.equal(target.source, 'tesla');
+  assert.equal(records.length, 1);
+});
+
+test('family claim rejects unknown cars and already-assigned records', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a', 12: 'tesla' }),
+        row({ 0: 'assigned-1', 4: 'leaf', 11: 'din:b' }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['leaf', 'Leaf', 'TRUE', 'x']],
+    },
+  });
+  assert.equal(send(env, { action: 'claim', car: 'missing', id: 'unassigned-1' }).ok, false);
+  assert.equal(send(env, { action: 'claim', car: 'leaf', id: 'assigned-1' }).ok, false);
+});
+
+test('unknown actions report an invalid action', () => {
+  const env = setup({ sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] } });
+  const result = send(env, { action: 'nope' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Invalid action/);
 });
 
 test('owner ignore requires a Tesla key and removes the record', () => {

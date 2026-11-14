@@ -129,6 +129,34 @@ function matchPending(car) {
   return true;
 }
 
+function assignMock(target, car) {
+  if (!target || target.car !== 'unassigned' || !car) return false;
+  const targetStart = Date.parse(target.teslaStartAt || target.startAt);
+  const manual = records.find((record) => (
+    record.id !== target.id
+    && record.car === car.id
+    && record.source === 'manual'
+    && record.kWh === null
+    && Math.abs(Date.parse(record.startAt) - targetStart) <= 1800000
+  ));
+  if (manual) {
+    manual.kWh = target.kWh;
+    manual.durationSec = target.durationSec;
+    manual.teslaStartAt = target.teslaStartAt;
+    manual.teslaEndAt = target.teslaEndAt;
+    manual.peakKWh = target.peakKWh;
+    manual.offPeakKWh = target.offPeakKWh;
+    manual.teslaKey = target.teslaKey;
+    manual.source = 'tesla+manual';
+    const index = records.indexOf(target);
+    if (index >= 0) records.splice(index, 1);
+    return true;
+  }
+  target.car = car.id;
+  target.source = 'tesla';
+  return true;
+}
+
 async function readBody(req) {
   let body = '';
   for await (const chunk of req) body += chunk;
@@ -149,7 +177,8 @@ const server = http.createServer(async (req, res) => {
       const car = findCar(carId);
       if (!car) return fail(res, 404, 'Unknown car');
       const visible = records.filter((record) => record.car === carId);
-      return sendJson(res, 200, { ok: true, car, records: visible, rates });
+      const unassigned = records.filter((record) => record.car === 'unassigned');
+      return sendJson(res, 200, { ok: true, car, records: visible, unassigned, rates });
     }
     if (req.method === 'POST') {
       let data;
@@ -205,25 +234,16 @@ const server = http.createServer(async (req, res) => {
         if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
         const target = records.find((record) => record.id === data.id);
         const car = findCar(data.car);
-        if (!target || !car) return fail(res, 400, 'Invalid assignment');
-        target.car = car.id;
-        const targetStart = Date.parse(target.teslaStartAt || target.startAt);
-        const manual = records.find((record) => (
-          record.id !== target.id
-          && record.car === car.id
-          && record.source === 'manual'
-          && record.kWh === null
-          && Math.abs(Date.parse(record.startAt) - targetStart) <= 1800000
-        ));
-        if (manual) {
-          const index = records.indexOf(manual);
-          records.splice(index, 1);
-          target.startAt = manual.startAt;
-          target.date = manual.date;
-          target.time = manual.time;
-          target.source = 'tesla+manual';
-        }
-        return sendJson(res, 200, { ok: true });
+        if (!target || !car || target.car !== 'unassigned') return fail(res, 400, 'Invalid assignment');
+        assignMock(target, car);
+        return sendJson(res, 200, { ok: true, assigned: true });
+      }
+      if (action === 'claim') {
+        const target = records.find((record) => record.id === data.id);
+        const car = findCar(data.car);
+        if (!target || !car || target.car !== 'unassigned') return fail(res, 400, 'Invalid claim');
+        assignMock(target, car);
+        return sendJson(res, 200, { ok: true, assigned: true });
       }
       if (action === 'ignore') {
         if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
@@ -239,7 +259,7 @@ const server = http.createServer(async (req, res) => {
         rates[0].fetchedAt = new Date().toISOString();
         return sendJson(res, 200, { ok: true, updated: rates.length });
       }
-      return fail(res, 400, 'Unknown action');
+      return fail(res, 400, 'Invalid action');
     }
   }
 

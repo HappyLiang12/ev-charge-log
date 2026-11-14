@@ -10,8 +10,9 @@ const familyView = document.getElementById('familyView');
 const ownerView = document.getElementById('ownerView');
 const setupView = document.getElementById('setupView');
 const ownerKey = params.get('owner');
-const car = params.get('car')
-  ? normalizeCar({ id: params.get('car'), name: params.get('car') })
+const carParam = params.get('car');
+const car = carParam && carParam !== 'unassigned'
+  ? normalizeCar({ id: carParam, name: carParam })
   : null;
 
 if (ownerKey && /^[a-f0-9]{48}$/.test(ownerKey)) {

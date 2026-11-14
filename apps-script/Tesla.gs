@@ -43,7 +43,7 @@ function refreshAccessToken_() {
   return data.access_token;
 }
 
-function teslaGet_(path, params) {
+function teslaGet_(path, params, retried) {
   var url = teslaBaseUrl_() + path;
   var query = [];
   for (var key in params || {}) {
@@ -58,6 +58,13 @@ function teslaGet_(path, params) {
     muteHttpExceptions: true,
   });
   var status = response.getResponseCode();
+  if (status === 401 && !retried) {
+    PropertiesService.getScriptProperties().deleteProperty('TESLA_ACCESS_TOKEN');
+    return teslaGet_(path, params, true);
+  }
+  if (status === 401 || status === 403) {
+    throw new Error('Tesla authorization expired; re-run the local setup tool');
+  }
   if (status < 200 || status >= 300) {
     throw new Error('Tesla API ' + status + ' for ' + path);
   }

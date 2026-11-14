@@ -90,9 +90,10 @@ export function normalizeRecords(list) {
 
 export function normalizeRate(value) {
   if (!value || !MONTH_RE.test(text(value.month))) return null;
-  const peakStart = text(value.peakStart) || '16:00';
-  const peakEnd = text(value.peakEnd) || '23:00';
-  if (!TIME_RE.test(peakStart) || !TIME_RE.test(peakEnd)) return null;
+  const rawPeakStart = text(value.peakStart) || '16:00';
+  const rawPeakEnd = text(value.peakEnd) || '23:00';
+  const peakStart = TIME_RE.test(rawPeakStart) ? rawPeakStart : '16:00';
+  const peakEnd = TIME_RE.test(rawPeakEnd) ? rawPeakEnd : '23:00';
   const basicOffPeak = numberOrNull(value.basicOffPeak);
   const basicPeak = numberOrNull(value.basicPeak);
   const fuelAdjustment = numberOrNull(value.fuelAdjustment);
@@ -145,6 +146,7 @@ export function parseFamilyPayload(payload) {
   return {
     car,
     records: normalizeRecords(payload.records),
+    unassigned: normalizeRecords(payload.unassigned),
     rates: normalizeRates(payload.rates),
   };
 }
@@ -191,7 +193,8 @@ export function filterByMonth(records, month) {
 }
 
 export function csvEscape(value) {
-  const s = String(value);
+  let s = String(value);
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
@@ -292,6 +295,11 @@ export function isRecentDuplicate(lastStartAt, nowMs, windowMs = 2000) {
 export function dropSyncedPending(pending, serverRecords) {
   const synced = new Set(normalizeRecords(serverRecords).map((record) => record.id));
   return normalizeRecords(pending).filter((record) => !synced.has(record.id));
+}
+
+export function migrateLegacyPending(list, car) {
+  if (!Array.isArray(list) || !car) return [];
+  return normalizeRecords(list.map((record) => ({ ...record, car, source: 'manual' })));
 }
 
 export function readStored(storage, key) {
