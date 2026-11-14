@@ -2266,6 +2266,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     offline: false,
     busy: false,
     selectedMonth: null,
+    monthTouched: false,
   };
 
   const els = {
@@ -2462,7 +2463,8 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
 
     const records = state.records;
     const months = monthsWithRecords(records);
-    const selected = state.selectedMonth === 'all' || months.includes(state.selectedMonth)
+    const selected = state.monthTouched
+      && (state.selectedMonth === 'all' || months.includes(state.selectedMonth))
       ? state.selectedMonth
       : defaultMonth(records, new Date());
     const options = ['all', ...months];
@@ -2470,7 +2472,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     for (const month of options) {
       const option = document.createElement('option');
       option.value = month;
-      option.textContent = month === 'all' ? '全部月份' : month;
+      option.textContent = month === 'all'
+        ? '全部月份'
+        : `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`;
       els.month.append(option);
     }
     els.month.value = options.includes(selected) ? selected : 'all';
@@ -2547,7 +2551,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       state.loading = false;
       state.offline = true;
       render();
-      showToast(els.toast, error.message || '未能載入管理資料。');
+      showToast(els.toast, '未能載入管理資料，請確認管理連結及網絡。');
     }
   }
 
@@ -2559,8 +2563,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       const result = await syncTesla(apiUrl, { ownerKey });
       await refreshData();
       showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
-    } catch (error) {
-      showToast(els.toast, error.message || 'Tesla 同步失敗。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, 'Tesla 同步失敗，請檢查網絡後重試。');
     } finally {
       state.busy = false;
       render();
@@ -2575,8 +2580,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       const result = await refreshRates(apiUrl, ownerKey);
       await refreshData();
       showToast(els.toast, `已更新 ${Number(result.updated) || 0} 個月份費率。`);
-    } catch (error) {
-      showToast(els.toast, error.message || '費率更新失敗。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '費率更新失敗，請檢查網絡後重試。');
     } finally {
       state.busy = false;
       render();
@@ -2596,8 +2602,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       await assignSession(apiUrl, ownerKey, record.id, car);
       await refreshData();
       showToast(els.toast, '已分配。');
-    } catch (error) {
-      showToast(els.toast, error.message || '分配失敗。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '分配失敗，請檢查網絡後重試。');
     } finally {
       state.busy = false;
       render();
@@ -2613,8 +2620,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       await ignoreSession(apiUrl, ownerKey, record.id);
       await refreshData();
       showToast(els.toast, '已忽略。');
-    } catch (error) {
-      showToast(els.toast, error.message || '忽略失敗。');
+    } catch {
+      state.offline = true;
+      showToast(els.toast, '忽略失敗，請檢查網絡後重試。');
     } finally {
       state.busy = false;
       render();
@@ -2657,6 +2665,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
   }
 
   els.month.addEventListener('change', () => {
+    state.monthTouched = true;
     state.selectedMonth = els.month.value;
     render();
   });
