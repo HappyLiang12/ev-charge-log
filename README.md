@@ -11,6 +11,7 @@ Live app: https://happyliang12.github.io/ev-charge-log/
 - One full-width button records the current time and appends it to a Google Sheet.
 - Quick view: this month's count, total count, last session, and the latest five records.
 - Delete any of the latest five records with a confirmation; the Sheet row is removed too.
+- Loading indicators for the initial Google Sheet connection, saving a record, and deleting a record.
 - CSV export for a chosen month or all months: UTF-8 BOM, CRLF, `日期,時間` columns in device-local time. Opens directly in Excel, Numbers, and Google Sheets.
 - Offline-friendly: records are written to localStorage immediately and retried automatically.
 - Mobile-first layout designed for a 390x844 viewport.

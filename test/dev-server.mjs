@@ -7,6 +7,7 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const port = Number(process.env.PORT || 8787);
 const apiUrl = process.env.SMOKE_API_URL || `http://127.0.0.1:${port}/api`;
 const records = [];
+const delayMs = Number(process.env.SMOKE_DELAY_MS || 0);
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -21,6 +22,7 @@ function sendJson(res, status, payload) {
 
 const server = http.createServer(async (req, res) => {
   if (req.url === '/api') {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     if (req.method === 'GET') {
       sendJson(res, 200, { ok: true, records });
       return;

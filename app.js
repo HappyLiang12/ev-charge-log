@@ -219,7 +219,14 @@ function init() {
     sheetLink: document.getElementById('sheetLink'),
   };
 
-  const state = { server: [], pending: [], offline: false, syncedOnce: false };
+  const state = {
+    server: [],
+    pending: [],
+    offline: false,
+    syncedOnce: false,
+    connecting: Boolean(apiUrl),
+    deleting: new Set(),
+  };
   let toastTimer = 0;
   let monthTouched = false;
 
@@ -267,18 +274,21 @@ function init() {
 
   async function sync() {
     if (!apiUrl) return;
+    state.connecting = true;
+    render();
     try {
       const records = await fetchRecords(apiUrl);
-      state.server = records;
+      state.server = records.filter((record) => !state.deleting.has(record.id));
       state.pending = dropSyncedPending(state.pending, records);
       state.offline = false;
       state.syncedOnce = true;
       persistCache();
       persistPending();
-      render();
       await retryPending();
     } catch {
       state.offline = true;
+    } finally {
+      state.connecting = false;
       render();
     }
   }
@@ -286,6 +296,7 @@ function init() {
   async function retryPending() {
     let changed = false;
     for (const record of [...state.pending]) {
+      if (state.deleting.has(record.id)) continue;
       try {
         await postRecord(apiUrl, record);
         state.pending = state.pending.filter((item) => item.id !== record.id);
@@ -299,7 +310,6 @@ function init() {
     if (changed) {
       persistCache();
       persistPending();
-      render();
     }
   }
 
@@ -317,11 +327,18 @@ function init() {
 
     let status = '已連接';
     if (!apiUrl) status = '未設定';
+    else if (state.connecting) status = '連線中';
     else if (state.pending.length) status = '未同步';
     else if (state.offline) status = '離線';
     else if (!state.syncedOnce) status = '未同步';
     els.statusChip.textContent = status;
-    els.statusChip.dataset.state = status === '已連接' ? 'ok' : status === '未設定' ? 'idle' : 'warn';
+    els.statusChip.dataset.state = status === '已連接'
+      ? 'ok'
+      : status === '未設定'
+        ? 'idle'
+        : status === '連線中'
+          ? 'loading'
+          : 'warn';
 
     els.recentList.replaceChildren(
       ...records.slice(0, 5).map((record) => {
@@ -342,11 +359,17 @@ function init() {
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'delete-btn';
-        del.textContent = '×';
+        const deleting = state.deleting.has(record.id);
+        del.disabled = deleting;
+        del.classList.toggle('loading', deleting);
+        del.textContent = deleting ? '' : '×';
         del.setAttribute(
           'aria-label',
-          `刪除 ${formatLocalDate(record.startAt)} ${formatLocalTime(record.startAt)}`,
+          deleting
+            ? '刪除中…'
+            : `刪除 ${formatLocalDate(record.startAt)} ${formatLocalTime(record.startAt)}`,
         );
+        del.setAttribute('aria-busy', deleting ? 'true' : 'false');
         del.addEventListener('click', () => onDelete(record));
         right.append(time, del);
         li.append(left, right);
@@ -389,6 +412,7 @@ function init() {
     render();
     showToast(`已記錄 ${formatLocalTime(record.startAt)}`);
     if (!apiUrl) return;
+    setStartLoading(true);
     try {
       await postRecord(apiUrl, record);
       state.pending = state.pending.filter((item) => item.id !== record.id);
@@ -402,7 +426,16 @@ function init() {
       state.offline = true;
       render();
       showToast('未能同步，會自動重試；請檢查網絡或 API 設定');
+    } finally {
+      setStartLoading(false);
     }
+  }
+
+  function setStartLoading(loading) {
+    els.startBtn.disabled = loading;
+    els.startBtn.classList.toggle('loading', loading);
+    els.startBtn.textContent = loading ? '同步中…' : '⚡ 開始充電';
+    els.startBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
   }
 
   async function onDelete(record) {
@@ -413,15 +446,19 @@ function init() {
       showToast('已刪除');
       return;
     }
+    state.deleting.add(record.id);
+    render();
     try {
       await deleteRecord(apiUrl, record.id);
-      removeLocal(record.id);
       state.offline = false;
+      removeLocal(record.id);
       showToast('已刪除');
     } catch {
       state.offline = true;
-      render();
       showToast('刪除失敗，請檢查網絡或 API 設定');
+    } finally {
+      state.deleting.delete(record.id);
+      render();
     }
   }
 

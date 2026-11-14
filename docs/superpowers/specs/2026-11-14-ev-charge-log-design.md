@@ -77,12 +77,13 @@ Single screen, mobile-first, dark theme with one electric-green accent, zh-HK co
 
 Elements:
 
-- Header: "EV 充電紀錄", sync status chip (`已連接` / `未同步` / `離線` / `未設定`), small "打開 Google Sheet" link.
-- Primary button "⚡ 開始充電": records now, writes the row, shows a toast with the recorded time. Clicks within 2 seconds of the previous record are ignored to prevent accidental double taps.
-- Quick view: 本月次數 / 總次數 / 最近一次 date-time, plus the latest 5 records (date, weekday, time, delete button). Deleting asks for confirmation and calls the delete API.
+- Header: "EV 充電紀錄", sync status chip (`已連接` / `未同步` / `離線` / `未設定` / `連線中`), small "打開 Google Sheet" link.
+- Primary button "⚡ 開始充電": records now, writes the row, shows a toast with the recorded time. While the POST is in flight it is disabled and shows a spinner with "同步中…", restoring on success or failure. Clicks within 2 seconds of the previous record are ignored to prevent accidental double taps.
+- Quick view: 本月次數 / 總次數 / 最近一次 date-time, plus the latest 5 records (date, weekday, time, delete button). Deleting asks for confirmation, shows a spinner in that row's button while the delete API runs, and removes the row on success.
 - Export row: month selector built from available months plus "全部月份" (default: current month if it has records, otherwise the newest month with records, otherwise 全部月份), and the "匯出 CSV" button (disabled when the selection has no records).
 - Empty state message when there are no records.
 - No settings, no manual add; deletion is available on each of the latest five rows.
+- Loading indicators: chip spinner and `連線中` during the initial/full sync, start-button spinner during save, per-row spinner during delete. Controls re-enable on completion and on failure.
 - Touch targets >= 44px, visible focus styles, WCAG AA contrast.
 
 ## 4. CSV export
@@ -108,7 +109,7 @@ Pure functions exported from `app.js`:
 
 Sync behavior:
 
-- On load: render cache immediately, then `GET`; on success replace the cache, drop pending entries whose `id` now exists on the server, and re-render; on failure keep cache and show `離線`.
+- On load: render cache immediately with `連線中`, then `GET`; on success replace the cache, drop pending entries whose `id` now exists on the server, retry pending, and re-render; on failure keep cache and show `離線`.
 - On record: append to pending + cache, render immediately, then `POST`; on success remove from pending; on failure keep pending and show `未同步`.
 - Retries: on app load, `online` event, and before each new record. Pending entries are merged by `id`, so retries and repeated loads are idempotent on the client too.
 - Delete: confirm, call `POST { action: 'delete', id }`, then remove the record from cache/pending and re-render; on failure keep the record and show `刪除失敗`.
@@ -117,7 +118,7 @@ Sync behavior:
 ### Error handling
 
 - `API_URL` empty → local-only mode with `未設定` chip and a hint in the empty state.
-- HTTP/network/parse errors → keep working from cache; chip shows `離線`/`未同步`; toast describes the problem and points to `config.js`/the Apps Script deployment.
+- HTTP/network/parse errors → keep working from cache; chip shows `離線`/`未同步`; toast describes the problem and points to `config.js`/the Apps Script deployment. Start and delete controls always re-enable in a `finally` block.
 - Corrupt cache/pending JSON → discard only the corrupt key, show a one-time notice; server data reloads on the next sync.
 
 ## 6. Testing
@@ -137,6 +138,7 @@ Browser smoke (local static server, mobile viewport ~390x844, API mocked by stub
 - Offline start → `未同步` then auto-retry on `online`.
 - Month selector + export downloads a CSV matching the filter and format.
 - Delete: cancel keeps the row; confirm removes it locally and on the mock API; API failure keeps the row and shows an actionable toast.
+- Loading states with a delayed mock API: `連線中` chip spinner on load, start button disabled with `同步中…`, delete button disabled with a spinner, all restored afterwards.
 - Empty state, `未設定` mode, API error chip.
 - Screenshots for empty and populated states.
 
