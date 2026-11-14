@@ -13,14 +13,20 @@ function openSpreadsheet_() {
   return SpreadsheetApp.openById(SHEET_ID);
 }
 
+function headerRow_(sheet) {
+  var lastColumn = sheet.getLastColumn();
+  if (!lastColumn) return [];
+  return sheet.getRange(1, 1, 1, lastColumn).getValues()[0]
+    .map(function (value) { return String(value || '').trim(); });
+}
+
 function ensureHeader_(sheet, columns) {
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, columns.length).setValues([columns]);
     sheet.setFrozenRows(1);
     return;
   }
-  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
-    .map(function (value) { return String(value || '').trim(); });
+  var header = headerRow_(sheet);
   var missing = columns.filter(function (column) { return header.indexOf(column) === -1; });
   if (!missing.length) return;
   sheet.getRange(1, sheet.getLastColumn() + 1, 1, missing.length).setValues([missing]);
@@ -97,7 +103,7 @@ function readLog_() {
 
 function appendLog_(record) {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
-  var row = LOG_COLUMNS.map(function (column) {
+  var row = headerRow_(sheet).map(function (column) {
     var value = logValue_(record, column);
     return value === undefined || value === null ? '' : value;
   });
@@ -122,7 +128,7 @@ function updateLog_(id, patch) {
     }
     if (!current.date && validIso_(current.startAt)) current.date = hkDateString_(current.startAt);
     if (!current.time && validIso_(current.startAt)) current.time = hkTimeString_(current.startAt);
-    var row = LOG_COLUMNS.map(function (column) {
+    var row = header.map(function (column) {
       var value = logValue_(current, column);
       return value === undefined || value === null ? '' : value;
     });
@@ -206,6 +212,12 @@ function readRates_() {
   return rates;
 }
 
+function rateValue_(rate, column) {
+  if (column === 'manualOverride') return rate.manualOverride ? 'TRUE' : 'FALSE';
+  var value = rate[column];
+  return value === undefined || value === null ? '' : value;
+}
+
 function upsertRates_(rates) {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Rates', RATES_COLUMNS);
   var values = sheet.getDataRange().getValues();
@@ -226,11 +238,11 @@ function upsertRates_(rates) {
       }
     }
     if (manual) continue;
-    var row = RATES_COLUMNS.map(function (column) {
-      var value = column === 'manualOverride'
-        ? (rate.manualOverride ? 'TRUE' : 'FALSE')
-        : rate[column];
-      return value === undefined || value === null ? '' : value;
+    var row = header.map(function (column, index) {
+      if (RATES_COLUMNS.indexOf(column) !== -1) return rateValue_(rate, column);
+      if (found < 0) return '';
+      var existing = values[found][index];
+      return existing === undefined || existing === null ? '' : existing;
     });
     if (found >= 0) {
       sheet.getRange(found + 1, 1, 1, row.length).setValues([row]);
@@ -261,5 +273,8 @@ function addIgnored_(teslaKey, reason) {
   for (var i = 0; i < rows.length; i += 1) {
     if (String(rows[i].teslaKey || '').trim() === teslaKey) return;
   }
-  sheet.appendRow([teslaKey, new Date().toISOString(), reason || '']);
+  var entry = { teslaKey: teslaKey, ignoredAt: new Date().toISOString(), reason: reason || '' };
+  sheet.appendRow(headerRow_(sheet).map(function (column) {
+    return Object.prototype.hasOwnProperty.call(entry, column) ? entry[column] : '';
+  }));
 }

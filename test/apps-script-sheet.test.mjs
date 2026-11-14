@@ -238,3 +238,123 @@ test('addIgnored_ deduplicates and readIgnored_ returns the key', () => {
   assert.deepEqual(plain(env.call('readIgnored_')), ['din:x']);
   assert.equal(env.values('Ignored').length, 2);
 });
+
+test('appendLog_ writes in actual header order and fills unknown columns blank', () => {
+  const env = createEnv({
+    sheets: {
+      Log: [[
+        'source', 'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
+        'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'note',
+      ]],
+    },
+  });
+  env.call('appendLog_', record);
+  const sheetRows = env.values('Log');
+  const header = sheetRows[0];
+  const at = (name) => sheetRows[1][header.indexOf(name)];
+  assert.equal(at('source'), 'tesla+manual');
+  assert.equal(at('id'), 'rec-1');
+  assert.equal(at('startAt'), '2026-11-14T05:00:00.000Z');
+  assert.equal(at('日期'), '2026-11-14');
+  assert.equal(at('時間'), '13:00');
+  assert.equal(at('car'), 'model3');
+  assert.equal(at('kWh'), 20);
+  assert.equal(at('teslaKey'), 'din:1786968749');
+  assert.equal(at('note'), '');
+  assert.deepEqual(plain(env.call('readLog_')), [record]);
+});
+
+test('updateLog_ writes in actual header order and preserves extra columns', () => {
+  const env = createEnv({
+    sheets: {
+      Log: [
+        [
+          'note', 'source', 'id', 'startAt', '日期', '時間', 'car', 'kWh',
+          'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey',
+        ],
+        [
+          'keep-me', 'tesla+manual', 'rec-1', '2026-11-14T05:00:00.000Z', '2026-11-14',
+          '13:00', 'model3', 20, 7200, '2026-11-14T05:00:00.000Z',
+          '2026-11-14T07:00:00.000Z', 10, 10, 'din:1786968749',
+        ],
+      ],
+    },
+  });
+  const updated = plain(env.call('updateLog_', 'rec-1', { kWh: 21, peakKWh: 11 }));
+  assert.equal(updated.kWh, 21);
+  assert.equal(updated.peakKWh, 11);
+  assert.equal(updated.date, '2026-11-14');
+  assert.equal(updated.time, '13:00');
+  const sheetRows = env.values('Log');
+  const header = sheetRows[0];
+  const at = (name) => sheetRows[1][header.indexOf(name)];
+  assert.equal(at('kWh'), 21);
+  assert.equal(at('peakKWh'), 11);
+  assert.equal(at('日期'), '2026-11-14');
+  assert.equal(at('時間'), '13:00');
+  assert.equal(at('source'), 'tesla+manual');
+  assert.equal(at('note'), 'keep-me');
+});
+
+test('upsertRates_ writes in actual header order and preserves extra columns', () => {
+  const env = createEnv({
+    sheets: {
+      Rates: [
+        [
+          'note', 'manualOverride', 'month', 'basicPeak', 'basicOffPeak', 'fuelAdjustment',
+          'rebate', 'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt',
+        ],
+        ['keep-me', 'FALSE', '2026-10', '130', '90', '40', '0', '16:00', '23:00', 'old-url', 'old-fetched'],
+      ],
+    },
+  });
+  const updated = env.call('upsertRates_', [
+    {
+      month: '2026-10', basicOffPeak: 95, basicPeak: 140, fuelAdjustment: 41, rebate: 0,
+      peakStart: '16:00', peakEnd: '23:00', sourceUrl: 'new-url', fetchedAt: 'new-fetched',
+      manualOverride: false,
+    },
+    {
+      month: '2026-11', basicOffPeak: 94.5, basicPeak: 137.5, fuelAdjustment: 47.4, rebate: 0,
+      peakStart: '16:00', peakEnd: '23:00', sourceUrl: 'x', fetchedAt: 'x', manualOverride: false,
+    },
+  ]);
+  assert.equal(updated, 2);
+  const sheetRows = env.values('Rates');
+  const header = sheetRows[0];
+  const find = (month) => sheetRows.find((row, index) => index > 0 && row[header.indexOf('month')] === month);
+  const oct = find('2026-10');
+  const nov = find('2026-11');
+  assert.equal(oct[header.indexOf('basicOffPeak')], 95);
+  assert.equal(oct[header.indexOf('basicPeak')], 140);
+  assert.equal(oct[header.indexOf('fuelAdjustment')], 41);
+  assert.equal(oct[header.indexOf('manualOverride')], 'FALSE');
+  assert.equal(oct[header.indexOf('sourceUrl')], 'new-url');
+  assert.equal(oct[header.indexOf('note')], 'keep-me');
+  assert.equal(nov[header.indexOf('basicOffPeak')], 94.5);
+  assert.equal(nov[header.indexOf('note')], '');
+  const rates = plain(env.call('readRates_'));
+  assert.equal(rates.find((row) => row.month === '2026-10').basicOffPeak, 95);
+  assert.equal(rates.find((row) => row.month === '2026-11').basicOffPeak, 94.5);
+});
+
+test('addIgnored_ appends in actual header order and leaves unknown columns blank', () => {
+  const env = createEnv({
+    sheets: {
+      Ignored: [
+        ['note', 'reason', 'teslaKey', 'ignoredAt'],
+        ['keep-me', 'deleted', 'din:a', 'x'],
+      ],
+    },
+  });
+  env.call('addIgnored_', 'din:b', 'manual delete');
+  env.call('addIgnored_', 'din:a', 'again');
+  const sheetRows = env.values('Ignored');
+  const header = sheetRows[0];
+  assert.equal(sheetRows.length, 3);
+  const added = sheetRows.find((row, index) => index > 0 && row[header.indexOf('teslaKey')] === 'din:b');
+  assert.equal(added[header.indexOf('reason')], 'manual delete');
+  assert.equal(added[header.indexOf('note')], '');
+  assert.ok(added[header.indexOf('ignoredAt')]);
+  assert.deepEqual(plain(env.call('readIgnored_')), ['din:a', 'din:b']);
+});
