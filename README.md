@@ -2,7 +2,7 @@
 
 Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/off-peak cost estimates. A static app on GitHub Pages; a Google Apps Script Web App owns the Sheet, Tesla OAuth, and CLP rate fetch.
 
-Live app: https://happyliang12.github.io/ev-charge-log/
+Deployment target (the new UI is not live until the deployment step): https://happyliang12.github.io/ev-charge-log/
 
 ![Family view](docs/screenshot-family.png)
 
@@ -21,7 +21,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 ## Features
 
 - One-tap start recording with a per-car URL; no login and no car picker.
-- On-demand Tesla sync; no cron and no polling.
+- On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
 - Unmatched Tesla sessions appear as `unassigned` for the owner to assign or ignore.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
@@ -42,7 +42,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 - `source`: `manual`, `tesla`, `tesla+manual`, or `legacy`.
 - Old rows without `car` are `legacy`; they are preserved and excluded from billing CSV.
-- Tesla session keys are `<din>:<start-seconds>`.
+- Tesla session keys are `<din or target_id>:<start-seconds>`.
 
 ### `Cars`
 
@@ -118,8 +118,8 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 
 Tesla API access is read-only for energy data. The app uses the official Fleet API with scopes `openid offline_access energy_device_data`.
 
-1. The Tesla developer app must have Allowed Origin exactly `https://happyliang12.github.io`. The local probe uses `http://localhost:8788/callback`.
-2. On a machine with the repository and `tools/.env.tesla.local` (mode 600), run:
+1. The Tesla developer app needs both allowed origins: `https://happyliang12.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
+2. On a machine with the repository and `tools/.env.tesla.local` (mode 600) containing `TESLA_CLIENT_ID` and `TESLA_CLIENT_SECRET`, run:
 
 ```bash
 npm run auth:tesla
@@ -127,19 +127,12 @@ npm run auth:tesla
 
 3. Authorize the app in the browser. The token is saved to `tools/.tesla-refresh-token.local` with mode 600.
 4. Copy the token value into the `TESLA_REFRESH_TOKEN` Script Property. Do not print it, paste it into chat, or commit it.
-5. Run one owner `更新 Tesla` and confirm the site is discovered.
+
+The owner `更新 Tesla` verification happens in the owner setup step, after the frontend is deployed.
 
 Rotate the Tesla client secret after development and deployment are complete. Update `TESLA_CLIENT_SECRET` in Script Properties, then verify one sync.
 
-### 4. Cars, rates, and the owner URL
-
-1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
-2. Open the owner URL: `https://happyliang12.github.io/ev-charge-log/?owner=<OWNER_KEY>`.
-3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
-4. Copy each family link from the owner view and send it to that car's driver.
-5. Keep the owner URL private. It is a capability, not a login.
-
-### 5. Frontend
+### 4. Frontend
 
 `config.js` contains only public values:
 
@@ -151,6 +144,15 @@ window.APP_CONFIG = {
 ```
 
 Deploy the static files to GitHub Pages. The owner key is never in `config.js`.
+
+### 5. Cars, rates, and the owner URL
+
+1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
+2. Open the owner URL on the deployed site: `https://happyliang12.github.io/ev-charge-log/?owner=<OWNER_KEY>`.
+3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
+4. Run one owner `更新 Tesla` and confirm the Wall Connector site is discovered.
+5. Copy each family link from the owner view and send it to that car's driver.
+6. Keep the owner URL private. It is a capability, not a login.
 
 ## Local development
 
@@ -189,6 +191,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 ## Security
 
 - No accounts and no secrets in the frontend. The Apps Script URL and owner key are capability URLs.
+- Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records. Share it only with that car's driver.
 - Tesla credentials live only in Script Properties.
 - The Sheet stays private. The family view does not link to it.
 - Owner actions require `OWNER_KEY`; family actions require a valid car ID.
@@ -204,9 +207,9 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Peak/off-peak is duration-proportional, not measured per minute.
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. Manual `Rates` rows are the fallback.
-- There is no cron, auto-sync, outside-charger support, CCTV integration, or bill reconciliation yet.
+- There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
 - CSV is a snapshot; refresh it after new records.
-- Owner CSV download is verified in a normal browser via toast and unit tests. WKWebView's download sandbox can block file downloads; that WebView limitation is not a supported target.
+- CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
 
 ## Tests
 
