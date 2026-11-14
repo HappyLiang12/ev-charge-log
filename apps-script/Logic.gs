@@ -112,8 +112,15 @@ function parseFuelAdjustmentPage_(text) {
   var year = Number(current[1]);
   var month = Number(current[2]);
   var cents = Number(current[3]);
-  var sectionMatch = source.match(/每月燃料調整費[\s\S]*?(?=本月調整計算|$)/);
-  var section = sectionMatch ? sectionMatch[0] : '';
+  var section = '';
+  var sectionStart = source.indexOf('每月燃料調整費');
+  if (sectionStart !== -1) {
+    var rest = source.slice(sectionStart);
+    // Trailing text after the current-rate sentence must not extend the table:
+    // bound it at the sentence, a following yearly table, or the next section.
+    var stop = rest.search(/\d{4}年\d{1,2}月\d{1,2}日起|本月調整計算|\d{4}年每月燃料調整費/);
+    section = stop === -1 ? rest : rest.slice(0, stop);
+  }
   var months = [];
   var monthMatches = section.matchAll(/(\d{1,2})月/g);
   for (var m = monthMatches.next(); !m.done; m = monthMatches.next()) {
@@ -126,15 +133,20 @@ function parseFuelAdjustmentPage_(text) {
   }
   var rows = [];
   var count = Math.min(months.length, values.length);
+  var byMonth = {};
+  var order = [];
   for (var i = 0; i < count; i++) {
-    rows.push({ month: year + '-' + pad2_(months[i]), fuelAdjustment: values[i] });
+    var monthKey = year + '-' + pad2_(months[i]);
+    if (Object.prototype.hasOwnProperty.call(byMonth, monthKey)) continue;
+    byMonth[monthKey] = values[i];
+    order.push(monthKey);
   }
   var key = year + '-' + pad2_(month);
-  var found = false;
-  for (var j = 0; j < rows.length; j++) {
-    if (rows[j].month === key) found = true;
+  byMonth[key] = cents;
+  if (order.indexOf(key) === -1) order.push(key);
+  for (var j = 0; j < order.length; j++) {
+    rows.push({ month: order[j], fuelAdjustment: byMonth[order[j]] });
   }
-  if (!found) rows.push({ month: key, fuelAdjustment: cents });
   return { current: { month: key, fuelAdjustment: cents }, rows: rows };
 }
 
