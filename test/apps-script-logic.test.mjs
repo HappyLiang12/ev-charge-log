@@ -123,6 +123,46 @@ test('parseFuelAdjustmentPage_ extracts the current month and the yearly table',
   assert.deepEqual(plain(call('parseFuelAdjustmentPage_', 'no rates here')), { current: null, rows: [] });
 });
 
+test('parseFuelAdjustmentPage_ ignores numeric lines after the current sentence', () => {
+  const page = `
+燃料調整費
+2026年每月燃料調整費
+2026年
+1月
+2月
+3月
+4月
+5月
+6月
+7月
+8月
+9月
+10月
+11月
+燃料調整費
+(每度電港仙)
+39.4
+39.4
+39.2
+39.8
+40.4
+42.6
+43.5
+45.0*
+45.1*
+46.2*
+47.4
+2026年11月1日起，燃料調整費為每度電47.4港仙。
+99.9
+`;
+  const parsed = call('parseFuelAdjustmentPage_', page);
+  assert.deepEqual(plain(parsed.current), { month: '2026-11', fuelAdjustment: 47.4 });
+  const november = plain(parsed.rows.filter((row) => row.month === '2026-11'));
+  assert.equal(november.length, 1);
+  assert.equal(november[0].fuelAdjustment, 47.4);
+  assert.equal(parsed.rows.length, 11);
+});
+
 test('parseTariffPage_ extracts the basic charges and confirms the peak window', () => {
   const page = `
 電動車住宅分時段用電價目
