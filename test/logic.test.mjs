@@ -28,6 +28,7 @@ import {
   dropSyncedPending,
   readStored,
   writeStored,
+  migrateLegacyPending,
 } from '../logic.js';
 
 const iso = (value) => new Date(value).toISOString();
@@ -106,18 +107,30 @@ test('normalizeRates and normalizeCars validate server rows', () => {
   assert.deepEqual(normalizeCars([{ id: 'model3', name: 'Model 3', active: 'FALSE' }]), [
     { id: 'model3', name: 'Model 3', active: false },
   ]);
+  const fallback = normalizeRates([{ ...rate, peakStart: 'bad', peakEnd: '25:00' }]);
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].peakStart, '16:00');
+  assert.equal(fallback[0].peakEnd, '23:00');
 });
 
 test('parse payloads validate the family and owner envelopes', () => {
+  const unassigned = record({ id: 'u1', car: 'unassigned', source: 'tesla' });
   const family = parseFamilyPayload({
     ok: true,
     car: { id: 'model3', name: 'Model 3', active: true },
     records: [record()],
+    unassigned: [unassigned],
     rates: [rate],
   });
   assert.equal(family.car.name, 'Model 3');
   assert.deepEqual(family.records, [record()]);
+  assert.deepEqual(family.unassigned, [unassigned]);
   assert.deepEqual(family.rates, [rate]);
+  assert.deepEqual(parseFamilyPayload({
+    ok: true,
+    car: { id: 'model3', name: 'Model 3', active: true },
+    records: [],
+  }).unassigned, []);
 
   const owner = parseOwnerPayload({
     ok: true,
@@ -193,11 +206,33 @@ test('toCsv emits the billing header, Hong Kong time, split, cost, and source', 
   );
 });
 
-test('csvEscape quotes commas, quotes, and newlines', () => {
+test('csvEscape quotes commas, quotes, and newlines and neutralizes formulas', () => {
   assert.equal(csvEscape('plain'), 'plain');
   assert.equal(csvEscape('a,b'), '"a,b"');
   assert.equal(csvEscape('a"b'), '"a""b"');
   assert.equal(csvEscape('a\nb'), '"a\nb"');
+  assert.equal(csvEscape('=1+1'), "'=1+1");
+  assert.equal(csvEscape('+1'), "'+1");
+  assert.equal(csvEscape('-1'), "'-1");
+  assert.equal(csvEscape('@cmd'), "'@cmd");
+});
+
+test('migrateLegacyPending copies v1 pending records to the car manual queue', () => {
+  const migrated = migrateLegacyPending([{ id: 'old-1', startAt: base }], 'model3');
+  assert.deepEqual(migrated, [record({
+    id: 'old-1',
+    car: 'model3',
+    source: 'manual',
+    kWh: null,
+    durationSec: null,
+    teslaStartAt: null,
+    teslaEndAt: null,
+    peakKWh: null,
+    offPeakKWh: null,
+    teslaKey: null,
+  })]);
+  assert.deepEqual(migrateLegacyPending(null, 'model3'), []);
+  assert.deepEqual(migrateLegacyPending([{ id: 'bad id', startAt: base }], 'model3'), []);
 });
 
 test('isRecentDuplicate and dropSyncedPending keep their existing behavior', () => {

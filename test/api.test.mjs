@@ -11,6 +11,7 @@ import {
   assignSession,
   ignoreSession,
   refreshRates,
+  claimSession,
 } from '../api.js';
 
 const base = 'https://example.test/api';
@@ -54,16 +55,19 @@ const captureFetch = (body, captured) => async (url, init) => {
 
 test('fetchFamilyData sends the car query and parses the payload', async () => {
   const captured = {};
+  const unassigned = { ...record, id: 'u1', car: 'unassigned', source: 'tesla' };
   const data = await fetchFamilyData(base, 'model3', captureFetch({
     ok: true,
     car: { id: 'model3', name: 'Model 3', active: true },
     records: [record],
+    unassigned: [unassigned],
     rates: [rate],
   }, captured));
   assert.match(captured.url, /^https:\/\/example\.test\/api\?car=model3$/);
   assert.equal(captured.init.method, 'GET');
   assert.equal(data.car.name, 'Model 3');
   assert.equal(data.records[0].id, 'rec-1');
+  assert.equal(data.unassigned[0].id, 'u1');
   assert.equal(data.rates[0].month, '2026-11');
 });
 
@@ -103,7 +107,7 @@ test('deleteRecord supports family and owner authorization', async () => {
   assert.deepEqual(JSON.parse(owner.init.body), { action: 'delete', id: 'rec-1', ownerKey: 'secret' });
 });
 
-test('syncTesla, assignSession, ignoreSession, and refreshRates send their actions', async () => {
+test('syncTesla, assignSession, ignoreSession, refreshRates, and claimSession send their actions', async () => {
   const sync = {};
   await syncTesla(base, { car: 'model3' }, captureFetch({ ok: true }, sync));
   assert.deepEqual(JSON.parse(sync.init.body), { action: 'sync', car: 'model3' });
@@ -115,6 +119,10 @@ test('syncTesla, assignSession, ignoreSession, and refreshRates send their actio
   const ignore = {};
   await ignoreSession(base, 'secret', 'rec-1', captureFetch({ ok: true }, ignore));
   assert.deepEqual(JSON.parse(ignore.init.body), { action: 'ignore', ownerKey: 'secret', id: 'rec-1' });
+
+  const claim = {};
+  await claimSession(base, 'leaf', 'unassigned-1', captureFetch({ ok: true }, claim));
+  assert.deepEqual(JSON.parse(claim.init.body), { action: 'claim', car: 'leaf', id: 'unassigned-1' });
 
   const rates = {};
   await refreshRates(base, 'secret', captureFetch({ ok: true }, rates));

@@ -4,6 +4,8 @@ Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/of
 
 Deployment target (the new UI is not live until the deployment step): https://happyliang12.github.io/ev-charge-log/
 
+Deployment order: do not merge or publish the static frontend before the Apps Script backend is cut over. The live frontend currently points at the legacy deployment; deploy the backend first, then merge/publish the frontend.
+
 ![Family view](docs/screenshot-family.png)
 
 ![Owner view](docs/screenshot-owner.png)
@@ -15,7 +17,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Each car has its own family URL: `https://happyliang12.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet.
 - The owner opens the owner URL (`?owner=<owner-key>`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
-- The owner assigns unmatched sessions to a car or ignores them. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
+- If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign or ignore unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
 - The family view never receives Tesla credentials or the owner key. The owner view receives the owner key from its URL and keeps it in memory.
 
 ## Features
@@ -23,7 +25,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - One-tap start recording with a per-car URL; no login and no car picker.
 - On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
-- Unmatched Tesla sessions appear as `unassigned` for the owner to assign or ignore.
+- Unmatched Tesla sessions appear as `unassigned` for the family to claim or the owner to assign/ignore.
+- The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with kWh, estimated cost, and real delete.
@@ -78,14 +81,14 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 
 - Rates and times are HK cents/kWh and Asia/Hong_Kong.
 - The split is proportional to session duration; it is an estimate.
-- The 8-cent/kWh 2026 special fuel rebate is not inferred. Enter an eligible rebate in the `Rates` tab if it applies.
+- The 8-cent/kWh 2026 special fuel rebate is not inferred. Enter an eligible rebate in the `Rates` tab and set that row's `manualOverride` to `TRUE` so `更新費率` does not overwrite it.
 - The actual CLP bill remains authoritative. Per-bill reconciliation is a future enhancement.
 
 ## One-time setup
 
 ### 1. Google Sheet and Apps Script
 
-1. Open the existing Google Sheet. Keep it private; the family view never links to it.
+1. Open the existing Google Sheet. The Sheet is currently link-shared by the owner's choice; anyone with the link can read the log. Set General access to Restricted if you want it private. The family view never links to it.
 2. Open Extensions -> Apps Script.
 3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/).
 4. Set `SHEET_ID` at the top of `Code.gs` to the ID from the Sheet URL (`https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`).
@@ -119,7 +122,8 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 Tesla API access is read-only for energy data. The app uses the official Fleet API with scopes `openid offline_access energy_device_data`.
 
 1. The Tesla developer app needs both allowed origins: `https://happyliang12.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
-2. On a machine with the repository and `tools/.env.tesla.local` (mode 600) containing `TESLA_CLIENT_ID` and `TESLA_CLIENT_SECRET`, run:
+2. The app also needs its EC public key hosted at the app origin's `.well-known/appspecific/com.tesla.3p.public-key.pem` path, and partner registration completed. The probe's setup text in `tools/tesla-probe.mjs` lists the exact commands.
+3. On a machine with the repository and `tools/.env.tesla.local` (mode 600) containing `TESLA_CLIENT_ID` and `TESLA_CLIENT_SECRET`, run:
 
 ```bash
 npm run auth:tesla
@@ -139,7 +143,7 @@ Rotate the Tesla client secret after development and deployment are complete. Up
 ```js
 window.APP_CONFIG = {
   API_URL: '<Apps Script Web app URL>',
-  SHEET_URL: '<private Google Sheet URL>',
+  SHEET_URL: '<Google Sheet URL>',
 };
 ```
 
@@ -174,7 +178,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 
 `GET`:
 
-- `?car=<id>` returns `{ ok, car, records, rates, serverTime }` for that car.
+- `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
 - `?owner=<key>` returns `{ ok, cars, records, rates, serverTime }` for the owner.
 
 `POST` with a `text/plain` JSON body:
@@ -183,6 +187,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'delete', id, car }` or `{ action: 'delete', id, ownerKey }`
 - `{ action: 'sync', car }` or `{ action: 'sync', ownerKey }`
 - `{ action: 'assign', ownerKey, id, car }`
+- `{ action: 'claim', car, id }` (family-scoped unassigned claim)
 - `{ action: 'ignore', ownerKey, id }`
 - `{ action: 'refreshRates', ownerKey }`
 
@@ -191,9 +196,9 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 ## Security
 
 - No accounts and no secrets in the frontend. The Apps Script URL and owner key are capability URLs.
-- Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records. Share it only with that car's driver.
+- Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records and claim unassigned Tesla sessions to that car. Share it only with that car's driver.
 - Tesla credentials live only in Script Properties.
-- The Sheet stays private. The family view does not link to it.
+- The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The family view does not link to it. Set General access to Restricted if you want it private.
 - Owner actions require `OWNER_KEY`; family actions require a valid car ID.
 - The owner key is kept in memory from the URL; it is not written to localStorage, logs, CSV, or family links.
 - `index.html` uses `<meta name="referrer" content="no-referrer">`; owner external links use `rel="noreferrer"`.
@@ -203,7 +208,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 ## Known limits
 
 - Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start.
-- If a driver forgets to press start, the session becomes `unassigned`; the owner assigns it.
+- If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
 - Peak/off-peak is duration-proportional, not measured per minute.
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. Manual `Rates` rows are the fallback.
@@ -217,7 +222,9 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 79 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 85 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+
+CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 
 ## License
 

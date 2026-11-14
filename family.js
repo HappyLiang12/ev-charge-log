@@ -19,27 +19,21 @@ import {
   dropSyncedPending,
   readStored,
   writeStored,
+  migrateLegacyPending,
 } from './logic.js';
 import {
   fetchFamilyData,
   postRecord,
   deleteRecord,
   syncTesla,
+  claimSession,
 } from './api.js';
-import { byId, showToast, setStatus, setBusy } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
 
 function monthLabel(month) {
   if (month === 'all') return '全部月份';
   const [year, value] = month.split('-');
   return `${year} 年 ${Number(value)} 月`;
-}
-
-function friendlyError(error, fallback) {
-  const raw = String((error && error.message) || '');
-  if (/inactive|停用/i.test(raw)) return '此車輛已停用，請聯絡車主。';
-  if (/unknown car|404|連結無效/i.test(raw)) return '車輛連結無效，請向車主索取新連結。';
-  if (/[\u4e00-\u9fff]/.test(raw) && !/^HTTP \d+$/i.test(raw)) return raw;
-  return fallback;
 }
 
 export function initFamily({ apiUrl, carId }) {
@@ -54,18 +48,23 @@ export function initFamily({ apiUrl, carId }) {
   const cached = readStored(storage, keys.cache);
   const queued = readStored(storage, keys.pending);
   const cachedRates = readStored(storage, RATES_KEY);
+  const legacyPending = readStored(storage, 'ev-charge-log.pending.v1');
   if (cached.corrupt) storage?.removeItem(keys.cache);
   if (queued.corrupt) storage?.removeItem(keys.pending);
   if (cachedRates.corrupt) storage?.removeItem(RATES_KEY);
+  if (legacyPending.corrupt) storage?.removeItem('ev-charge-log.pending.v1');
 
   const state = {
     car: { id: carId, name: carId, active: true },
     server: normalizeRecords(cached.value),
     pending: normalizeRecords(queued.value),
     rates: normalizeRates(cachedRates.value),
+    unassigned: [],
     syncedOnce: false,
     connecting: Boolean(apiUrl),
     syncing: false,
+    starting: false,
+    claiming: new Set(),
     deleting: new Set(),
     offline: false,
     selectedMonth: null,
@@ -82,6 +81,8 @@ export function initFamily({ apiUrl, carId }) {
     count: byId('familyCount'),
     split: byId('familySplit'),
     rateNote: byId('familyRateNote'),
+    unassigned: byId('familyUnassigned'),
+    unassignedEmpty: byId('familyUnassignedEmpty'),
     recentList: byId('recentList'),
     empty: byId('familyEmpty'),
     monthSelect: byId('monthSelect'),
@@ -94,6 +95,19 @@ export function initFamily({ apiUrl, carId }) {
     writeStored(storage, keys.cache, state.server);
     writeStored(storage, keys.pending, state.pending);
     writeStored(storage, RATES_KEY, state.rates);
+  }
+
+  if (state.pending.length === 0) {
+    const migrated = migrateLegacyPending(legacyPending.value, carId);
+    if (migrated.length > 0) {
+      state.pending = migrated;
+      persist();
+      try {
+        storage?.removeItem('ev-charge-log.pending.v1');
+      } catch {
+        // ignore storage failures
+      }
+    }
   }
 
   function rateFor(record) {
@@ -152,6 +166,38 @@ export function initFamily({ apiUrl, carId }) {
     return li;
   }
 
+  function makeUnassignedRow(record) {
+    const li = document.createElement('li');
+    const head = document.createElement('div');
+    head.className = 'owner-row-head';
+    const when = document.createElement('span');
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    const kwh = document.createElement('strong');
+    kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
+    head.append(when, kwh);
+
+    const meta = document.createElement('div');
+    meta.className = 'owner-row-meta';
+    const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
+    meta.textContent = `Tesla session · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+
+    const actions = document.createElement('div');
+    actions.className = 'owner-row-actions';
+    const claim = document.createElement('button');
+    claim.type = 'button';
+    const busy = state.claiming.has(record.id);
+    claim.disabled = busy;
+    claim.textContent = busy ? '認領中…' : '認領';
+    claim.setAttribute(
+      'aria-label',
+      `認領 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 的 Tesla session`,
+    );
+    claim.addEventListener('click', () => { void onClaim(record); });
+    actions.append(claim);
+    li.append(head, meta, actions);
+    return li;
+  }
+
   function render() {
     els.carName.textContent = state.car.name || carId;
     els.syncBtn.hidden = !apiUrl;
@@ -165,7 +211,7 @@ export function initFamily({ apiUrl, carId }) {
             ? '未同步'
             : '已連接';
     setStatus(els.status, status);
-    setBusy(els.startBtn, state.syncing, '同步中…', '⚡ 開始充電');
+    setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
     setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新 Tesla');
 
     const records = mergeRecords(state.server, state.pending);
@@ -180,7 +226,7 @@ export function initFamily({ apiUrl, carId }) {
 
     const picked = selectRate(current, state.rates);
     if (!picked.rate) {
-      els.rateNote.textContent = '未設定費率；電費暫不顯示。';
+      els.rateNote.textContent = '未設定本月費率；請確認本月費率。';
     } else {
       const baseline = Number(picked.rate.basicOffPeak) + Number(picked.rate.fuelAdjustment);
       const peak = Number(picked.rate.basicPeak) + Number(picked.rate.fuelAdjustment);
@@ -214,6 +260,11 @@ export function initFamily({ apiUrl, carId }) {
     for (const record of records.slice(0, 5)) els.recentList.append(makeRow(record));
     els.empty.hidden = records.length > 0;
     els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
+
+    els.unassigned.replaceChildren();
+    for (const record of state.unassigned) els.unassigned.append(makeUnassignedRow(record));
+    els.unassignedEmpty.hidden = state.unassigned.length > 0;
+    els.unassignedEmpty.textContent = apiUrl ? '冇未配對 Tesla session。' : '未設定 Google Sheet。';
   }
 
   async function retryPending() {
@@ -239,6 +290,7 @@ export function initFamily({ apiUrl, carId }) {
     state.server = data.records.filter((record) => !state.deleting.has(record.id));
     state.car = data.car;
     state.rates = data.rates;
+    state.unassigned = mergeRecords(data.unassigned, []);
     state.pending = dropSyncedPending(state.pending, state.server);
     state.offline = false;
     state.syncedOnce = true;
@@ -286,6 +338,7 @@ export function initFamily({ apiUrl, carId }) {
   }
 
   async function onStart() {
+    if (state.starting) return;
     const startAt = new Date().toISOString();
     const records = mergeRecords(state.server, state.pending);
     if (isRecentDuplicate(records[0]?.startAt, Date.now())) {
@@ -307,22 +360,27 @@ export function initFamily({ apiUrl, carId }) {
       teslaKey: null,
       source: 'manual',
     };
+    state.starting = true;
     state.pending = [record, ...state.pending];
     persist();
     render();
     showToast(els.toast, '已記錄開始時間。');
-    if (!apiUrl) return;
-    setBusy(els.startBtn, true, '同步中…', '⚡ 開始充電');
+    if (!apiUrl) {
+      state.starting = false;
+      render();
+      return;
+    }
     try {
       await postRecord(apiUrl, record, carId);
       state.pending = state.pending.filter((row) => row.id !== record.id);
       state.server = [record, ...state.server];
       persist();
-      render();
     } catch (error) {
       state.offline = true;
-      render();
       showToast(els.toast, friendlyError(error, '已喺本機記錄；暫時未能同步，會自動重試。'));
+    } finally {
+      state.starting = false;
+      render();
     }
   }
 
@@ -347,6 +405,23 @@ export function initFamily({ apiUrl, carId }) {
       showToast(els.toast, friendlyError(error, '刪除失敗，請檢查網絡後重試。'));
     } finally {
       state.deleting.delete(record.id);
+      render();
+    }
+  }
+
+  async function onClaim(record) {
+    if (!apiUrl || state.claiming.has(record.id)) return;
+    state.claiming.add(record.id);
+    render();
+    try {
+      await claimSession(apiUrl, carId, record.id);
+      await fetchData();
+      showToast(els.toast, '已認領。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '認領失敗，請檢查網絡後重試。'));
+    } finally {
+      state.claiming.delete(record.id);
       render();
     }
   }

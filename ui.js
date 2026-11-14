@@ -31,3 +31,15 @@ export function setBusy(button, busy, busyLabel, idleLabel) {
   button.textContent = busy ? busyLabel : idleLabel;
   button.setAttribute('aria-busy', busy ? 'true' : 'false');
 }
+
+export function friendlyError(error, fallback) {
+  const raw = String((error && error.message) || '');
+  if (/invalid owner key|owner key/i.test(raw)) return '管理連結無效，請確認 owner key。';
+  if (/authorization|授權|401|403|Tesla token/i.test(raw)) {
+    return 'Tesla 授權已過期，請重新執行本機設定工具。';
+  }
+  if (/inactive|停用/i.test(raw)) return '此車輛已停用，請聯絡車主。';
+  if (/unknown car|404|連結無效/i.test(raw)) return '車輛連結無效，請向車主索取新連結。';
+  if (/[\u4e00-\u9fff]/.test(raw) && !/^HTTP \d+$/i.test(raw)) return raw;
+  return fallback;
+}

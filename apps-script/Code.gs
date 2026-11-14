@@ -33,9 +33,10 @@ function doPost(e) {
       else if (action === 'delete') result = deleteAction_(data);
       else if (action === 'sync') result = syncAction_(data);
       else if (action === 'assign') result = assignAction_(data);
+      else if (action === 'claim') result = claimAction_(data);
       else if (action === 'ignore') result = ignoreAction_(data);
       else if (action === 'refreshRates') result = ratesAction_(data);
-      else throw new Error('Unknown action');
+      else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
       lock.releaseLock();
@@ -75,10 +76,12 @@ function familyPayload_(carId) {
   var car = findCar_(carId);
   if (!car) throw new Error('Unknown car: ' + carId);
   if (!car.active) throw new Error('Car is inactive: ' + car.id);
+  var records = readLog_();
   return {
     ok: true,
     car: car,
-    records: readLog_().filter(function (record) { return record.car === car.id; }),
+    records: records.filter(function (record) { return record.car === car.id; }),
+    unassigned: records.filter(function (record) { return record.car === 'unassigned'; }),
     rates: readRates_(),
     serverTime: new Date().toISOString(),
   };
@@ -165,17 +168,16 @@ function syncAction_(data) {
   return syncTesla_();
 }
 
-function assignAction_(data) {
-  assertOwner_(data.ownerKey);
-  var records = readLog_();
-  var target = null;
+function findRecord_(records, id) {
   for (var i = 0; i < records.length; i += 1) {
-    if (records[i].id === String(data.id)) target = records[i];
+    if (records[i].id === String(id)) return records[i];
   }
+  return null;
+}
+
+function assignUnassigned_(target, car, records) {
   if (!target) throw new Error('Unknown record');
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
-  var car = findCar_(data.car);
-  if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
   var windowMs = Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
   var manualRows = records.filter(function (record) {
@@ -183,18 +185,38 @@ function assignAction_(data) {
   });
   var manual = closestManualCandidate_(target.teslaStartAt || target.startAt, manualRows, windowMs);
   if (manual) {
-    updateLog_(target.id, {
-      car: car.id,
-      startAt: manual.startAt,
-      date: manual.date,
-      time: manual.time,
+    var updated = updateLog_(manual.id, {
+      kWh: target.kWh,
+      durationSec: target.durationSec,
+      teslaStartAt: target.teslaStartAt,
+      teslaEndAt: target.teslaEndAt,
+      peakKWh: target.peakKWh,
+      offPeakKWh: target.offPeakKWh,
+      teslaKey: target.teslaKey,
       source: 'tesla+manual',
     });
-    deleteLog_(manual.id);
-    return { assigned: true, merged: true };
+    if (!updated) throw new Error('Failed to update manual record');
+    deleteLog_(target.id);
+    return { assigned: true, merged: true, id: manual.id };
   }
-  updateLog_(target.id, { car: car.id, source: 'tesla' });
-  return { assigned: true, merged: false };
+  var assigned = updateLog_(target.id, { car: car.id, source: 'tesla' });
+  if (!assigned) throw new Error('Failed to assign record');
+  return { assigned: true, merged: false, id: target.id };
+}
+
+function claimAction_(data) {
+  var car = findCar_(data.car);
+  if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
+  var records = readLog_();
+  return assignUnassigned_(findRecord_(records, data.id), car, records);
+}
+
+function assignAction_(data) {
+  assertOwner_(data.ownerKey);
+  var car = findCar_(data.car);
+  if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
+  var records = readLog_();
+  return assignUnassigned_(findRecord_(records, data.id), car, records);
 }
 
 function ignoreAction_(data) {

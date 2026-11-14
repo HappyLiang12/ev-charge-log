@@ -142,7 +142,7 @@ large to review and test. Existing user-visible behavior is preserved.
 type Source = 'manual' | 'tesla' | 'tesla+manual' | 'legacy';
 
 type SessionRecord = {
-  id: string;                 // UUID, or tesla-<startSeconds>
+  id: string;                 // UUID, or tesla-<startSeconds>-<hash>
   car: string;                // Cars.id, 'unassigned', or '' for legacy
   startAt: string;            // ISO 8601 UTC; manual press time
   date: string;               // YYYY-MM-DD in Asia/Hong_Kong
@@ -165,7 +165,8 @@ Rules:
 - A matched record keeps its manual `id`, `startAt`, and `car`, and gains
   Tesla fields, `peakKWh`, `offPeakKWh`, and `source='tesla+manual'`.
 - An unmatched Tesla session becomes `car='unassigned'`, `source='tesla'`,
-  `id='tesla-<startSeconds>'`, and `startAt` equal to the Tesla start.
+  `id='tesla-<startSeconds>-<hash>'`, and `startAt` equal to the Tesla start.
+  The deterministic hash suffix keeps same-second sessions distinct.
 - Legacy rows have `source='legacy'` and blank new fields. They are not
   billed and are never shown to family URLs.
 - `kWh` and the split are stored as numbers. Cost is not stored; it is
@@ -495,13 +496,15 @@ preflight, matching the current app.
   "ok": true,
   "car": { "id": "model3", "name": "Model 3" },
   "records": [SessionRecord],
+  "unassigned": [SessionRecord],
   "rates": [Rate],
   "serverTime": "2026-11-14T14:00:00.000Z"
 }
 ```
 
-Only records whose `car` equals the requested car are returned. Unassigned and
-legacy rows are not returned.
+Only records whose `car` equals the requested car are in `records`. Unassigned
+Tesla rows are returned separately in `unassigned` so the family can claim a
+forgotten start; legacy rows are not returned.
 
 `GET ?owner=<key>` returns:
 
@@ -527,6 +530,7 @@ missing parameters return
 | `delete` | `{ id, car }` or `{ id, ownerKey }` | Car owns row, or owner | Deletes row; ignores its `teslaKey` first |
 | `sync` | `{ car }` or `{ ownerKey }` | Valid car or owner | Runs matching; returns counts |
 | `assign` | `{ ownerKey, id, car }` | Owner | Assigns an unassigned row; merges a pending manual row when possible |
+| `claim` | `{ car, id }` | Valid active car | Family-scoped assign to that car; same merge behavior as `assign` |
 | `ignore` | `{ ownerKey, id }` | Owner | Adds `teslaKey` to `Ignored` and deletes the row |
 | `refreshRates` | `{ ownerKey }` | Owner | Fetches and upserts rates |
 
@@ -546,9 +550,9 @@ rejects supplied values that do not match. `delete` adds the row's `teslaKey`
 to `Ignored` before removing the row when the key is present. This prevents a
 deleted Tesla session from returning on the next sync.
 
-`assign` behavior:
+`assign` behavior (also used by the family `claim`):
 
-1. Validate the target car.
+1. Validate the target car (and, for `assign`, the owner key).
 2. If the row is unassigned and a pending manual row for the target car exists
    within the matching window, copy the Tesla fields into the manual row,
    change its source to `tesla+manual`, and delete the unassigned row.
@@ -574,6 +578,9 @@ Shown for `?car=<id>`.
   A smaller line shows the peak/off-peak kWh split and the rate month.
 - Recent list: date, weekday, time, kWh, estimated cost, delete button.
   A record without kWh shows `待配對` and `—` for cost.
+- Unassigned list: Tesla start, kWh, duration, and `認領`. Claiming a session
+  assigns it to this car (or merges a nearby manual pending row) without
+  entering a backdated time. This is the forgotten-start recovery path.
 - Delete confirmation for a Tesla-linked record warns that the Tesla session
   will also be ignored.
 - Month selector and `匯出 CSV`; default month follows the existing behavior.
@@ -636,12 +643,14 @@ times are Asia/Hong_Kong.
 
 - The family app never receives Tesla credentials or the owner key.
 - Tesla credentials live only in Apps Script Script Properties.
-- The Sheet is the owner's private store. The family view does not link to it.
-  The owner must keep the Sheet's sharing restricted; the public family app
-  must not expose the Sheet URL.
+- The Sheet is link-shared by the current owner choice; anyone with the link
+  can read the log. Set General access to Restricted if privacy is required.
+  The family view does not link to the Sheet, but `config.js` contains the
+  Sheet URL in the public repository, so treat that URL as non-secret.
 - The Apps Script URL and each family URL are capabilities. Anyone with a
-  family URL can add or delete that car's records. This matches the existing
-  no-login model; the household trusts its members.
+  family URL can add/delete that car's records and claim unassigned Tesla
+  sessions to that car. This matches the existing no-login model; the household
+  trusts its members.
 - The owner key is a capability, not authentication. A leaked key exposes all
   records and owner actions. Rotate `OWNER_KEY` if it leaks.
 - The Tesla OAuth app remains read-only for energy data; it has no vehicle
@@ -665,7 +674,10 @@ times are Asia/Hong_Kong.
 - Sync is idempotent by `teslaKey`.
 - Ignored keys are skipped.
 - Unassigned rows reconcile into later manual rows.
-- Assign merges a pending manual row when appropriate.
+- Assign merges a pending manual row when appropriate; family claim follows the
+  same merge contract and keeps the manual row's identity.
+- Tesla 401/403 surfaces an actionable authorization-expired message; a 401
+  clears the cached access token and retries once.
 - Peak split: exact 16:00 and 23:00 boundaries, sessions entirely inside each
   period, sessions crossing one boundary, and sessions spanning multiple days.
 - The split totals equal kWh within `1e-6`.
@@ -690,10 +702,12 @@ times are Asia/Hong_Kong.
 
 ### 14.3 Browser smoke
 
-- Family URL shows only its car and its records.
+- Family URL shows only its car and its records, plus unassigned Tesla
+  sessions that it can claim.
 - Owner URL shows all cars, unassigned sessions, and rates.
 - Start adds a manual record; sync fills it from a mocked session.
-- A forgotten start becomes unassigned; assign moves it to a car.
+- A forgotten start becomes unassigned; the family claims it, and the owner
+  assign/ignore paths still work.
 - Delete ignores the Tesla key; a second sync does not recreate the row.
 - Rate fallback and missing-rate warnings render.
 - CSV download matches the selected car/month and includes the new columns.

@@ -14,7 +14,7 @@ import {
   assignSession,
   ignoreSession,
 } from './api.js';
-import { byId, showToast, setStatus, setBusy } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
 
 export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
   const state = {
@@ -330,7 +330,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       state.loading = false;
       state.offline = true;
       render();
-      showToast(els.toast, '未能載入管理資料，請確認管理連結及網絡。');
+      showToast(els.toast, friendlyError(error, '未能載入管理資料，請確認管理連結及網絡。'));
     }
   }
 
@@ -342,9 +342,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       const result = await syncTesla(apiUrl, { ownerKey });
       showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
       await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
-    } catch {
+    } catch (error) {
       state.offline = true;
-      showToast(els.toast, 'Tesla 同步失敗，請檢查網絡後重試。');
+      showToast(els.toast, friendlyError(error, 'Tesla 同步失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
@@ -359,9 +359,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       const result = await refreshRates(apiUrl, ownerKey);
       showToast(els.toast, `已更新 ${Number(result.updated) || 0} 個月份費率。`);
       await refreshOrWarn('費率已更新，但未能載入最新資料，請重新載入。');
-    } catch {
+    } catch (error) {
       state.offline = true;
-      showToast(els.toast, '費率更新失敗，請檢查網絡後重試。');
+      showToast(els.toast, friendlyError(error, '費率更新失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
@@ -381,9 +381,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       await assignSession(apiUrl, ownerKey, record.id, car);
       showToast(els.toast, '已分配。');
       await refreshOrWarn('已分配，但未能載入最新資料，請重新載入。');
-    } catch {
+    } catch (error) {
       state.offline = true;
-      showToast(els.toast, '分配失敗，請檢查網絡後重試。');
+      showToast(els.toast, friendlyError(error, '分配失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
@@ -399,9 +399,9 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       await ignoreSession(apiUrl, ownerKey, record.id);
       showToast(els.toast, '已忽略。');
       await refreshOrWarn('已忽略，但未能載入最新資料，請重新載入。');
-    } catch {
+    } catch (error) {
       state.offline = true;
-      showToast(els.toast, '忽略失敗，請檢查網絡後重試。');
+      showToast(els.toast, friendlyError(error, '忽略失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
