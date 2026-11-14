@@ -1,96 +1,196 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isValidRecord,
-  normalizeRecords,
-  parseServerRecords,
-  formatLocalDate,
-  formatLocalTime,
-  formatWeekday,
+  RATES_KEY,
+  storageKeys,
+  formatHkDate,
+  formatHkTime,
+  formatHkWeekday,
   monthKey,
+  isValidRecord,
+  normalizeRecord,
+  normalizeRecords,
+  normalizeRates,
+  normalizeCars,
+  parseServerRecords,
+  parseFamilyPayload,
+  parseOwnerPayload,
   mergeRecords,
   monthsWithRecords,
   defaultMonth,
   filterByMonth,
+  selectRate,
+  computeCost,
+  summarizeRecords,
   csvEscape,
   toCsv,
   isRecentDuplicate,
   dropSyncedPending,
   readStored,
   writeStored,
-  fetchRecords,
-  postRecord,
-  deleteRecord,
-} from '../app.js';
+} from '../logic.js';
 
-const atLocal = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min).toISOString();
-const rec = (id, iso) => ({ id, startAt: iso });
-
-test('formatLocalDate, formatLocalTime, formatWeekday use local calendar values', () => {
-  const iso = atLocal(2026, 11, 14, 21, 5);
-  assert.equal(formatLocalDate(iso), '2026-11-14');
-  assert.equal(formatLocalTime(iso), '21:05');
-  assert.equal(formatWeekday(iso), '週六');
+const iso = (value) => new Date(value).toISOString();
+const base = '2026-11-14T05:00:00.000Z'; // 13:00 in Hong Kong
+const rate = {
+  month: '2026-11',
+  basicOffPeak: 94.5,
+  basicPeak: 137.5,
+  fuelAdjustment: 47.4,
+  rebate: 0,
+  peakStart: '16:00',
+  peakEnd: '23:00',
+  sourceUrl: 'https://www.clp.com.hk/',
+  fetchedAt: '2026-11-14T00:00:00.000Z',
+  manualOverride: false,
+};
+const record = (overrides = {}) => ({
+  id: 'rec-1',
+  car: 'model3',
+  startAt: base,
+  date: '2026-11-14',
+  time: '13:00',
+  kWh: 20,
+  durationSec: 7200,
+  teslaStartAt: base,
+  teslaEndAt: '2026-11-14T07:00:00.000Z',
+  peakKWh: 10,
+  offPeakKWh: 10,
+  teslaKey: 'din:1786968749',
+  source: 'tesla+manual',
+  ...overrides,
 });
 
-test('isValidRecord accepts UUID-like ids and ISO dates only', () => {
-  assert.equal(isValidRecord({ id: 'abc-123', startAt: atLocal(2026, 11, 14, 9, 0) }), true);
-  assert.equal(isValidRecord({ id: 'bad id', startAt: atLocal(2026, 11, 14, 9, 0) }), false);
-  assert.equal(isValidRecord({ id: 'abc', startAt: 'nope' }), false);
-  assert.equal(isValidRecord(null), false);
+test('Hong Kong formatting and month keys ignore the device timezone', () => {
+  assert.equal(formatHkDate('2026-11-14T13:05:00.000Z'), '2026-11-14');
+  assert.equal(formatHkTime('2026-11-14T13:05:00.000Z'), '21:05');
+  assert.equal(formatHkWeekday('2026-11-14T13:05:00.000Z'), '週六');
+  assert.equal(formatHkDate('2026-11-14T16:30:00.000Z'), '2026-11-15');
+  assert.equal(formatHkTime('2026-11-14T16:30:00.000Z'), '00:30');
+  assert.equal(formatHkWeekday('2026-11-14T16:30:00.000Z'), '週日');
+  assert.equal(monthKey('2026-11-14T16:30:00.000Z'), '2026-11');
 });
 
-test('normalizeRecords drops malformed entries and copies fields', () => {
-  const good = rec('abc-123', atLocal(2026, 11, 14, 9, 0));
-  const normalized = normalizeRecords([
-    good,
-    { id: 'bad id', startAt: good.startAt },
-    { id: 'x', startAt: 'nope' },
-    null,
+test('storageKeys are per car and the rates key is shared', () => {
+  assert.deepEqual(storageKeys('model3'), {
+    cache: 'ev-charge-log.cache.v2.model3',
+    pending: 'ev-charge-log.pending.v2.model3',
+  });
+  assert.equal(RATES_KEY, 'ev-charge-log.rates.v1');
+});
+
+test('normalizeRecord preserves the full billing record and marks old rows legacy', () => {
+  const normalized = normalizeRecord(record());
+  assert.deepEqual(normalized, record());
+
+  const old = normalizeRecord({ id: 'old-1', startAt: base });
+  assert.equal(old.car, '');
+  assert.equal(old.source, 'legacy');
+  assert.equal(old.date, '2026-11-14');
+  assert.equal(old.time, '13:00');
+  assert.equal(old.kWh, null);
+  assert.equal(old.teslaKey, null);
+
+  assert.equal(normalizeRecord({ ...record(), car: 'Bad Car' }), null);
+  assert.equal(normalizeRecord({ id: 'bad id', startAt: base }), null);
+  assert.equal(normalizeRecord({ id: 'x', startAt: 'nope' }), null);
+});
+
+test('normalizeRecords drops malformed entries', () => {
+  assert.deepEqual(normalizeRecords([record(), { id: 'bad id', startAt: base }, null]), [record()]);
+});
+
+test('normalizeRates and normalizeCars validate server rows', () => {
+  assert.deepEqual(normalizeRates([{ ...rate, manualOverride: 'TRUE' }]), [{ ...rate, manualOverride: true }]);
+  assert.deepEqual(normalizeRates([{ ...rate, basicPeak: null }]), []);
+  assert.deepEqual(normalizeCars([{ id: 'model3', name: 'Model 3', active: 'FALSE' }]), [
+    { id: 'model3', name: 'Model 3', active: false },
   ]);
-  assert.deepEqual(normalized, [good]);
 });
 
-test('parseServerRecords validates the envelope and entries', () => {
-  const good = rec('abc-123', atLocal(2026, 11, 14, 9, 0));
-  assert.deepEqual(
-    parseServerRecords({ ok: true, records: [good, { id: 'x', startAt: 'nope' }] }),
-    [good],
-  );
+test('parse payloads validate the family and owner envelopes', () => {
+  const family = parseFamilyPayload({
+    ok: true,
+    car: { id: 'model3', name: 'Model 3', active: true },
+    records: [record()],
+    rates: [rate],
+  });
+  assert.equal(family.car.name, 'Model 3');
+  assert.deepEqual(family.records, [record()]);
+  assert.deepEqual(family.rates, [rate]);
+
+  const owner = parseOwnerPayload({
+    ok: true,
+    cars: [{ id: 'model3', name: 'Model 3', active: true }],
+    records: [record()],
+    rates: [rate],
+  });
+  assert.equal(owner.cars.length, 1);
+  assert.deepEqual(owner.records, [record()]);
   assert.throws(() => parseServerRecords({ ok: false }), /Invalid API response/);
-  assert.throws(() => parseServerRecords(null), /Invalid API response/);
+  assert.throws(() => parseFamilyPayload({ ok: true, car: null, records: [] }), /Invalid car payload/);
 });
 
-test('monthKey and filterByMonth use the local month', () => {
-  const nov = rec('a', atLocal(2026, 11, 30, 23, 59));
-  const dec = rec('b', atLocal(2026, 12, 1, 0, 0));
-  assert.equal(monthKey(nov.startAt), '2026-11');
-  assert.equal(monthKey(dec.startAt), '2026-12');
-  assert.deepEqual(filterByMonth([nov, dec], '2026-11').map((r) => r.id), ['a']);
-  assert.equal(filterByMonth([nov, dec], 'all').length, 2);
-});
-
-test('mergeRecords unions by id and sorts newest first', () => {
-  const older = rec('a', atLocal(2026, 11, 1, 8, 0));
-  const newer = rec('b', atLocal(2026, 11, 2, 8, 0));
+test('merge, month filtering, and default month use startAt', () => {
+  const older = record({ id: 'a', startAt: '2026-10-31T16:00:00.000Z' }); // 2026-11-01 00:00 HK
+  const newer = record({ id: 'b', startAt: '2026-11-02T00:00:00.000Z' });
   const merged = mergeRecords([older], [newer, older]);
   assert.deepEqual(merged.map((r) => r.id), ['b', 'a']);
+  assert.deepEqual(monthsWithRecords([older, newer]), ['2026-11']);
+  assert.equal(filterByMonth([older, newer], '2026-11').length, 2);
+  assert.equal(filterByMonth([older, newer], 'all').length, 2);
+  assert.equal(defaultMonth([older, newer], new Date('2026-11-14T00:00:00.000Z')), '2026-11');
+  assert.equal(defaultMonth([older], new Date('2026-12-14T00:00:00.000Z')), '2026-11');
+  assert.equal(defaultMonth([], new Date('2026-12-14T00:00:00.000Z')), 'all');
 });
 
-test('monthsWithRecords and defaultMonth prefer current then newest', () => {
-  const nov = rec('a', atLocal(2026, 11, 5, 9, 0));
-  const oct = rec('b', atLocal(2026, 10, 5, 9, 0));
-  assert.deepEqual(monthsWithRecords([oct, nov]), ['2026-11', '2026-10']);
-  assert.equal(defaultMonth([nov, oct], new Date(2026, 10, 14)), '2026-11');
-  assert.equal(defaultMonth([oct], new Date(2026, 10, 14)), '2026-10');
-  assert.equal(defaultMonth([], new Date(2026, 10, 14)), 'all');
+test('selectRate prefers the exact month then the latest earlier month', () => {
+  const october = { ...rate, month: '2026-10', fuelAdjustment: 46.2 };
+  assert.deepEqual(selectRate('2026-11', [october, rate]), { rate, fallback: false });
+  assert.deepEqual(selectRate('2026-12', [october, rate]), { rate, fallback: true });
+  assert.deepEqual(selectRate('2026-09', [october, rate]), { rate: null, fallback: false });
 });
 
-test('toCsv emits BOM, CRLF, header, and chronological rows', () => {
-  const later = rec('b', atLocal(2026, 11, 14, 21, 30));
-  const earlier = rec('a', atLocal(2026, 11, 14, 9, 5));
-  const csv = toCsv([later, earlier]);
-  assert.equal(csv, '\uFEFF日期,時間\r\n2026-11-14,09:05\r\n2026-11-14,21:30\r\n');
+test('computeCost applies peak, off-peak, and rebate', () => {
+  assert.equal(computeCost(record(), rate), 32.68);
+  assert.equal(computeCost(record(), { ...rate, rebate: 5 }), 31.68);
+  assert.equal(computeCost(record({ peakKWh: null }), rate), null);
+});
+
+test('summarizeRecords totals kWh, split, cost, and missing-rate state', () => {
+  assert.deepEqual(summarizeRecords([record()], [rate], '2026-11'), {
+    count: 1,
+    matched: 1,
+    pending: 0,
+    kWh: 20,
+    peakKWh: 10,
+    offPeakKWh: 10,
+    cost: 32.68,
+    missingRate: 0,
+    fallback: false,
+  });
+  assert.deepEqual(summarizeRecords([record({ kWh: null })], [rate], '2026-11'), {
+    count: 1,
+    matched: 0,
+    pending: 1,
+    kWh: 0,
+    peakKWh: 0,
+    offPeakKWh: 0,
+    cost: null,
+    missingRate: 0,
+    fallback: false,
+  });
+  assert.equal(summarizeRecords([record()], [], '2026-11').cost, null);
+  assert.equal(summarizeRecords([record()], [], '2026-11').missingRate, 1);
+});
+
+test('toCsv emits the billing header, Hong Kong time, split, cost, and source', () => {
+  const csv = toCsv([record()], { carNames: { model3: 'Model 3' }, rates: [rate] });
+  assert.equal(
+    csv,
+    '\uFEFF日期,時間,車,kWh,非高峰 kWh,高峰 kWh,估算電費 (HKD),來源\r\n'
+    + '2026-11-14,13:00,Model 3,20.00,10.00,10.00,32.68,tesla+manual\r\n',
+  );
 });
 
 test('csvEscape quotes commas, quotes, and newlines', () => {
@@ -100,125 +200,34 @@ test('csvEscape quotes commas, quotes, and newlines', () => {
   assert.equal(csvEscape('a\nb'), '"a\nb"');
 });
 
-test('isRecentDuplicate only matches the last 2 seconds', () => {
-  const iso = atLocal(2026, 11, 14, 21, 0);
-  const t = Date.parse(iso);
-  assert.equal(isRecentDuplicate(iso, t + 1500), true);
-  assert.equal(isRecentDuplicate(iso, t + 2000), false);
-  assert.equal(isRecentDuplicate(null, t), false);
-});
-
-test('dropSyncedPending removes ids already present on the server', () => {
-  const a = rec('a', atLocal(2026, 11, 1, 1, 0));
-  const b = rec('b', atLocal(2026, 11, 2, 1, 0));
+test('isRecentDuplicate and dropSyncedPending keep their existing behavior', () => {
+  const at = Date.parse(base);
+  assert.equal(isRecentDuplicate(base, at + 1500), true);
+  assert.equal(isRecentDuplicate(base, at + 2000), false);
+  assert.equal(isRecentDuplicate(null, at), false);
+  const a = record({ id: 'a' });
+  const b = record({ id: 'b' });
   assert.deepEqual(dropSyncedPending([a, b], [a]).map((r) => r.id), ['b']);
 });
 
-function fakeStorage(initial = {}) {
-  const map = new Map(Object.entries(initial));
-  return {
+test('readStored and writeStored handle storage failures and corruption', () => {
+  const map = new Map();
+  const storage = {
     getItem: (key) => (map.has(key) ? map.get(key) : null),
     setItem: (key, value) => map.set(key, String(value)),
     removeItem: (key) => map.delete(key),
   };
-}
-
-const fakeResponse = (body, { ok = true, status = 200 } = {}) => ({
-  ok,
-  status,
-  json: async () => body,
-});
-
-test('readStored handles missing, corrupt, and valid data', () => {
-  const storage = fakeStorage();
   assert.deepEqual(readStored(storage, 'missing'), { value: null, corrupt: false });
   storage.setItem('bad', '{oops');
   assert.deepEqual(readStored(storage, 'bad'), { value: null, corrupt: true });
-  storage.setItem('good', '[1,2]');
+  assert.equal(writeStored(storage, 'good', [1, 2]), true);
   assert.deepEqual(readStored(storage, 'good'), { value: [1, 2], corrupt: false });
-  assert.deepEqual(readStored(null, 'good'), { value: null, corrupt: false });
+  assert.equal(writeStored({ setItem() { throw new Error('quota'); } }, 'x', 1), false);
+  assert.equal(writeStored(null, 'x', 1), false);
 });
 
-test('writeStored returns false when storage throws', () => {
-  assert.equal(writeStored({ setItem() { throw new Error('quota'); } }, 'k', 1), false);
-  assert.equal(writeStored(null, 'k', 1), false);
-});
-
-test('fetchRecords sends GET and returns validated records', async () => {
-  const iso = atLocal(2026, 11, 14, 9, 0);
-  const calls = [];
-  const fetchImpl = async (url, init) => {
-    calls.push({ url, init });
-    return fakeResponse({ ok: true, records: [{ id: 'a', startAt: iso }] });
-  };
-  const records = await fetchRecords('https://example.test/api', fetchImpl);
-  assert.deepEqual(records, [{ id: 'a', startAt: iso }]);
-  assert.equal(calls[0].url, 'https://example.test/api');
-  assert.equal(calls[0].init.method, 'GET');
-});
-
-test('fetchRecords throws on HTTP and envelope failures', async () => {
-  await assert.rejects(
-    fetchRecords('u', async () => fakeResponse(null, { ok: false, status: 500 })),
-    /HTTP 500/,
-  );
-  await assert.rejects(
-    fetchRecords('u', async () => fakeResponse({ ok: false })),
-    /Invalid API response/,
-  );
-});
-
-test('postRecord sends a text/plain body with local date and time', async () => {
-  const iso = atLocal(2026, 11, 14, 9, 5);
-  let captured;
-  const fetchImpl = async (url, init) => {
-    captured = { url, init };
-    return fakeResponse({ ok: true });
-  };
-  await postRecord('https://example.test/api', { id: 'a', startAt: iso }, fetchImpl);
-  assert.equal(captured.url, 'https://example.test/api');
-  assert.equal(captured.init.method, 'POST');
-  assert.equal(captured.init.headers['Content-Type'], 'text/plain;charset=utf-8');
-  assert.deepEqual(JSON.parse(captured.init.body), {
-    id: 'a',
-    startAt: iso,
-    date: '2026-11-14',
-    time: '09:05',
-  });
-});
-
-test('postRecord rejects HTTP and API-level errors', async () => {
-  const record = { id: 'a', startAt: atLocal(2026, 11, 14, 9, 5) };
-  await assert.rejects(
-    postRecord('u', record, async () => fakeResponse(null, { ok: false, status: 502 })),
-    /HTTP 502/,
-  );
-  await assert.rejects(
-    postRecord('u', record, async () => fakeResponse({ ok: false, error: 'nope' })),
-    /nope/,
-  );
-});
-
-test('deleteRecord sends a delete action with the record id', async () => {
-  let captured;
-  const fetchImpl = async (url, init) => {
-    captured = { url, init };
-    return fakeResponse({ ok: true });
-  };
-  await deleteRecord('https://example.test/api', 'abc-123', fetchImpl);
-  assert.equal(captured.url, 'https://example.test/api');
-  assert.equal(captured.init.method, 'POST');
-  assert.equal(captured.init.headers['Content-Type'], 'text/plain;charset=utf-8');
-  assert.deepEqual(JSON.parse(captured.init.body), { action: 'delete', id: 'abc-123' });
-});
-
-test('deleteRecord rejects HTTP and API-level errors', async () => {
-  await assert.rejects(
-    deleteRecord('u', 'a', async () => fakeResponse(null, { ok: false, status: 500 })),
-    /HTTP 500/,
-  );
-  await assert.rejects(
-    deleteRecord('u', 'a', async () => fakeResponse({ ok: false, error: 'nope' })),
-    /nope/,
-  );
+test('isValidRecord accepts the new record shape and old records', () => {
+  assert.equal(isValidRecord(record()), true);
+  assert.equal(isValidRecord({ id: 'old', startAt: base }), true);
+  assert.equal(isValidRecord({ id: 'bad id', startAt: base }), false);
 });
