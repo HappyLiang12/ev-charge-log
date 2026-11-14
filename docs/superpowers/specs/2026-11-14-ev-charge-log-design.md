@@ -47,7 +47,7 @@ type Record = { id: string; startAt: string } // startAt = ISO 8601 UTC (toISOSt
 
 ### Storage behavior
 
-- Read at startup; invalid JSON → error banner, app runs in read-only mode and never overwrites the corrupt payload.
+- Read at startup; invalid JSON → error banner, app runs in read-only mode (add/delete disabled) and never overwrites the corrupt payload.
 - Error banner offers a confirmed "重設本機資料" action that clears the key and starts fresh.
 - `localStorage` unavailable (e.g. some private modes) → banner explaining records cannot be saved; add actions disabled.
 - No automatic migration; key is versioned (`v1`).
