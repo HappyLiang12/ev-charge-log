@@ -82,6 +82,61 @@
     <div id="familyToast" class="toast" role="status" aria-live="polite"></div>
   </div>
 
+  <div id="ownerView" class="app" hidden>
+    <header class="topbar">
+      <div>
+        <h1>EV 充電紀錄</h1>
+        <p class="subtitle">管理</p>
+      </div>
+      <span id="ownerStatus" class="chip" data-state="idle">未設定</span>
+    </header>
+
+    <main>
+      <div class="owner-actions">
+        <button id="ownerSyncBtn" class="secondary" type="button">更新 Tesla</button>
+        <button id="ownerRatesBtn" class="secondary" type="button">更新費率</button>
+      </div>
+      <a id="ownerSheetLink" class="sheet-link" target="_blank" rel="noreferrer" hidden>打開 Google Sheet</a>
+
+      <section class="panel">
+        <div class="owner-toolbar">
+          <h2>月結</h2>
+          <div class="owner-toolbar-actions">
+            <select id="ownerMonth" aria-label="月結月份"></select>
+            <button id="ownerExportBtn" type="button">匯出 CSV</button>
+          </div>
+        </div>
+        <div id="ownerCarTotals" class="owner-cards"></div>
+        <p id="ownerLegacy" class="hint"></p>
+      </section>
+
+      <section class="panel">
+        <h2>未分配 session</h2>
+        <ul id="ownerUnassigned" class="owner-list"></ul>
+        <p id="ownerUnassignedEmpty" class="empty" hidden>冇未分配 session。</p>
+      </section>
+
+      <section class="panel">
+        <h2>待配對</h2>
+        <ul id="ownerPending" class="owner-list"></ul>
+        <p id="ownerPendingEmpty" class="empty" hidden>冇待配對記錄。</p>
+      </section>
+
+      <section class="panel">
+        <h2>費率</h2>
+        <div id="ownerRates" class="owner-cards"></div>
+        <p id="ownerRateSource" class="hint"></p>
+      </section>
+
+      <section class="panel">
+        <h2>家人連結</h2>
+        <div id="ownerLinks" class="owner-links"></div>
+      </section>
+    </main>
+
+    <div id="ownerToast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
 </body>
