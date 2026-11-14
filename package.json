@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/logic.test.mjs"
+    "test": "node --test test/logic.test.mjs test/tesla-probe.test.mjs",
+    "probe:tesla": "node tools/tesla-probe.mjs",
+    "register:tesla": "node tools/tesla-probe.mjs --register",
+    "auth:tesla": "node tools/tesla-probe.mjs --save-refresh-token"
   }
 }
