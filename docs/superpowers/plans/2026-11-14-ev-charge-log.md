@@ -1340,7 +1340,7 @@ function doPost(event) {
 
 - [ ] **Step 2: Syntax-check the backend**
 
-Run: `node --check apps-script/Code.gs`
+Run: `cp apps-script/Code.gs /tmp/ev-charge-code.js && node --check /tmp/ev-charge-code.js && rm /tmp/ev-charge-code.js`
 
 Expected: exit 0, no output (runtime globals are not evaluated).
 
@@ -1422,7 +1422,7 @@ Verify: `file docs/screenshot.png` reports PNG image data; the file is reference
 
 - [ ] **Step 5: Verify docs and tests**
 
-Run: `node --check apps-script/Code.gs && npm test`
+Run: `cp apps-script/Code.gs /tmp/ev-charge-code.js && node --check /tmp/ev-charge-code.js && rm /tmp/ev-charge-code.js && npm test`
 
 Expected: no syntax errors; 17 tests pass.
 
