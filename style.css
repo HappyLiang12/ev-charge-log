@@ -122,6 +122,19 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 .record-date { color: var(--text); }
 .record-weekday { color: var(--muted); font-size: 12px; margin-left: 6px; }
 .record-time { color: var(--accent); font-weight: 600; }
+.record-right { display: flex; align-items: center; gap: 8px; }
+.delete-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid #24322c;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.delete-btn:hover, .delete-btn:active { color: #f87171; border-color: #4a2323; }
 .empty { margin: 8px 4px 0; color: var(--muted); font-size: 14px; }
 .hint { margin: 6px 4px 0; color: var(--muted); font-size: 12px; }
 

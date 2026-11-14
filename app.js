@@ -170,6 +170,25 @@ export async function postRecord(apiUrl, record, fetchImpl = fetch) {
   }
 }
 
+export async function deleteRecord(apiUrl, id, fetchImpl = fetch) {
+  const response = await fetchImpl(apiUrl, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'delete', id }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error('Invalid JSON');
+  }
+  if (!payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'API error');
+  }
+}
+
 if (typeof document !== 'undefined') {
   init();
 }
@@ -315,10 +334,22 @@ function init() {
         weekday.className = 'record-weekday';
         weekday.textContent = formatWeekday(record.startAt);
         left.append(date, weekday);
+        const right = document.createElement('span');
+        right.className = 'record-right';
         const time = document.createElement('span');
         time.className = 'record-time';
         time.textContent = formatLocalTime(record.startAt);
-        li.append(left, time);
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'delete-btn';
+        del.textContent = '×';
+        del.setAttribute(
+          'aria-label',
+          `刪除 ${formatLocalDate(record.startAt)} ${formatLocalTime(record.startAt)}`,
+        );
+        del.addEventListener('click', () => onDelete(record));
+        right.append(time, del);
+        li.append(left, right);
         return li;
       }),
     );
@@ -372,6 +403,34 @@ function init() {
       render();
       showToast('未能同步，會自動重試；請檢查網絡或 API 設定');
     }
+  }
+
+  async function onDelete(record) {
+    const label = `${formatLocalDate(record.startAt)} ${formatLocalTime(record.startAt)}`;
+    if (!window.confirm(`刪除 ${label}？`)) return;
+    if (!apiUrl) {
+      removeLocal(record.id);
+      showToast('已刪除');
+      return;
+    }
+    try {
+      await deleteRecord(apiUrl, record.id);
+      removeLocal(record.id);
+      state.offline = false;
+      showToast('已刪除');
+    } catch {
+      state.offline = true;
+      render();
+      showToast('刪除失敗，請檢查網絡或 API 設定');
+    }
+  }
+
+  function removeLocal(id) {
+    state.server = state.server.filter((item) => item.id !== id);
+    state.pending = state.pending.filter((item) => item.id !== id);
+    persistCache();
+    persistPending();
+    render();
   }
 
   function onExport() {

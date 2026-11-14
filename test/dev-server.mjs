@@ -30,6 +30,12 @@ const server = http.createServer(async (req, res) => {
       for await (const chunk of req) body += chunk;
       try {
         const data = JSON.parse(body);
+        if (data.action === 'delete') {
+          const index = records.findIndex((record) => record.id === data.id);
+          if (index >= 0) records.splice(index, 1);
+          sendJson(res, 200, { ok: true });
+          return;
+        }
         if (!records.some((record) => record.id === data.id)) {
           records.push({ id: data.id, startAt: data.startAt });
         }

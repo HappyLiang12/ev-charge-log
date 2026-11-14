@@ -20,6 +20,7 @@ import {
   writeStored,
   fetchRecords,
   postRecord,
+  deleteRecord,
 } from '../app.js';
 
 const atLocal = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min).toISOString();
@@ -194,6 +195,30 @@ test('postRecord rejects HTTP and API-level errors', async () => {
   );
   await assert.rejects(
     postRecord('u', record, async () => fakeResponse({ ok: false, error: 'nope' })),
+    /nope/,
+  );
+});
+
+test('deleteRecord sends a delete action with the record id', async () => {
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init };
+    return fakeResponse({ ok: true });
+  };
+  await deleteRecord('https://example.test/api', 'abc-123', fetchImpl);
+  assert.equal(captured.url, 'https://example.test/api');
+  assert.equal(captured.init.method, 'POST');
+  assert.equal(captured.init.headers['Content-Type'], 'text/plain;charset=utf-8');
+  assert.deepEqual(JSON.parse(captured.init.body), { action: 'delete', id: 'abc-123' });
+});
+
+test('deleteRecord rejects HTTP and API-level errors', async () => {
+  await assert.rejects(
+    deleteRecord('u', 'a', async () => fakeResponse(null, { ok: false, status: 500 })),
+    /HTTP 500/,
+  );
+  await assert.rejects(
+    deleteRecord('u', 'a', async () => fakeResponse({ ok: false, error: 'nope' })),
     /nope/,
   );
 });

@@ -44,14 +44,19 @@ function doPost(event) {
   try {
     const body = JSON.parse((event.postData && event.postData.contents) || '{}');
     const id = String(body.id || '');
-    const startAt = String(body.startAt || '');
-    const date = String(body.date || '');
-    const time = String(body.time || '');
-    if (!ID_RE.test(id)
-      || Number.isNaN(Date.parse(startAt))
-      || !DATE_RE.test(date)
-      || !TIME_RE.test(time)) {
+    const action = String(body.action || 'append');
+    if (!ID_RE.test(id) || (action !== 'append' && action !== 'delete')) {
       return json_({ ok: false, error: 'invalid payload' });
+    }
+    if (action === 'append') {
+      const startAt = String(body.startAt || '');
+      const date = String(body.date || '');
+      const time = String(body.time || '');
+      if (Number.isNaN(Date.parse(startAt))
+        || !DATE_RE.test(date)
+        || !TIME_RE.test(time)) {
+        return json_({ ok: false, error: 'invalid payload' });
+      }
     }
 
     const lock = LockService.getScriptLock();
@@ -59,13 +64,22 @@ function doPost(event) {
     try {
       const sheet = getSheet_();
       const last = sheet.getLastRow();
-      if (last > 1) {
-        const ids = sheet.getRange(2, 1, last - 1, 1).getValues();
-        for (const row of ids) {
-          if (String(row[0]) === id) return json_({ ok: true, duplicate: true });
+      const ids = last > 1 ? sheet.getRange(2, 1, last - 1, 1).getValues() : [];
+
+      if (action === 'delete') {
+        for (let i = 0; i < ids.length; i += 1) {
+          if (String(ids[i][0]) === id) {
+            sheet.deleteRow(i + 2);
+            return json_({ ok: true, deleted: true });
+          }
         }
+        return json_({ ok: true, deleted: false });
       }
-      sheet.appendRow([id, startAt, date, time]);
+
+      for (const row of ids) {
+        if (String(row[0]) === id) return json_({ ok: true, duplicate: true });
+      }
+      sheet.appendRow([id, String(body.startAt), String(body.date), String(body.time)]);
       return json_({ ok: true });
     } finally {
       lock.releaseLock();

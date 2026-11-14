@@ -10,6 +10,7 @@ Live app: https://happyliang12.github.io/ev-charge-log/
 
 - One full-width button records the current time and appends it to a Google Sheet.
 - Quick view: this month's count, total count, last session, and the latest five records.
+- Delete any of the latest five records with a confirmation; the Sheet row is removed too.
 - CSV export for a chosen month or all months: UTF-8 BOM, CRLF, `日期,時間` columns in device-local time. Opens directly in Excel, Numbers, and Google Sheets.
 - Offline-friendly: records are written to localStorage immediately and retried automatically.
 - Mobile-first layout designed for a 390x844 viewport.
@@ -20,7 +21,9 @@ Live app: https://happyliang12.github.io/ev-charge-log/
 2. Open Extensions -> Apps Script and replace `Code.gs` with the contents of [`apps-script/Code.gs`](apps-script/Code.gs).
 3. Set `SHEET_ID` at the top of the script to the ID from the Sheet URL (`https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`).
 4. Deploy -> New deployment -> Web app. Execute as: Me. Who has access: Anyone. Authorize the requested Sheets scope. If your account or Workspace policy does not offer "Anyone" access, stop: this zero-login design requires it.
-5. Copy the Web app URL. Every deployment URL is a public capability; anyone with it can read or append rows.
+5. Copy the Web app URL. Every deployment URL is a public capability; anyone with it can read, append, or delete rows.
+
+If you change `Code.gs` later, redeploy via Deploy -> Manage deployments -> Edit -> Version: New version. Editing the existing deployment keeps the same URL.
 
 The first request creates the `Log` sheet and header row automatically. Columns: `id`, `startAt`, `日期`, `時間`.
 
@@ -62,7 +65,7 @@ Open https://happyliang12.github.io/ev-charge-log/.
 
 ## Security model
 
-- No accounts and no secrets in the client. The Apps Script URL is a capability: anyone who obtains it can read or append rows.
-- The API is append-only; there is no delete endpoint. Clean bad rows directly in the Sheet.
+- No accounts and no secrets in the client. The Apps Script URL is a capability: anyone who obtains it can read, append, or delete rows.
+- The API supports append and delete and has no authentication or per-user separation. Clean up or undo changes directly in the Sheet.
 - The Sheet is the durable store. Clearing browser data only removes the local cache and any pending unsynced records.
 - Device clock and timezone determine recorded times.

@@ -10,6 +10,7 @@ A static, no-login web app hosted on GitHub Pages for recording the start time o
 ### Goals
 
 - One-tap recording of the current time on a phone.
+- Delete a recent record with confirmation, synced to the Sheet.
 - Cross-device consistency with zero login and zero tokens.
 - Quick view of recent activity and monthly counts.
 - CSV export for a chosen month (or all), Excel-compatible.
@@ -18,10 +19,10 @@ A static, no-login web app hosted on GitHub Pages for recording the start time o
 ### Non-goals
 
 - Accounts, OAuth, PATs, or any credential input in the app.
-- Manual backfill or in-app editing/deletion (the Sheet is the source of truth for corrections).
+- Manual backfill or in-app editing (deletion is supported for the latest five records).
 - kWh, price, cost, location, or note columns.
 - Import/restore, PWA/service worker, theme switcher, i18n switcher.
-- Preventing third parties who obtain the public endpoint URL from reading or appending data.
+- Preventing third parties who obtain the public endpoint URL from reading, appending, or deleting data.
 
 ## 2. Architecture
 
@@ -57,15 +58,16 @@ type Record = { id: string; startAt: string } // startAt = ISO 8601 UTC (toISOSt
 - One sheet named `Log`; header row created by the script if missing.
 - Columns: `id`, `startAt` (ISO UTC), `日期` (`YYYY-MM-DD` local), `時間` (`HH:mm` local).
 - `日期` and `時間` are computed by the client from the device-local time and stored as text so the user can read and calculate in the Sheet directly.
-- Deleting or editing rows in the Sheet is the supported correction path; the app picks changes up on the next load.
+- Older rows can be edited or deleted directly in the Sheet; the app picks changes up on the next load.
 
 ### Apps Script API
 
 - Deployment: Web app, execute as the owner, access "Anyone".
 - `GET` → `{ ok: true, records: [{ id, startAt }] }`.
 - `POST` body `{ id, startAt, date, time }` → appends one row, returns `{ ok: true }`.
+- `POST` body `{ action: 'delete', id }` → deletes the matching row, returns `{ ok: true, deleted: boolean }`; missing ids are idempotent.
 - Validation: `id` matches `[A-Za-z0-9-]{1,64}`, `startAt` parses as a date, `date` matches `YYYY-MM-DD`, `time` matches `HH:mm`; invalid → `{ ok: false, error }`.
-- Idempotency: `doPost` checks for an existing `id` under `LockService` before appending, so retries cannot duplicate rows.
+- Idempotency: `doPost` checks for an existing `id` under `LockService` before appending, so retries cannot duplicate rows; delete is also idempotent under the same lock.
 - `SHEET_ID` and sheet name are constants at the top of `Code.gs`.
 - CORS: primary approach is `fetch` with `Content-Type: text/plain;charset=utf-8` (simple request, no preflight). If the live deployment blocks CORS, fall back to JSONP for GET and a hidden-form POST for writes; the API shape stays the same.
 
@@ -77,10 +79,10 @@ Elements:
 
 - Header: "EV 充電紀錄", sync status chip (`已連接` / `未同步` / `離線` / `未設定`), small "打開 Google Sheet" link.
 - Primary button "⚡ 開始充電": records now, writes the row, shows a toast with the recorded time. Clicks within 2 seconds of the previous record are ignored to prevent accidental double taps.
-- Quick view: 本月次數 / 總次數 / 最近一次 date-time, plus the latest 5 records (date, weekday, time).
+- Quick view: 本月次數 / 總次數 / 最近一次 date-time, plus the latest 5 records (date, weekday, time, delete button). Deleting asks for confirmation and calls the delete API.
 - Export row: month selector built from available months plus "全部月份" (default: current month if it has records, otherwise the newest month with records, otherwise 全部月份), and the "匯出 CSV" button (disabled when the selection has no records).
 - Empty state message when there are no records.
-- No settings, no manual add, no delete.
+- No settings, no manual add; deletion is available on each of the latest five rows.
 - Touch targets >= 44px, visible focus styles, WCAG AA contrast.
 
 ## 4. CSV export
@@ -109,7 +111,8 @@ Sync behavior:
 - On load: render cache immediately, then `GET`; on success replace the cache, drop pending entries whose `id` now exists on the server, and re-render; on failure keep cache and show `離線`.
 - On record: append to pending + cache, render immediately, then `POST`; on success remove from pending; on failure keep pending and show `未同步`.
 - Retries: on app load, `online` event, and before each new record. Pending entries are merged by `id`, so retries and repeated loads are idempotent on the client too.
-- No deletion in the app; Sheet edits appear after the next successful `GET`.
+- Delete: confirm, call `POST { action: 'delete', id }`, then remove the record from cache/pending and re-render; on failure keep the record and show `刪除失敗`.
+- Sheet edits (including deleting older rows) appear after the next successful `GET`.
 
 ### Error handling
 
@@ -125,6 +128,7 @@ Unit tests with `node --test`:
 - Sorting and merge: union by id, no duplicates, newest-first display.
 - Month filter: boundaries across months and years, `all`.
 - Response validation: missing fields, malformed JSON, extra fields.
+- Delete client: request shape, HTTP/API error handling.
 - Pending queue: retry idempotency, removal on success, retention on failure.
 
 Browser smoke (local static server, mobile viewport ~390x844, API mocked by stubbing `fetch`):
@@ -132,6 +136,7 @@ Browser smoke (local static server, mobile viewport ~390x844, API mocked by stub
 - Tap start → toast + row appears; reload → cache shown before sync.
 - Offline start → `未同步` then auto-retry on `online`.
 - Month selector + export downloads a CSV matching the filter and format.
+- Delete: cancel keeps the row; confirm removes it locally and on the mock API; API failure keeps the row and shows an actionable toast.
 - Empty state, `未設定` mode, API error chip.
 - Screenshots for empty and populated states.
 
@@ -139,6 +144,7 @@ Live verification after the user deploys the Apps Script:
 
 - Real `GET`/`POST` round trip, row appears in the Sheet with correct local date/time.
 - Duplicate `POST` with the same id does not create a second row.
+- Delete removes the Sheet row and the record disappears from a fresh browser.
 - Fresh device/browser shows the same records.
 - Export from the live site matches the Sheet.
 
@@ -162,7 +168,7 @@ App deployment:
 
 ## 8. Risks and limitations
 
-- The Apps Script URL is a capability: anyone who reads the public source can read or append records. There is no delete API; worst case is spam rows, cleaned directly in the Sheet.
+- The Apps Script URL is a capability: anyone who reads the public source can read, append, or delete records. There is no authentication; worst case is data tampering or spam rows, corrected directly in the Sheet.
 - Google Apps Script quotas and availability apply (consumer quota is ample for personal use); CORS behavior must be verified live.
 - The Sheet is the durable store; clearing browser storage only loses the local cache/pending items not yet synced.
 - Device clock/timezone determines recorded time; a wrong device clock records a wrong time.
