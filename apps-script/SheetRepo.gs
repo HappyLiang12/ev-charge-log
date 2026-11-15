@@ -78,20 +78,41 @@ function logValue_(record, column) {
   return record[column];
 }
 
+function isDateValue_(value) {
+  return value && typeof value.getTime === 'function' && typeof value.getUTCFullYear === 'function'
+    && !isNaN(value.getTime());
+}
+
+function isoValue_(value) {
+  if (isDateValue_(value)) return value.toISOString();
+  var text = String(value || '').trim();
+  return validIso_(text) ? text : '';
+}
+
+function monthValue_(value) {
+  if (isDateValue_(value)) {
+    // Date-only Sheet cells are midnight in the spreadsheet timezone; shift
+    // into the same calendar day before reading UTC parts.
+    var shifted = new Date(value.getTime() + 12 * 60 * 60 * 1000);
+    return shifted.getUTCFullYear() + '-' + pad2_(shifted.getUTCMonth() + 1);
+  }
+  return String(value || '').trim();
+}
+
 function normalizeLogRow_(row) {
   var car = row.car ? String(row.car).trim() : '';
   var source = row.source ? String(row.source).trim() : (car ? 'manual' : 'legacy');
-  var startAt = String(row.startAt || '').trim();
+  var startAt = isoValue_(row.startAt);
   return {
     id: String(row.id || '').trim(),
     car: car,
     startAt: startAt,
-    date: String(row['日期'] || '').trim() || (validIso_(startAt) ? hkDateString_(startAt) : ''),
-    time: String(row['時間'] || '').trim() || (validIso_(startAt) ? hkTimeString_(startAt) : ''),
+    date: validIso_(startAt) ? hkDateString_(startAt) : String(row['日期'] || '').trim(),
+    time: validIso_(startAt) ? hkTimeString_(startAt) : String(row['時間'] || '').trim(),
     kWh: numberOrNull_(row.kWh),
     durationSec: numberOrNull_(row.durationSec),
-    teslaStartAt: validIso_(row.teslaStartAt) ? String(row.teslaStartAt) : null,
-    teslaEndAt: validIso_(row.teslaEndAt) ? String(row.teslaEndAt) : null,
+    teslaStartAt: isoValue_(row.teslaStartAt) || null,
+    teslaEndAt: isoValue_(row.teslaEndAt) || null,
     peakKWh: numberOrNull_(row.peakKWh),
     offPeakKWh: numberOrNull_(row.offPeakKWh),
     teslaKey: row.teslaKey ? String(row.teslaKey) : null,
@@ -187,7 +208,7 @@ function readCars_() {
 }
 
 function normalizeRateRow_(row) {
-  var month = String(row.month || '').trim();
+  var month = monthValue_(row.month);
   if (!validMonth_(month)) return null;
   var basicOffPeak = numberOrNull_(row.basicOffPeak);
   var basicPeak = numberOrNull_(row.basicPeak);
@@ -214,12 +235,28 @@ function normalizeRateRow_(row) {
 function readRates_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Rates', RATES_COLUMNS);
   var rows = readObjects_(sheet, RATES_COLUMNS);
-  var rates = [];
+  var byMonth = {};
+  var order = [];
   for (var i = 0; i < rows.length; i += 1) {
     var rate = normalizeRateRow_(rows[i]);
-    if (rate) rates.push(rate);
+    if (!rate) continue;
+    if (!Object.prototype.hasOwnProperty.call(byMonth, rate.month)) {
+      byMonth[rate.month] = rate;
+      order.push(rate.month);
+    } else {
+      byMonth[rate.month] = preferRate_(byMonth[rate.month], rate);
+    }
   }
+  var rates = [];
+  for (var j = 0; j < order.length; j += 1) rates.push(byMonth[order[j]]);
   return rates;
+}
+
+function preferRate_(current, next) {
+  if (next.manualOverride !== current.manualOverride) return next.manualOverride ? next : current;
+  var currentAt = Date.parse(current.fetchedAt) || 0;
+  var nextAt = Date.parse(next.fetchedAt) || 0;
+  return nextAt >= currentAt ? next : current;
 }
 
 function rateValue_(rate, column) {
@@ -241,7 +278,7 @@ function upsertRates_(rates) {
     var found = -1;
     var manual = false;
     for (var i = 1; i < values.length; i += 1) {
-      if (String(values[i][monthCol] || '') === rate.month) {
+      if (monthValue_(values[i][monthCol]) === rate.month) {
         found = i;
         manual = String(values[i][manualCol] || '').toUpperCase() === 'TRUE';
         break;
