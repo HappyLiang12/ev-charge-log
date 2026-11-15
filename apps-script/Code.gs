@@ -157,8 +157,8 @@ function deleteAction_(data) {
   return { deleted: true };
 }
 
-function syncAction_() {
-  return syncTesla_();
+function syncAction_(data) {
+  return syncTesla_(!data || !data.car);
 }
 
 function findRecord_(records, id) {

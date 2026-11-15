@@ -158,14 +158,23 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
   }
 });
 
-test('owner UI: sync without a manual record explains the skipped window', { timeout: 20000 }, async () => {
-  const harness = await createHarness();
+test('owner UI: sync without a manual record imports the last 30 days as unassigned', { timeout: 20000 }, async () => {
+  const sessionStart = new Date(Date.now() - 3 * 86400000).toISOString();
+  const harness = await createHarness({ teslaSessions: [teslaSession(sessionStart)] });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     ui.document.getElementById('ownerSyncBtn').click();
-    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('SYNC_FROM'));
-    assert.equal(harness.env.call('readLog_').length, 0);
+    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('新增未分配 1'));
+    await waitFor(() => ui.document.querySelectorAll('#ownerUnassigned li').length === 1);
+    const log = harness.env.call('readLog_');
+    assert.equal(log.length, 1);
+    assert.equal(log[0].car, 'unassigned');
+    assert.equal(log[0].source, 'tesla');
+
+    ui.document.getElementById('ownerSyncBtn').click();
+    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('新增未分配 0'));
+    assert.equal(harness.env.call('readLog_').length, 1);
   } finally {
     ui.close();
     await harness.close();

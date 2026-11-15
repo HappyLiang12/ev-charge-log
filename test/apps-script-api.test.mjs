@@ -381,6 +381,45 @@ test('sync matches a manual row, updates the cursor, and exposes the full result
   assert.ok(env.props.SYNC_CURSOR);
 });
 
+test('owner sync initializes a 30-day window; family sync without a manual row stays skipped', () => {
+  const makeEnv = () => setup({
+    sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 3600 },
+              energy_added_wh: 12000,
+              target_id: 'target-1',
+              din: 'din:init',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const ownerEnv = makeEnv();
+  const owner = send(ownerEnv, { action: 'sync' });
+  assert.equal(owner.ok, true);
+  assert.equal(owner.skipped, false);
+  assert.equal(owner.fetched, 1);
+  assert.equal(owner.unassigned, 1);
+  assert.equal(plain(ownerEnv.call('readLog_'))[0].car, 'unassigned');
+
+  const familyEnv = makeEnv();
+  const family = send(familyEnv, { action: 'sync', car: 'model3' });
+  assert.equal(family.ok, true);
+  assert.equal(family.skipped, true);
+  assert.equal(family.fetched, 0);
+  assert.equal(plain(familyEnv.call('readLog_')).length, 0);
+});
+
 test('sync reconciles an existing unassigned session into the matching manual row', () => {
   const env = setup({
     sheets: {
