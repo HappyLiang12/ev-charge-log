@@ -7,6 +7,7 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const port = Number(process.env.PORT || 8787);
 const apiUrl = process.env.SMOKE_API_URL || `http://127.0.0.1:${port}/api`;
 const delayMs = Number(process.env.SMOKE_DELAY_MS || 0);
+const keepPending = process.env.SMOKE_KEEP_PENDING === '1';
 const cars = [
   { id: 'model3', name: 'Model 3', active: true },
   { id: 'leaf', name: 'Leaf', active: true },
@@ -57,9 +58,9 @@ const records = [
   {
     id: 'seed-pending',
     car: 'model3',
-    startAt: '2026-11-14T06:00:00.000Z',
-    date: '2026-11-14',
-    time: '14:00',
+    startAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    date: '',
+    time: '',
     kWh: null,
     durationSec: null,
     teslaStartAt: null,
@@ -168,6 +169,17 @@ const server = http.createServer(async (req, res) => {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     if (req.method === 'GET') {
+      if (url.searchParams.has('status')) {
+        return sendJson(res, 200, {
+          ok: true,
+          charging: true,
+          powerW: 7200,
+          energyWh: null,
+          state: '1',
+          available: true,
+          sampledAt: new Date().toISOString(),
+        });
+      }
       if (url.searchParams.has('owner')) {
         return sendJson(res, 200, {
           ok: true,
@@ -225,6 +237,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
       if (action === 'sync') {
+        if (keepPending) return sendJson(res, 200, { ok: true, matched: 0, unassigned: 0 });
         if (data.car === undefined) {
           let matched = 0;
           for (const car of cars) if (matchPending(car)) matched += 1;

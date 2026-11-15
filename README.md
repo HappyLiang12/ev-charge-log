@@ -12,7 +12,7 @@ Deployment order: cut over the Apps Script backend before publishing the static 
 
 ![Owner view](docs/screenshot-owner.png)
 
-Both screenshots are real WKWebView captures of the family and owner views at a 390x844 viewport (2x).
+Both screenshots are real WKWebView captures of the family and owner views at a 390x844 viewport (2x), showing the live charging card. The family start button is disabled while a manual start is pending.
 
 ## How it works
 
@@ -181,7 +181,7 @@ Open:
 - Family: `http://127.0.0.1:8787/?car=model3`
 - Owner: `http://127.0.0.1:8787/?owner=1`
 
-The mock server seeds one matched session, one unassigned session, and one pending manual session.
+The mock server seeds one matched session, one unassigned session, and one pending manual session, and reports a live 7.2 kW charging status.
 
 Node 20+ is required for the built-in test runner (verified on v20.20.2). There are no runtime dependencies and no build step; `jsdom` is a test-only devDependency installed by `npm ci`.
 
