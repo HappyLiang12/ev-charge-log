@@ -172,6 +172,9 @@ Rules:
   billed and are never shown to family URLs.
 - `kWh` and the split are stored as numbers. Cost is not stored; it is
   computed from the rate table.
+- Google Sheets may return date-formatted cells for `startAt` or Tesla
+  timestamps; normalize them to ISO. Derive `date` and `time` from `startAt` in
+  Asia/Hong_Kong.
 
 ### 7.2 Car
 
@@ -205,6 +208,10 @@ The owner edits this tab directly. The app does not provide a car editor.
 
 `rebate` is subtracted from both peak and non-peak rates. The owner sets it
 when eligible. The fetch must not infer eligibility.
+
+Google Sheets may store `month` as a date cell. The reader normalizes it to
+`YYYY-MM` and dedupes duplicate month rows, preferring a manual override and
+then the latest `fetchedAt`.
 
 ### 7.4 Ignored session
 

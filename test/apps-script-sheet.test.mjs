@@ -363,3 +363,80 @@ test('openSpreadsheet_ requires the SHEET_ID script property', () => {
   const env = createEnv({ props: { SHEET_ID: '' } });
   assert.throws(() => env.call('openSpreadsheet_'), /SHEET_ID/);
 });
+
+test('readRates_ accepts Sheet date cells for month and dedupes', () => {
+  const header = [
+    'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+    'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+  ];
+  const env = createEnv({
+    sheets: {
+      Rates: [
+        header,
+        [new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-15T00:00:00.000Z', 'FALSE'],
+        [new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-16T00:00:00.000Z', 'FALSE'],
+      ],
+    },
+  });
+  const rates = plain(env.call('readRates_'));
+  assert.equal(rates.length, 1);
+  assert.equal(rates[0].month, '2026-11');
+  assert.equal(rates[0].fetchedAt, '2026-11-16T00:00:00.000Z');
+});
+
+test('upsertRates_ matches a date month cell instead of appending a duplicate', () => {
+  const header = [
+    'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+    'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+  ];
+  const env = createEnv({
+    sheets: {
+      Rates: [header, [new Date('2026-11-01T00:00:00+08:00'), 1, 2, 3, 0, '16:00', '23:00', 'old', 'old', 'FALSE']],
+    },
+  });
+  const updated = env.call('upsertRates_', [{
+    month: '2026-11',
+    basicOffPeak: 94.5,
+    basicPeak: 137.5,
+    fuelAdjustment: 47.4,
+    rebate: 0,
+    peakStart: '16:00',
+    peakEnd: '23:00',
+    sourceUrl: 'new',
+    fetchedAt: '2026-11-15T00:00:00.000Z',
+    manualOverride: false,
+  }]);
+  assert.equal(updated, 1);
+  const rows = env.values('Rates');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1][0], '2026-11');
+  assert.equal(rows[1][1], 94.5);
+});
+
+test('readLog_ accepts Sheet date cells for timestamps', () => {
+  const header = [
+    'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
+    'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+  ];
+  const env = createEnv({
+    sheets: {
+      Log: [header, [
+        'rec-1',
+        new Date('2026-11-14T05:00:00.000Z'),
+        new Date('2026-11-14T00:00:00+08:00'),
+        new Date('1899-12-30T13:00:00.000Z'),
+        'model3', 20, 7200,
+        new Date('2026-11-14T05:00:00.000Z'),
+        new Date('2026-11-14T07:00:00.000Z'),
+        10, 10, 'din:rec-1', 'tesla+manual',
+      ]],
+    },
+  });
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].startAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(records[0].date, '2026-11-14');
+  assert.equal(records[0].time, '13:00');
+  assert.equal(records[0].teslaStartAt, '2026-11-14T05:00:00.000Z');
+  assert.equal(records[0].teslaEndAt, '2026-11-14T07:00:00.000Z');
+});

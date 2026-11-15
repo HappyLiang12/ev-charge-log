@@ -48,6 +48,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 - `source`: `manual`, `tesla`, `tesla+manual`, or `legacy`.
 - Old rows without `car` are `legacy`; they are preserved and excluded from billing CSV.
 - Tesla session keys are `<din or target_id>:<start-seconds>`.
+- Date-formatted `startAt`/Tesla cells are normalized to ISO; `日期` and `時間` are derived from `startAt` in Asia/Hong_Kong.
 
 ### `Cars`
 
@@ -64,6 +65,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 - Values are HK cents per kWh.
 - `manualOverride=TRUE` rows are never overwritten by the rate refresh.
 - `sourceUrl` is a comma-separated list of the CLP pages used.
+- Google Sheets may store `month` as a date cell; the API normalizes it to `YYYY-MM` and dedupes duplicate month rows, preferring `manualOverride` then the latest `fetchedAt`.
 
 ### `Ignored`
 
@@ -226,7 +228,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 92 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, rate validation, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 95 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 
