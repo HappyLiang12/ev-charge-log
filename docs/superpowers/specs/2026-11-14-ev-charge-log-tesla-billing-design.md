@@ -724,7 +724,14 @@ times are Asia/Hong_Kong.
 - Mock CLP responses cover direct 200, direct 403 followed by reader 200, parse
   failure, and a manual-override row.
 
-### 14.3 Browser smoke
+### 14.3 UI integration
+
+- jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
+- Family coverage: load, start, sync a mocked Tesla session, delete, and claim an unassigned session.
+- Owner coverage: rate dedupe, CLP refresh with source links, assign, ignore, CSV export, and the manual-override error message.
+- The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
+
+### 14.4 Browser smoke
 
 - Family URL shows only its car and its records, plus unassigned Tesla
   sessions that it can claim.
