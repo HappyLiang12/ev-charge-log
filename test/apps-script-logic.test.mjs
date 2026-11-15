@@ -123,6 +123,43 @@ test('parseFuelAdjustmentPage_ extracts the current month and the yearly table',
   assert.deepEqual(plain(call('parseFuelAdjustmentPage_', 'no rates here')), { current: null, rows: [] });
 });
 
+test('parseFuelAdjustmentPage_ accepts reader markdown bold and the live page order', () => {
+  const page = `
+2026年11月1日起，燃料調整費為**每度電47.4港仙**。
+## 2026年每月燃料調整費
+2026年
+1月
+2月
+3月
+4月
+5月
+6月
+7月
+8月
+9月
+10月
+11月
+燃料調整費
+(每度電港仙)
+39.4
+39.4
+39.2
+39.8
+40.4
+42.6
+43.5
+45.0*
+45.1*
+46.2*
+47.4
+備註:
+`;
+  const parsed = call('parseFuelAdjustmentPage_', page);
+  assert.deepEqual(plain(parsed.current), { month: '2026-11', fuelAdjustment: 47.4 });
+  assert.equal(parsed.rows.length, 11);
+  assert.deepEqual(plain(parsed.rows[10]), { month: '2026-11', fuelAdjustment: 47.4 });
+});
+
 test('parseFuelAdjustmentPage_ ignores numeric lines after the current sentence', () => {
   const page = `
 燃料調整費

@@ -106,7 +106,7 @@ function closestManualCandidate_(sessionStartIso, manualRows, windowMs) {
 }
 
 function parseFuelAdjustmentPage_(text) {
-  var source = String(text || '');
+  var source = String(text || '').replace(/\*\*/g, '');
   var current = source.match(/(\d{4})年(\d{1,2})月1日起，燃料調整費為每度電([\d.]+)港仙/);
   if (!current) return { current: null, rows: [] };
   var year = Number(current[1]);
