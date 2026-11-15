@@ -202,7 +202,7 @@ The owner edits this tab directly. The app does not provide a car editor.
 | `rebate` | HK cents/kWh; 0 when not applicable |
 | `peakStart` | `HH:mm`, default `16:00` |
 | `peakEnd` | `HH:mm`, default `23:00` |
-| `sourceUrl` | Official CLP page(s) used, comma-separated |
+| `sourceUrl` | Official CLP page(s) used, comma-separated; the owner view links each URL |
 | `fetchedAt` | ISO timestamp of the last successful fetch |
 | `manualOverride` | `TRUE` means the automatic fetch must not overwrite this row |
 
