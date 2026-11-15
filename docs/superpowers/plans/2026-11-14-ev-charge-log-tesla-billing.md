@@ -4936,7 +4936,7 @@ git commit -m "feat: add Tesla billing API and owner actions"
 
 Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/off-peak cost estimates. A static app on GitHub Pages; a Google Apps Script Web App owns the Sheet, Tesla OAuth, and CLP rate fetch.
 
-Live app: https://happyliang12.github.io/ev-charge-log/
+Live app: https://<your-user>.github.io/ev-charge-log/
 
 ![Family view](docs/screenshot-family.png)
 
@@ -4944,7 +4944,7 @@ Live app: https://happyliang12.github.io/ev-charge-log/
 
 ## How it works
 
-- Each car has its own family URL: `https://happyliang12.github.io/ev-charge-log/?car=<car-id>`.
+- Each car has its own family URL: `https://<your-user>.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet.
 - The owner opens the owner URL (`?owner=<owner-key>`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - The owner assigns unmatched sessions to a car or ignores them. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
@@ -5048,7 +5048,7 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 
 Tesla API access is read-only for energy data. The app uses the official Fleet API with scopes `openid offline_access energy_device_data`.
 
-1. The Tesla developer app must have Allowed Origin exactly `https://happyliang12.github.io`. The local probe uses `http://localhost:8788/callback`.
+1. The Tesla developer app must have Allowed Origin exactly `https://<your-user>.github.io`. The local probe uses `http://localhost:8788/callback`.
 2. On a machine with the repository and `tools/.env.tesla.local` (mode 600), run:
 
 ```bash
@@ -5064,7 +5064,7 @@ Rotate the Tesla client secret after development and deployment are complete. Up
 ### 4. Cars, rates, and the owner URL
 
 1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
-2. Open the owner URL: `https://happyliang12.github.io/ev-charge-log/?owner=<OWNER_KEY>`.
+2. Open the owner URL: `https://<your-user>.github.io/ev-charge-log/?owner=<OWNER_KEY>`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
 4. Copy each family link from the owner view and send it to that car's driver.
 5. Keep the owner URL private. It is a capability, not a login.
