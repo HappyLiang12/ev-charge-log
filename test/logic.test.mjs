@@ -12,6 +12,7 @@ import {
   normalizeRecords,
   normalizeRates,
   sourceUrls,
+  familyStartUrl,
   normalizeCars,
   carIconFor,
   parseServerRecords,
@@ -157,11 +158,18 @@ test('sourceUrls splits valid URLs and drops duplicates', () => {
   assert.deepEqual(sourceUrls(''), []);
 });
 
-test('carIconFor maps the family cars and falls back to the generic EV', () => {
+test('familyStartUrl builds the QR auto-start URL', () => {
+  assert.equal(
+    familyStartUrl('https://example.test/ev-charge-log/?owner=1', 'model3'),
+    'https://example.test/ev-charge-log/?car=model3&start=1',
+  );
+});
+
+test('carIconFor maps the family cars and hides unknown cars', () => {
   assert.equal(carIconFor({ id: 'model3', name: 'Model 3' }), 'assets/cars/model3.svg');
   assert.equal(carIconFor({ id: 'car-1', name: 'iX3' }), 'assets/cars/ix3.svg');
   assert.equal(carIconFor({ id: 'vigo', name: 'Vigo' }), 'assets/cars/vigo.svg');
-  assert.equal(carIconFor({ id: 'other', name: 'Other EV' }), 'assets/cars/ev.svg');
+  assert.equal(carIconFor({ id: 'other', name: 'Other EV' }), '');
 });
 
 test('groupUnassignedByMonthDay keeps 24 hours open and nests older days under months', () => {

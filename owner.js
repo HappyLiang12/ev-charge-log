@@ -4,6 +4,7 @@ import {
   filterByMonth,
   monthKey,
   monthsWithRecords,
+  familyStartUrl,
   summarizeRecords,
   toCsv,
 } from './logic.js';
@@ -89,6 +90,17 @@ export function initOwner({ apiUrl }) {
     return card;
   }
 
+  function makeQr(url) {
+    if (typeof window.qrcode !== 'function') return null;
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    return {
+      svg: qr.createSvgTag(4, 2),
+      png: qr.createDataURL(8, 4),
+    };
+  }
+
   function makeLinkCard(car) {
     const card = document.createElement('div');
     card.className = 'owner-link';
@@ -97,22 +109,52 @@ export function initOwner({ apiUrl }) {
     const title = document.createElement('span');
     title.className = 'owner-card-title';
     title.textContent = car.name;
+    const actions = document.createElement('div');
+    actions.className = 'owner-link-actions';
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.textContent = '複製連結';
+    const qrButton = document.createElement('button');
+    qrButton.type = 'button';
+    qrButton.textContent = 'QR';
     const url = new URL(window.location.href);
     url.search = '';
     url.searchParams.set('car', car.id);
     url.hash = '';
     copy.addEventListener('click', () => { void onCopy(url.toString()); });
-    head.append(title, copy);
+    const qrBox = document.createElement('div');
+    qrBox.className = 'owner-qr';
+    qrBox.hidden = true;
+    qrButton.addEventListener('click', () => {
+      qrBox.hidden = !qrBox.hidden;
+      if (qrBox.hidden || qrBox.dataset.ready) return;
+      const qr = makeQr(familyStartUrl(url.toString(), car.id));
+      if (!qr) {
+        qrBox.textContent = '未能產生 QR。';
+        return;
+      }
+      const holder = document.createElement('div');
+      holder.className = 'owner-qr-image';
+      holder.innerHTML = qr.svg;
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = '掃描即開始充電；貼喺充電樁或車旁。';
+      const download = document.createElement('a');
+      download.href = qr.png;
+      download.download = `ev-charge-qr-${car.id}.gif`;
+      download.textContent = '下載 QR';
+      qrBox.append(holder, hint, download);
+      qrBox.dataset.ready = '1';
+    });
+    actions.append(copy, qrButton);
+    head.append(title, actions);
     const link = document.createElement('a');
     link.className = 'owner-link-url';
     link.href = url.toString();
     link.target = '_blank';
     link.rel = 'noreferrer';
     link.textContent = url.toString();
-    card.append(head, link);
+    card.append(head, link, qrBox);
     return card;
   }
 

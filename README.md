@@ -34,7 +34,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Recent records with kWh, estimated cost, and real delete.
 - Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
-- Model-specific 3D-style SVG car icons for Model 3, iX3, and Vigo, with a generic EV fallback.
+- Model-specific 3D-style SVG car icons for Model 3, iX3, and Vigo. Unknown cars hide the hero instead of showing a generic placeholder.
+- Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
@@ -205,6 +206,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 
 - No accounts and no secrets in the frontend. The Apps Script URL and each family `?car=` URL are capabilities.
 - Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records and claim unassigned Tesla sessions to that car. Share it only with that car's driver.
+- A car QR encodes the same family URL plus `start=1`; anyone who scans it can start a charge for that car. Treat the QR like the family link.
 - The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign or ignore sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
 - The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link. Set General access to Restricted if you want it private.
@@ -232,7 +234,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 108 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, car icon mapping, and the API envelope. Six jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 110 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, car icon mapping, QR auto-start URLs, and the API envelope. Seven jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

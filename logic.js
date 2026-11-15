@@ -139,12 +139,21 @@ export function normalizeCar(value) {
   };
 }
 
+export function familyStartUrl(href, carId) {
+  const url = new URL(href);
+  url.search = '';
+  url.searchParams.set('car', carId);
+  url.searchParams.set('start', '1');
+  url.hash = '';
+  return url.toString();
+}
+
 export function carIconFor(car) {
   const text = `${car && car.id ? car.id : ''} ${car && car.name ? car.name : ''}`.toLowerCase();
   if (/model[\s-]*3/.test(text)) return 'assets/cars/model3.svg';
   if (/ix3/.test(text)) return 'assets/cars/ix3.svg';
   if (/vigo/.test(text)) return 'assets/cars/vigo.svg';
-  return 'assets/cars/ev.svg';
+  return '';
 }
 
 export function normalizeCars(list) {

@@ -123,7 +123,8 @@ Components:
 | `family.js` | Family view rendering and actions |
 | `owner.js` | Owner view rendering and actions |
 | `rate-view.js` | Shared owner/family rate cards and latest-month collapse |
-| `assets/cars/` | Model 3, iX3, Vigo, and generic EV SVG icons |
+| `assets/cars/` | Model 3, iX3, and Vigo SVG icons |
+| `vendor/qrcode-generator.js` | MIT QR encoder for per-car auto-start codes |
 | `style.css` | Existing dark theme plus owner/family additions |
 | `config.js` | Public `API_URL` only |
 | `apps-script/Code.gs` | Web app routing, validation, locking |
@@ -596,7 +597,9 @@ All writes use `LockService`; sync waits up to 30 seconds for the lock.
 Shown for `?car=<id>`.
 
 - Header: `EV 充電紀錄`, car name, status chip, a model-specific SVG car
-  hero (Model 3, iX3, Vigo, or generic EV), and no Sheet link.
+  hero (Model 3, iX3, or Vigo), and no Sheet link. Unknown cars hide the hero.
+- Auto-start URL: `?car=<id>&start=1` records a start after the initial load
+  without pressing the button, then removes the `start` parameter from history.
 - Primary action: `⚡ 開始充電`, full width. It records the current time for
   this car and shows a toast.
 - Secondary action: `更新充電樁`. It calls `sync`, shows a spinner, and
@@ -643,6 +646,8 @@ Shown for `?owner`.
   source, fetchedAt, manual override. The latest month is shown first; older
   months are collapsed. Read-only; edit in the Sheet.
 - Family link per car with a copy button. Links contain only `?car=<id>`.
+- QR button per car. It encodes `?car=<id>&start=1`, shows the QR inline, and
+  offers a downloadable image for the charger/car.
 - Empty states: no cars configured, no rates configured, no unassigned
   sessions.
 - Loading and error states for sync, rate refresh, assign, and ignore.
@@ -688,6 +693,8 @@ times are Asia/Hong_Kong.
   can read the log. The Sheet URL is not in the repository: `SHEET_ID` is a
   Script Property and the owner payload derives the link. Set General access to
   Restricted if privacy is required.
+- A car QR encodes the family URL plus `start=1`. Anyone who scans it can start
+  that car; the QR has the same authority as the family URL.
 - The Apps Script URL and each family URL are capabilities. Anyone with a
   family URL can add/delete that car's records and claim unassigned Tesla
   sessions to that car. This matches the existing no-login model; the household
@@ -744,8 +751,8 @@ times are Asia/Hong_Kong.
 ### 14.3 UI integration
 
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
-- Family coverage: load, start, sync a mocked Tesla session, delete, and claim an unassigned session.
-- Owner UI: rate dedupe/refresh/source links, latest-month-first rates with
+- Family coverage: load, start, auto-start from `start=1`, sync a mocked Tesla session, delete, and claim an unassigned session.
+- Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
   older months collapsed, assign, ignore, CSV export, and the initial 30-day
   Tesla import. Family-scoped sync without a manual start returns skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
