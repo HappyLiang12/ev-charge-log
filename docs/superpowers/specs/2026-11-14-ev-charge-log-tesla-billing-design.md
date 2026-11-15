@@ -123,6 +123,7 @@ Components:
 | `family.js` | Family view rendering and actions |
 | `owner.js` | Owner view rendering and actions |
 | `rate-view.js` | Shared owner/family rate cards and latest-month collapse |
+| `live.js` | Wall Connector live poll and 1-second estimated counter |
 | `vendor/qrcode-generator.js` | MIT QR encoder for per-car auto-start codes |
 | `style.css` | Existing dark theme plus owner/family additions |
 | `config.js` | Public `API_URL` only |
@@ -549,6 +550,23 @@ All records, including unassigned and legacy rows, are returned. Invalid or
 missing parameters return
 `{ "ok": false, "error": "..." }`.
 
+`GET ?status=1` returns the live Wall Connector probe:
+
+```json
+{
+  "ok": true,
+  "charging": true,
+  "powerW": 7200,
+  "energyWh": null,
+  "state": "1",
+  "available": true,
+  "sampledAt": "2026-11-15T07:20:00.000Z"
+}
+```
+
+`energyWh` is null when the live endpoint does not expose session energy; the
+UI then estimates from power. `GET ?status=1` does not read or write the Sheet.
+
 ### 11.2 POST actions
 
 | Action | Body | Authorization | Result |
@@ -621,6 +639,10 @@ Shown for `?car=<id>`.
 - Delete confirmation for a Tesla-linked record warns that the 充電樁紀錄
   will also be ignored; the owner can remove the key from `Ignored` to allow a
   later sync to import it again.
+- Live charging card while a manual start is pending: `充電中`/`未充電`,
+  instantaneous kW, and an estimated kWh/cost counter. The counter seeds from
+  the manual start and the first power sample, then interpolates every second
+  between 5-minute live polls. The completed Tesla session is authoritative.
 - Month selector and `匯出 CSV`; default month follows the existing behavior.
 - Rate note: `按 CLP <month> 費率估算；實際電費以中電賬單為準`.
 - If no rate exists at or before the month, show `未設定費率` and no cost. If
@@ -635,6 +657,8 @@ Shown for `?owner`.
 
 - Header: `EV 充電紀錄 — 管理`.
 - Actions: `更新充電樁`, `更新費率`, `打開 Google Sheet`.
+- Live charging card while any manual start is pending: `充電中`/`未充電`,
+  instantaneous kW, and the same estimated kWh/cost counter as the family view.
 - Month selector for the per-car table; default current month.
 - Per-car monthly table: car name, sessions, kWh, non-peak kWh, peak kWh,
   estimated cost. Legacy rows are counted separately and excluded from totals.
@@ -756,9 +780,10 @@ times are Asia/Hong_Kong.
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
 - Family coverage: load, start, auto-start from `start=1`, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
-  older months collapsed, one combined pending list, assign, ignore, CSV export,
-  12-hour times, preserved open groups, and the initial 30-day Tesla import.
-  Family-scoped sync without a manual start returns skipped.
+  older months collapsed, one combined pending list, live charging card/estimate,
+  assign, ignore, CSV export, 12-hour times, preserved open groups, and the
+  initial 30-day Tesla import. Family-scoped sync without a manual start returns
+  skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
 
 ### 14.4 Browser smoke
@@ -825,6 +850,9 @@ No old Sheet rows are deleted at any step.
 - `energy_added_wh` is the vehicle-side energy added. CLP's meter measures AC
   energy, so charging losses are not modeled in this version. The owner's bill
   remains the source of truth.
+- Live charging kWh/cost is an estimate from the last 5-minute power sample; the
+  completed Tesla session is authoritative. Live polling stops when no manual
+  start is pending and is skipped while the page is hidden.
 - The CLP pages are bot-protected. The reader fallback is a third-party
   dependency and can fail or change. Markup normalization and value validation
   handle the common shape changes, but a structural change still requires the

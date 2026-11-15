@@ -32,6 +32,7 @@ import {
 } from './api.js';
 import { renderRateCards } from './rate-view.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
+import { startChargerLive } from './live.js';
 
 function monthLabel(month) {
   if (month === 'all') return '全部月份';
@@ -86,6 +87,11 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     count: byId('familyCount'),
     split: byId('familySplit'),
     rates: byId('familyRates'),
+    livePanel: byId('familyLivePanel'),
+    liveState: byId('familyLiveState'),
+    livePower: byId('familyLivePower'),
+    liveKwh: byId('familyLiveKwh'),
+    liveCost: byId('familyLiveCost'),
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
     recentList: byId('recentList'),
@@ -316,6 +322,20 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     }
   }
 
+  function renderLive(live) {
+    if (!live) {
+      els.livePanel.hidden = true;
+      return;
+    }
+    els.livePanel.hidden = false;
+    const charging = live.available && live.charging;
+    els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
+    els.liveState.dataset.state = charging ? 'charging' : 'idle';
+    els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
+    els.liveKwh.textContent = live.kWh.toFixed(3);
+    els.liveCost.textContent = live.cost === null ? '—' : `$${live.cost.toFixed(3)}`;
+  }
+
   async function load() {
     render();
     if (!apiUrl) {
@@ -487,5 +507,18 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   if (cached.corrupt || queued.corrupt) showToast(els.toast, '本機紀錄格式有誤，已忽略。');
   if (cachedRates.corrupt) showToast(els.toast, '費率快取格式有誤，已忽略。');
+  if (apiUrl) {
+    startChargerLive({
+      apiUrl,
+      getStartAt: () => {
+        const row = mergeRecords(state.server, state.pending).find((record) => (
+          record.source === 'manual' && record.kWh === null && !record.teslaKey
+        ));
+        return row ? row.startAt : null;
+      },
+      getRates: () => state.rates,
+      onChange: renderLive,
+    });
+  }
   void load();
 }

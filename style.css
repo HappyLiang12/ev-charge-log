@@ -256,6 +256,49 @@ select, #exportBtn {
 
 .owner-cards { display: grid; gap: 10px; }
 
+.live-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-state {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.live-state[data-state="charging"] { color: var(--accent); }
+
+.live-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.live-metric {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.live-metric strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-metric span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .rate-more {
   border: 1px solid var(--line);
   border-radius: 12px;

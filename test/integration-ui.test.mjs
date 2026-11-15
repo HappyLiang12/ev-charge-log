@@ -56,6 +56,7 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
   try {
     await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
+    await waitFor(() => !new URL(ui.window.location.href).searchParams.has('start'), 12000);
     const [record] = harness.env.call('readLog_');
     assert.equal(record.car, 'model3');
     assert.equal(record.source, 'manual');
@@ -74,11 +75,14 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await waitFor(() => ui.document.getElementById('familyStatus').textContent === '已連接');
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);
     assert.equal(ui.document.getElementById('syncBtn').textContent, '更新充電樁');
-    assert.match(ui.document.querySelector('#familyView h2').textContent, /充電樁紀錄/);
+    assert.ok(
+      Array.from(ui.document.querySelectorAll('#familyView h2'))
+        .some((heading) => /充電樁紀錄/.test(heading.textContent)),
+    );
     await waitFor(() => ui.document.querySelectorAll('#familyRates .owner-card').length === 1);
     assert.deepEqual(
       Array.from(ui.document.querySelectorAll('#familyView main > section h2')).map((h) => h.textContent),
-      ['未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
+      ['充電狀態', '未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
     );
     assert.equal(ui.document.querySelectorAll('#familyRates .owner-card a').length, 2);
 
@@ -208,6 +212,7 @@ test('owner UI: one pending list includes manual starts and unassigned charger s
   };
   const unassigned = unassignedRecord('unassigned-pending', new Date(now - 20 * 60 * 1000).toISOString(), 'din:pending');
   const harness = await createHarness({
+    livePowerW: 7200,
     sheets: defaultSheets({ rates: [rateRow('2026-11', 47.4)], records: [manual, unassigned] }),
   });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
@@ -217,6 +222,12 @@ test('owner UI: one pending list includes manual starts and unassigned charger s
     assert.match(ui.document.getElementById('ownerPending').textContent, /等待充電樁紀錄配對/);
     assert.match(ui.document.getElementById('ownerPending').textContent, /充電樁紀錄/);
     assert.equal(ui.document.querySelectorAll('#ownerPending select').length, 1);
+    await waitFor(() => ui.document.getElementById('ownerLiveState').textContent === '充電中');
+    assert.equal(ui.document.getElementById('ownerLivePower').textContent, '7.2 kW');
+    const firstKwh = Number(ui.document.getElementById('ownerLiveKwh').textContent);
+    assert.ok(firstKwh > 0);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.ok(Number(ui.document.getElementById('ownerLiveKwh').textContent) > firstKwh);
   } finally {
     ui.close();
     await harness.close();

@@ -18,6 +18,7 @@ import {
   ignoreSession,
 } from './api.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
+import { startChargerLive } from './live.js';
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -48,6 +49,11 @@ export function initOwner({ apiUrl }) {
     rateSource: byId('ownerRateSource'),
     links: byId('ownerLinks'),
     toast: byId('ownerToast'),
+    livePanel: byId('ownerLivePanel'),
+    liveState: byId('ownerLiveState'),
+    livePower: byId('ownerLivePower'),
+    liveKwh: byId('ownerLiveKwh'),
+    liveCost: byId('ownerLiveCost'),
   };
 
   function textRow(label, value) {
@@ -446,6 +452,20 @@ export function initOwner({ apiUrl }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function renderLive(live) {
+    if (!live) {
+      els.livePanel.hidden = true;
+      return;
+    }
+    els.livePanel.hidden = false;
+    const charging = live.available && live.charging;
+    els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
+    els.liveState.dataset.state = charging ? 'charging' : 'idle';
+    els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
+    els.liveKwh.textContent = live.kWh.toFixed(3);
+    els.liveCost.textContent = live.cost === null ? '—' : `$${live.cost.toFixed(3)}`;
+  }
+
   function onExport() {
     const month = els.month.value || 'all';
     const billable = filterByMonth(state.records, month).filter((record) => (
@@ -470,5 +490,19 @@ export function initOwner({ apiUrl }) {
   window.addEventListener('online', () => {
     if (apiUrl) void load();
   });
+  if (apiUrl) {
+    startChargerLive({
+      apiUrl,
+      getStartAt: () => {
+        const row = state.records.find((record) => (
+          record.source === 'manual' && record.car && record.car !== 'unassigned'
+          && record.kWh === null && !record.teslaKey
+        ));
+        return row ? row.startAt : null;
+      },
+      getRates: () => state.rates,
+      onChange: renderLive,
+    });
+  }
   void load();
 }

@@ -131,8 +131,8 @@ export function teslaSession(startAt, { energyWh = 12000, durationSec = 3600 } =
   };
 }
 
-export async function createHarness({ sheets, teslaSessions = [], fuel = fuelPage, tariff = tariffPage } = {}) {
-  const state = { teslaSessions: [...teslaSessions], fuel, tariff };
+export async function createHarness({ sheets, teslaSessions = [], fuel = fuelPage, tariff = tariffPage, livePowerW = 0 } = {}) {
+  const state = { teslaSessions: [...teslaSessions], fuel, tariff, livePowerW };
   const env = createAppsScriptEnv({
     sheets: sheets || defaultSheets(),
     props: {
@@ -154,6 +154,16 @@ export async function createHarness({ sheets, teslaSessions = [], fuel = fuelPag
       if (url.indexOf('/api/1/energy_sites/site-1/telemetry_history') !== -1) {
         return response(200, JSON.stringify({
           response: { telemetry_history: state.teslaSessions },
+        }));
+      }
+      if (url.indexOf('/charger_live_status') !== -1) {
+        return response(200, JSON.stringify({
+          response: {
+            wall_connectors: [{
+              wall_connector_state: state.livePowerW > 0 ? 1 : 0,
+              wall_connector_power: state.livePowerW,
+            }],
+          },
         }));
       }
       if (url === FUEL_URL) return response(200, state.fuel);

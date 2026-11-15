@@ -139,6 +139,42 @@ export function normalizeCar(value) {
   };
 }
 
+export function parseChargerStatus(payload) {
+  if (!payload || payload.ok !== true) throw new Error('Invalid API response');
+  const powerW = numberOrNull(payload.powerW);
+  const energyWh = numberOrNull(payload.energyWh);
+  return {
+    charging: payload.charging === true || (powerW !== null && powerW > 50),
+    powerW: powerW === null ? 0 : Math.max(0, powerW),
+    energyWh: energyWh === null ? null : Math.max(0, energyWh),
+    state: text(payload.state),
+    available: payload.available !== false,
+    sampledAt: text(payload.sampledAt),
+  };
+}
+
+function timeMinutes(value) {
+  const match = String(value || '').match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+export function costForKwh(kWh, rates, nowIso = new Date().toISOString()) {
+  const picked = selectRate(monthKey(nowIso), rates);
+  if (!picked.rate) return null;
+  const rate = picked.rate;
+  const hk = new Date(Date.parse(nowIso) + HK_OFFSET_MS);
+  const minutes = hk.getUTCHours() * 60 + hk.getUTCMinutes();
+  const start = timeMinutes(rate.peakStart);
+  const end = timeMinutes(rate.peakEnd);
+  const peak = start !== null && end !== null
+    ? (start < end ? minutes >= start && minutes < end : minutes >= start || minutes < end)
+    : false;
+  const cents = (peak ? rate.basicPeak : rate.basicOffPeak)
+    + Number(rate.fuelAdjustment)
+    - (Number(rate.rebate) || 0);
+  return kWh * cents / 100;
+}
+
 export function familyStartUrl(href, carId) {
   const url = new URL(href);
   url.search = '';

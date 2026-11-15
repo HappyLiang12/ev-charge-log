@@ -7,6 +7,7 @@ function doGet(e) {
     lock.waitLock(30000);
     try {
       var params = (e && e.parameter) || {};
+      if (params.status !== undefined) return json_(chargerStatusPayload_());
       if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
       throw new Error('Missing car or owner parameter');
@@ -104,6 +105,10 @@ function ownerPayload_() {
     sheetUrl: sheetUrl_(),
     serverTime: new Date().toISOString(),
   };
+}
+
+function chargerStatusPayload_() {
+  return merge_({ ok: true }, chargerLiveStatus_());
 }
 
 function appendAction_(data) {

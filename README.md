@@ -37,6 +37,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Month and day groups remember their open state after a claim, assign, or ignore, so several sessions can be handled without reopening the groups.
 - The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
+- Live charging card while a manual start is pending: Wall Connector state/power from Tesla, with an estimated kWh/cost counter that updates every second from the last 5-minute power sample. The final Tesla session replaces the estimate.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
@@ -190,6 +191,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 
 - `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
 - `?owner` returns `{ ok, cars, records, rates, serverTime }` for the owner.
+- `?status=1` returns `{ ok, charging, powerW, energyWh, state, available, sampledAt }` from the Wall Connector live status. `energyWh` may be null.
 
 `POST` with a `text/plain` JSON body:
 
@@ -224,6 +226,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Peak/off-peak is duration-proportional, not measured per minute.
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
+- The live charging kWh/cost is an estimate from the last Wall Connector power sample; the completed Tesla session is authoritative. The card polls every 5 minutes while the page is visible (one Tesla call per poll) and interpolates every second.
 - There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
 - `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
@@ -235,7 +238,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 111 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, 12-hour Hong Kong time, and the API envelope. Eight jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 113 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, live charging estimates, 12-hour Hong Kong time, and the API envelope. Eight jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
