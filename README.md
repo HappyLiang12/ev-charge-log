@@ -215,7 +215,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
 - Peak/off-peak is duration-proportional, not measured per minute.
 - The vehicle may report DC-side energy; the AC meter can differ.
-- CLP page scraping is fragile. Manual `Rates` rows are the fallback.
+- CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
 - There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
@@ -226,7 +226,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 88 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 92 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, rate validation, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 

@@ -105,20 +105,31 @@ function closestManualCandidate_(sessionStartIso, manualRows, windowMs) {
   return best;
 }
 
+function normalizeClpText_(text) {
+  return String(text || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\*\*/g, '')
+    .replace(/[\u00a0\u3000]/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 function parseFuelAdjustmentPage_(text) {
-  var source = String(text || '').replace(/\*\*/g, '');
-  var current = source.match(/(\d{4})年(\d{1,2})月1日起，燃料調整費為每度電([\d.]+)港仙/);
+  var source = normalizeClpText_(text);
+  var current = source.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*1\s*日起[，,\s]*燃料調整費為[^\d]{0,20}(\d+(?:\.\d+)?)\s*港仙/);
   if (!current) return { current: null, rows: [] };
   var year = Number(current[1]);
   var month = Number(current[2]);
   var cents = Number(current[3]);
+  if (month < 1 || month > 12 || cents < 0 || cents > 200) return { current: null, rows: [] };
   var section = '';
   var sectionStart = source.indexOf('每月燃料調整費');
   if (sectionStart !== -1) {
     var rest = source.slice(sectionStart);
     // Trailing text after the current-rate sentence must not extend the table:
     // bound it at the sentence, a following yearly table, or the next section.
-    var stop = rest.search(/\d{4}年\d{1,2}月\d{1,2}日起|本月調整計算|\d{4}年每月燃料調整費/);
+    var stop = rest.search(/\d{4}年\d{1,2}月\d{1,2}日起|本月調整計算|\d{4}年每月燃料調整費|備註|由\d{4}年/);
     section = stop === -1 ? rest : rest.slice(0, stop);
   }
   var months = [];
@@ -127,10 +138,11 @@ function parseFuelAdjustmentPage_(text) {
     months.push(Number(m.value[1]));
   }
   var values = [];
-  var valueMatches = section.matchAll(/(?:^|\n)\s*(\d{2}\.\d)\*?\s*(?=\n|$)/g);
+  var valueMatches = section.matchAll(/(?:^|\n)\s*(\d{1,3}(?:\.\d+)?)\*?\s*(?=\n|$)/g);
   for (var v = valueMatches.next(); !v.done; v = valueMatches.next()) {
     values.push(Number(v.value[1]));
   }
+  if (months.length !== values.length) return { current: null, rows: [] };
   var rows = [];
   var count = Math.min(months.length, values.length);
   var byMonth = {};
@@ -151,9 +163,9 @@ function parseFuelAdjustmentPage_(text) {
 }
 
 function parseTariffPage_(text) {
-  var source = String(text || '');
-  var off = source.match(/(?:^|\n)\s*非高峰用電時間[\s\S]{0,300}?(\d{2,3}\.\d)/);
-  var peak = source.match(/(?:^|\n)\s*高峰用電時間[\s\S]{0,300}?(\d{2,3}\.\d)/);
+  var source = normalizeClpText_(text);
+  var off = source.match(/(?:^|\n)\s*非高峰用電時間[\s\S]{0,500}?(\d{1,3}\.\d+)/);
+  var peak = source.match(/(?:^|\n)\s*高峰用電時間[\s\S]{0,500}?(\d{1,3}\.\d+)/);
   if (!off || !peak) return null;
   return {
     basicOffPeak: Number(off[1]),
@@ -161,4 +173,44 @@ function parseTariffPage_(text) {
     peakStart: DEFAULT_PEAK_START_,
     peakEnd: DEFAULT_PEAK_END_,
   };
+}
+
+function validateParsedRates_(fuel, tariff) {
+  var current = fuel && fuel.current;
+  var rows = (fuel && fuel.rows) || [];
+  if (!current || !tariff || !rows.length) throw new Error('CLP rate parse failed');
+  if (!validMonth_(current.month)) throw new Error('CLP fuel month is invalid');
+  if (!isFinite(current.fuelAdjustment) || current.fuelAdjustment < 0 || current.fuelAdjustment > 200) {
+    throw new Error('CLP fuel adjustment is outside 0-200 cents');
+  }
+  if (!isFinite(tariff.basicOffPeak) || tariff.basicOffPeak <= 0 || tariff.basicOffPeak > 500) {
+    throw new Error('CLP off-peak rate is outside 0-500 cents');
+  }
+  if (!isFinite(tariff.basicPeak) || tariff.basicPeak <= 0 || tariff.basicPeak > 500) {
+    throw new Error('CLP peak rate is outside 0-500 cents');
+  }
+  if (tariff.basicPeak <= tariff.basicOffPeak) {
+    throw new Error('CLP peak rate must exceed off-peak');
+  }
+  if (rows.length > 12) throw new Error('CLP fuel table has too many months');
+  var seen = {};
+  var hasCurrent = false;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!validMonth_(row.month) || Object.prototype.hasOwnProperty.call(seen, row.month)) {
+      throw new Error('CLP fuel table has an invalid or duplicate month');
+    }
+    if (!isFinite(row.fuelAdjustment) || row.fuelAdjustment < 0 || row.fuelAdjustment > 200) {
+      throw new Error('CLP fuel adjustment is outside 0-200 cents');
+    }
+    seen[row.month] = true;
+    if (row.month === current.month) {
+      hasCurrent = true;
+      if (row.fuelAdjustment !== current.fuelAdjustment) {
+        throw new Error('CLP fuel table does not match the current month');
+      }
+    }
+  }
+  if (!hasCurrent) throw new Error('CLP fuel table is missing the current month');
+  return true;
 }

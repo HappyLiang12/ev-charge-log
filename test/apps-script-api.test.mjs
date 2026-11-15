@@ -427,7 +427,7 @@ test('sync reconciles an existing unassigned session into the matching manual ro
   assert.equal(records.some((record) => record.id === 'unassigned-old'), false);
 });
 
-test('owner refreshRates updates the Rates tab and is owner-only', () => {
+test('refreshRates updates the Rates tab', () => {
   const fuelPage = `
 2026年每月燃料調整費
 2026年
@@ -477,4 +477,51 @@ test('owner refreshRates updates the Rates tab and is owner-only', () => {
   assert.equal(result.ok, true);
   assert.equal(result.updated, 11);
   assert.equal(plain(env.call('readRates_')).length, 11);
+});
+
+test('refreshRates rejects implausible tariff values without writing', () => {
+  const env = setup({
+    sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] },
+    fetch: (url) => {
+      if (url === FUEL_URL) {
+        return response(200, `
+2026年11月1日起，燃料調整費為**每度電47.4港仙**。
+## 2026年每月燃料調整費
+2026年
+1月
+2月
+3月
+4月
+5月
+6月
+7月
+8月
+9月
+10月
+11月
+燃料調整費
+(每度電港仙)
+39.4
+39.4
+39.2
+39.8
+40.4
+42.6
+43.5
+45.0*
+45.1*
+46.2*
+47.4
+`);
+      }
+      if (url === TARIFF_URL) {
+        return response(200, '非高峰用電時間\n94.5\n高峰用電時間\n80.5\n');
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'refreshRates' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /CLP/);
+  assert.equal(plain(env.call('readRates_')).length, 0);
 });

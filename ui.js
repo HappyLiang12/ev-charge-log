@@ -34,6 +34,9 @@ export function setBusy(button, busy, busyLabel, idleLabel) {
 
 export function friendlyError(error, fallback) {
   const raw = String((error && error.message) || '');
+  if (/CLP|manualOverride|fuel adjustment|off-peak|peak rate/i.test(raw)) {
+    return 'CLP 費率格式已變，請在 Google Sheet 的 Rates 手動輸入並設 manualOverride=TRUE。';
+  }
   if (/authorization|授權|401|403|Tesla token/i.test(raw)) {
     return 'Tesla 授權已過期，請重新執行本機設定工具。';
   }

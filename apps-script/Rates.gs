@@ -42,6 +42,7 @@ function refreshRates_() {
     return parsed.current && parsed.rows.length && hasTable ? parsed : null;
   });
   var tariff = fetchWithReader_(CLP_TARIFF_URL_, parseTariffPage_);
+  validateParsedRates_(fuel.parsed, tariff.parsed);
   var fetchedAt = new Date().toISOString();
   var rows = [];
   for (var i = 0; i < fuel.parsed.rows.length; i += 1) {

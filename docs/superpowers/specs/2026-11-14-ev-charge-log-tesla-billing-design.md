@@ -431,18 +431,25 @@ The official `FCA.csv` is not used. It ended at 2025-12 when checked.
 1. Fetch each official page with a browser-like user agent.
 2. If the response is not HTTP 200 or lacks expected markers, fetch
    `https://r.jina.ai/<official URL>` and parse the reader output.
-3. Parse the current fuel adjustment sentence:
-   `(\d{4})年(\d{1,2})月1日起，燃料調整費為每度電([\d.]+)港仙`.
-4. Parse the current year's monthly fuel adjustment table, stripping `*`
-   markers. Do not infer or apply any special rebate.
-5. Parse the tariff page's current non-peak and peak basic charges (94.5 and
+3. Normalize the fetched text before parsing: strip HTML tags, Markdown bold
+   (`**`), non-breaking/ideographic spaces, and collapse spacing while keeping
+   line breaks.
+4. Parse the current fuel adjustment sentence with flexible spacing and
+   markup between the date, label, value, and unit.
+5. Parse the current year's monthly fuel adjustment table, stripping `*`
+   markers and bounding it at `備註` or the next section. Require the month and
+   value counts to match. Do not infer or apply any special rebate.
+6. Parse the tariff page's current non-peak and peak basic charges (94.5 and
    137.5 at the time of writing) next to their Chinese labels. Parse the time
    windows when possible; otherwise keep the existing defaults.
-6. Upsert one `Rates` row per month. Skip rows whose `manualOverride` is
+7. Validate before writing: month format, fuel adjustment 0-200 cents, basic
+   charges 0-500 cents, peak greater than non-peak, 1-12 rows, and the current
+   month present with the same value. On any failure, leave existing rows
+   unchanged and return an error that prompts the owner to set
+   `manualOverride=TRUE`.
+8. Upsert one `Rates` row per month. Skip rows whose `manualOverride` is
    `TRUE`.
-7. Set `sourceUrl` and `fetchedAt` on rows written by the fetch.
-8. If any page or parse fails, leave existing rows unchanged and return an
-   error. The app shows the error and the last successful `fetchedAt`.
+9. Set `sourceUrl` and `fetchedAt` on rows written by the fetch.
 
 Months outside the year table shown on the current page are not fetched; the
 owner must add them manually. The owner may edit `Rates` directly. Setting
@@ -772,8 +779,9 @@ No old Sheet rows are deleted at any step.
   energy, so charging losses are not modeled in this version. The owner's bill
   remains the source of truth.
 - The CLP pages are bot-protected. The reader fallback is a third-party
-  dependency and can fail or change. Manual override is mandatory for billing
-  confidence.
+  dependency and can fail or change. Markup normalization and value validation
+  handle the common shape changes, but a structural change still requires the
+  owner to enter the `Rates` row manually with `manualOverride=TRUE`.
 - The official fuel CSV is stale and is not used.
 - Apps Script quotas and Tesla API rate limits apply. The on-demand design
   avoids polling.
