@@ -267,7 +267,7 @@ select, #exportBtn {
 .owner-toolbar-actions button:disabled { opacity: 0.4; cursor: default; }
 
 .owner-cards { display: grid; gap: 10px; }
-#familyRates { margin-top: 10px; }
+#familyRates { margin-top: 16px; }
 
 .live-title-row {
   display: flex;
