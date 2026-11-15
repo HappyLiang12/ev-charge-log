@@ -153,6 +153,7 @@ test('parseFuelAdjustmentPage_ accepts reader markdown bold and the live page or
 46.2*
 47.4
 備註:
+* 由2026年8月至10月，合資格住宅客戶可享「燃料費特別回扣」每度電8港仙。
 `;
   const parsed = call('parseFuelAdjustmentPage_', page);
   assert.deepEqual(plain(parsed.current), { month: '2026-11', fuelAdjustment: 47.4 });
@@ -218,4 +219,39 @@ test('parseTariffPage_ extracts the basic charges and confirms the peak window',
     peakEnd: '23:00',
   });
   assert.equal(call('parseTariffPage_', 'no tariff here'), null);
+});
+
+test('parseTariffPage_ accepts reader markup without capturing the 17-hour note', () => {
+  const page = `
+<p><strong>非高峰用電時間</strong></p>
+（每日晚上十一時至翌日下午四時，優惠時段長達17小時）
+94.5
+<p><strong>高峰用電時間</strong></p>
+（每日下午四時至晚上十一時）
+137.5
+`;
+  assert.deepEqual(plain(call('parseTariffPage_', page)), {
+    basicOffPeak: 94.5,
+    basicPeak: 137.5,
+    peakStart: '16:00',
+    peakEnd: '23:00',
+  });
+});
+
+test('validateParsedRates_ rejects implausible or incomplete rates', () => {
+  const fuel = {
+    current: { month: '2026-11', fuelAdjustment: 47.4 },
+    rows: [{ month: '2026-11', fuelAdjustment: 47.4 }],
+  };
+  const tariff = { basicOffPeak: 94.5, basicPeak: 137.5 };
+  assert.equal(call('validateParsedRates_', fuel, tariff), true);
+  assert.throws(() => call('validateParsedRates_', {
+    current: { month: '2026-11', fuelAdjustment: 999 },
+    rows: [{ month: '2026-11', fuelAdjustment: 999 }],
+  }, tariff), /CLP/);
+  assert.throws(() => call('validateParsedRates_', fuel, {
+    basicOffPeak: 94.5,
+    basicPeak: 80.5,
+  }), /CLP/);
+  assert.throws(() => call('validateParsedRates_', { current: null, rows: [] }, tariff), /CLP/);
 });
