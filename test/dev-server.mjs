@@ -7,7 +7,6 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const port = Number(process.env.PORT || 8787);
 const apiUrl = process.env.SMOKE_API_URL || `http://127.0.0.1:${port}/api`;
 const delayMs = Number(process.env.SMOKE_DELAY_MS || 0);
-const ownerKey = 'a'.repeat(48);
 const cars = [
   { id: 'model3', name: 'Model 3', active: true },
   { id: 'leaf', name: 'Leaf', active: true },
@@ -169,8 +168,7 @@ const server = http.createServer(async (req, res) => {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     if (req.method === 'GET') {
-      if (url.searchParams.get('owner')) {
-        if (url.searchParams.get('owner') !== ownerKey) return fail(res, 403, 'Invalid owner key');
+      if (url.searchParams.has('owner')) {
         return sendJson(res, 200, { ok: true, cars, records, rates });
       }
       const carId = url.searchParams.get('car');
@@ -210,17 +208,18 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
       if (action === 'delete') {
-        if (data.ownerKey && data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
+        const car = findCar(data.car);
+        if (!car) return fail(res, 404, 'Unknown car');
         const index = records.findIndex((record) => record.id === data.id);
         if (index >= 0) {
+          if (records[index].car !== car.id) return fail(res, 400, 'Record does not belong to this car');
           const [removed] = records.splice(index, 1);
           if (removed.teslaKey) ignored.add(removed.teslaKey);
         }
         return sendJson(res, 200, { ok: true });
       }
       if (action === 'sync') {
-        if (data.ownerKey !== undefined) {
-          if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
+        if (data.car === undefined) {
           let matched = 0;
           for (const car of cars) if (matchPending(car)) matched += 1;
           return sendJson(res, 200, { ok: true, matched, unassigned: 0 });
@@ -231,7 +230,6 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, matched, unassigned: 0 });
       }
       if (action === 'assign') {
-        if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
         const target = records.find((record) => record.id === data.id);
         const car = findCar(data.car);
         if (!target || !car || target.car !== 'unassigned') return fail(res, 400, 'Invalid assignment');
@@ -246,7 +244,6 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, assigned: true });
       }
       if (action === 'ignore') {
-        if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
         const index = records.findIndex((record) => record.id === data.id);
         if (index >= 0) {
           const [removed] = records.splice(index, 1);
@@ -255,7 +252,6 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
       if (action === 'refreshRates') {
-        if (data.ownerKey !== ownerKey) return fail(res, 403, 'Invalid owner key');
         rates[0].fetchedAt = new Date().toISOString();
         return sendJson(res, 200, { ok: true, updated: rates.length });
       }

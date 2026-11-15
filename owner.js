@@ -16,7 +16,7 @@ import {
 } from './api.js';
 import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
 
-export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
+export function initOwner({ apiUrl, sheetUrl }) {
   const state = {
     cars: [],
     records: [],
@@ -301,7 +301,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
   }
 
   async function refreshData() {
-    const data = await fetchOwnerData(apiUrl, ownerKey);
+    const data = await fetchOwnerData(apiUrl);
     state.cars = data.cars;
     state.records = data.records;
     state.rates = data.rates;
@@ -330,7 +330,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
       state.loading = false;
       state.offline = true;
       render();
-      showToast(els.toast, friendlyError(error, '未能載入管理資料，請確認管理連結及網絡。'));
+      showToast(els.toast, friendlyError(error, '未能載入管理資料，請檢查網絡。'));
     }
   }
 
@@ -339,7 +339,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     state.busy = true;
     render();
     try {
-      const result = await syncTesla(apiUrl, { ownerKey });
+      const result = await syncTesla(apiUrl);
       showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
       await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
     } catch (error) {
@@ -356,7 +356,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     state.busy = true;
     render();
     try {
-      const result = await refreshRates(apiUrl, ownerKey);
+      const result = await refreshRates(apiUrl);
       showToast(els.toast, `已更新 ${Number(result.updated) || 0} 個月份費率。`);
       await refreshOrWarn('費率已更新，但未能載入最新資料，請重新載入。');
     } catch (error) {
@@ -378,7 +378,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     state.busy = true;
     render();
     try {
-      await assignSession(apiUrl, ownerKey, record.id, car);
+      await assignSession(apiUrl, record.id, car);
       showToast(els.toast, '已分配。');
       await refreshOrWarn('已分配，但未能載入最新資料，請重新載入。');
     } catch (error) {
@@ -396,7 +396,7 @@ export function initOwner({ apiUrl, sheetUrl, ownerKey }) {
     state.busy = true;
     render();
     try {
-      await ignoreSession(apiUrl, ownerKey, record.id);
+      await ignoreSession(apiUrl, record.id);
       showToast(els.toast, '已忽略。');
       await refreshOrWarn('已忽略，但未能載入最新資料，請重新載入。');
     } catch (error) {

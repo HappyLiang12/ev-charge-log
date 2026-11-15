@@ -9,15 +9,15 @@ const params = new URLSearchParams(window.location.search);
 const familyView = document.getElementById('familyView');
 const ownerView = document.getElementById('ownerView');
 const setupView = document.getElementById('setupView');
-const ownerKey = params.get('owner');
+const ownerMode = params.has('owner');
 const carParam = params.get('car');
 const car = carParam && carParam !== 'unassigned'
   ? normalizeCar({ id: carParam, name: carParam })
   : null;
 
-if (ownerKey && /^[a-f0-9]{48}$/.test(ownerKey)) {
+if (ownerMode) {
   ownerView.hidden = false;
-  initOwner({ apiUrl, sheetUrl, ownerKey });
+  initOwner({ apiUrl, sheetUrl });
 } else if (car) {
   familyView.hidden = false;
   initFamily({ apiUrl, carId: car.id });

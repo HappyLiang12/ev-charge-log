@@ -8,7 +8,7 @@ function doGet(e) {
     lock.waitLock(30000);
     try {
       var params = (e && e.parameter) || {};
-      if (params.owner) return json_(ownerPayload_(params.owner));
+      if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
       throw new Error('Missing car or owner parameter');
     } finally {
@@ -58,12 +58,6 @@ function json_(payload) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function assertOwner_(ownerKey) {
-  var expected = scriptProperty_('OWNER_KEY');
-  if (!expected) throw new Error('Owner key is not configured (set the OWNER_KEY script property)');
-  if (!ownerKey || String(ownerKey) !== String(expected)) throw new Error('Invalid owner key');
-}
-
 function findCar_(carId) {
   if (!validCarId_(carId)) return null;
   var cars = readCars_();
@@ -87,8 +81,7 @@ function familyPayload_(carId) {
   };
 }
 
-function ownerPayload_(ownerKey) {
-  assertOwner_(ownerKey);
+function ownerPayload_() {
   return {
     ok: true,
     cars: readCars_(),
@@ -134,37 +127,22 @@ function appendAction_(data) {
 
 function deleteAction_(data) {
   if (!data.id) throw new Error('Invalid id');
-  if (data.ownerKey) {
-    assertOwner_(data.ownerKey);
-  } else if (data.car) {
-    if (!validCarId_(data.car)) throw new Error('Invalid car id');
-    var car = findCar_(data.car);
-    if (!car) throw new Error('Unknown car: ' + data.car);
-  } else {
-    throw new Error('Missing authorization');
-  }
+  if (!validCarId_(data.car)) throw new Error('Invalid car id');
+  var car = findCar_(data.car);
+  if (!car) throw new Error('Unknown car: ' + data.car);
   var records = readLog_();
   var target = null;
   for (var i = 0; i < records.length; i += 1) {
     if (records[i].id === String(data.id)) target = records[i];
   }
   if (!target) return { deleted: false };
-  if (!data.ownerKey && target.car !== data.car) throw new Error('Record does not belong to this car');
+  if (target.car !== data.car) throw new Error('Record does not belong to this car');
   if (target.teslaKey) addIgnored_(target.teslaKey, 'deleted');
   deleteLog_(target.id);
   return { deleted: true };
 }
 
-function syncAction_(data) {
-  if (data.ownerKey) {
-    assertOwner_(data.ownerKey);
-  } else if (data.car) {
-    if (!validCarId_(data.car)) throw new Error('Invalid car id');
-    var car = findCar_(data.car);
-    if (!car) throw new Error('Unknown car: ' + data.car);
-  } else {
-    throw new Error('Missing authorization');
-  }
+function syncAction_() {
   return syncTesla_();
 }
 
@@ -212,7 +190,6 @@ function claimAction_(data) {
 }
 
 function assignAction_(data) {
-  assertOwner_(data.ownerKey);
   var car = findCar_(data.car);
   if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
   var records = readLog_();
@@ -220,7 +197,6 @@ function assignAction_(data) {
 }
 
 function ignoreAction_(data) {
-  assertOwner_(data.ownerKey);
   var records = readLog_();
   var target = null;
   for (var i = 0; i < records.length; i += 1) {
@@ -233,7 +209,6 @@ function ignoreAction_(data) {
   return { ignored: true };
 }
 
-function ratesAction_(data) {
-  assertOwner_(data.ownerKey);
+function ratesAction_() {
   return refreshRates_();
 }

@@ -49,8 +49,8 @@ export async function fetchFamilyData(apiUrl, car, fetchImpl = fetch) {
   return parseFamilyPayload(await apiGet(apiUrl, { car }, fetchImpl));
 }
 
-export async function fetchOwnerData(apiUrl, ownerKey, fetchImpl = fetch) {
-  return parseOwnerPayload(await apiGet(apiUrl, { owner: ownerKey }, fetchImpl));
+export async function fetchOwnerData(apiUrl, fetchImpl = fetch) {
+  return parseOwnerPayload(await apiGet(apiUrl, { owner: '1' }, fetchImpl));
 }
 
 export async function postRecord(apiUrl, record, car, fetchImpl = fetch) {
@@ -71,18 +71,18 @@ export async function syncTesla(apiUrl, auth, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'sync', ...auth }, fetchImpl);
 }
 
-export async function assignSession(apiUrl, ownerKey, id, car, fetchImpl = fetch) {
-  return apiPost(apiUrl, { action: 'assign', ownerKey, id, car }, fetchImpl);
+export async function assignSession(apiUrl, id, car, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'assign', id, car }, fetchImpl);
 }
 
 export async function claimSession(apiUrl, car, id, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'claim', car, id }, fetchImpl);
 }
 
-export async function ignoreSession(apiUrl, ownerKey, id, fetchImpl = fetch) {
-  return apiPost(apiUrl, { action: 'ignore', ownerKey, id }, fetchImpl);
+export async function ignoreSession(apiUrl, id, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'ignore', id }, fetchImpl);
 }
 
-export async function refreshRates(apiUrl, ownerKey, fetchImpl = fetch) {
-  return apiPost(apiUrl, { action: 'refreshRates', ownerKey }, fetchImpl);
+export async function refreshRates(apiUrl, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'refreshRates' }, fetchImpl);
 }

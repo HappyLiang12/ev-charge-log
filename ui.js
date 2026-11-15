@@ -34,7 +34,6 @@ export function setBusy(button, busy, busyLabel, idleLabel) {
 
 export function friendlyError(error, fallback) {
   const raw = String((error && error.message) || '');
-  if (/invalid owner key|owner key/i.test(raw)) return '管理連結無效，請確認 owner key。';
   if (/authorization|授權|401|403|Tesla token/i.test(raw)) {
     return 'Tesla 授權已過期，請重新執行本機設定工具。';
   }
