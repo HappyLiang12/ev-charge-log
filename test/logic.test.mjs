@@ -11,6 +11,7 @@ import {
   normalizeRecord,
   normalizeRecords,
   normalizeRates,
+  sourceUrls,
   normalizeCars,
   parseServerRecords,
   parseFamilyPayload,
@@ -144,6 +145,14 @@ test('parse payloads validate the family and owner envelopes', () => {
   assert.deepEqual(owner.records, [record()]);
   assert.throws(() => parseServerRecords({ ok: false }), /Invalid API response/);
   assert.throws(() => parseFamilyPayload({ ok: true, car: null, records: [] }), /Invalid car payload/);
+});
+
+test('sourceUrls splits valid URLs and drops duplicates', () => {
+  assert.deepEqual(sourceUrls('https://a.example/x, https://b.example/y ,not-a-url,https://a.example/x'), [
+    'https://a.example/x',
+    'https://b.example/y',
+  ]);
+  assert.deepEqual(sourceUrls(''), []);
 });
 
 test('merge, month filtering, and default month use startAt', () => {

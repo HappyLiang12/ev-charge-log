@@ -64,7 +64,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 - Values are HK cents per kWh.
 - `manualOverride=TRUE` rows are never overwritten by the rate refresh.
-- `sourceUrl` is a comma-separated list of the CLP pages used.
+- `sourceUrl` is a comma-separated list of the CLP pages used; the owner view renders each valid URL as a separate link.
 - Google Sheets may store `month` as a date cell; the API normalizes it to `YYYY-MM`. The rate refresh keeps one row per month, removes duplicate month rows, and keeps a manual override row.
 - The read path also dedupes duplicate month rows, preferring `manualOverride` then the latest `fetchedAt`.
 
@@ -229,7 +229,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 98 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 99 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 
