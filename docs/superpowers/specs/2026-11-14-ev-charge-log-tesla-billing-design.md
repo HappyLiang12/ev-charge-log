@@ -343,7 +343,7 @@ The fetch lower bound is:
 - Otherwise, if `SYNC_FROM` is set: `max(SYNC_FROM, now - 90 days)`.
 - Otherwise, if manual records exist: the earliest manual record's `startAt`
   minus 2 days.
-- Otherwise, for an owner sync (`更新 Tesla` with no `car`): `now - 30 days`.
+- Otherwise, for an owner sync (`更新充電樁` with no `car`): `now - 30 days`.
   This is the initial load and may create unassigned sessions.
 - Otherwise, for a family-scoped sync: return without fetching. Family page
   load must not import 30 days of history before anyone presses start.
@@ -596,7 +596,7 @@ Shown for `?car=<id>`.
 - Header: `EV 充電紀錄`, car name, status chip, and no Sheet link.
 - Primary action: `⚡ 開始充電`, full width. It records the current time for
   this car and shows a toast.
-- Secondary action: `更新 Tesla`. It calls `sync`, shows a spinner, and
+- Secondary action: `更新充電樁`. It calls `sync`, shows a spinner, and
   reports `已配對 X 個 session`.
 - After the initial record load, the family view runs one sync automatically
   when online. The button allows a manual retry. There is no polling.
@@ -609,7 +609,7 @@ Shown for `?car=<id>`.
   entering a backdated time. This is the forgotten-start recovery path. The
   latest 24 hours stay open; older sessions are grouped by Hong Kong day and
   collapsed.
-- Delete confirmation for a Tesla-linked record warns that the Tesla session
+- Delete confirmation for a Tesla-linked record warns that the 充電樁紀錄
   will also be ignored.
 - Month selector and `匯出 CSV`; default month follows the existing behavior.
 - Rate note: `按 CLP <month> 費率估算；實際電費以中電賬單為準`.
@@ -624,14 +624,14 @@ Shown for `?car=<id>`.
 Shown for `?owner`.
 
 - Header: `EV 充電紀錄 — 管理`.
-- Actions: `更新 Tesla`, `更新費率`, `打開 Google Sheet`.
+- Actions: `更新充電樁`, `更新費率`, `打開 Google Sheet`.
 - Month selector for the per-car table; default current month.
 - Per-car monthly table: car name, sessions, kWh, non-peak kWh, peak kWh,
   estimated cost. Legacy rows are counted separately and excluded from totals.
 - Unassigned list: Tesla start, kWh, duration, car selector, `分配`, `忽略`.
   The latest 24 hours stay open; older sessions are grouped by Hong Kong day
   and collapsed.
-- Pending manual list: car, startAt, `等待 Tesla 配對`.
+- Pending manual list: car, startAt, `等待充電樁紀錄配對`.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
   source, fetchedAt, manual override. The latest month is shown first; older
   months are collapsed. Read-only; edit in the Sheet.

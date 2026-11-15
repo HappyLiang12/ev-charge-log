@@ -58,6 +58,8 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
   try {
     await waitFor(() => ui.document.getElementById('familyStatus').textContent === '已連接');
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);
+    assert.equal(ui.document.getElementById('syncBtn').textContent, '更新充電樁');
+    assert.match(ui.document.querySelector('#familyView h2').textContent, /充電樁紀錄/);
 
     ui.document.getElementById('startBtn').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 1);
@@ -117,6 +119,7 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     await waitFor(() => ui.document.querySelectorAll('#ownerRates .owner-card').length === 11);
+    assert.equal(ui.document.getElementById('ownerSyncBtn').textContent, '更新充電樁');
     const details = ui.document.querySelector('#ownerRates details');
     assert.ok(details);
     assert.equal(details.open, false);

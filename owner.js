@@ -180,7 +180,7 @@ export function initOwner({ apiUrl }) {
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
-    meta.textContent = `Tesla session · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+    meta.textContent = `充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
@@ -225,7 +225,7 @@ export function initOwner({ apiUrl }) {
     head.append(when, title);
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
-    meta.textContent = '手動開始紀錄，等待 Tesla session 配對。';
+    meta.textContent = '手動開始紀錄，等待充電樁紀錄配對。';
     li.append(head, meta);
     return li;
   }
@@ -239,7 +239,7 @@ export function initOwner({ apiUrl }) {
           ? '離線'
           : '已連接';
     setStatus(els.status, status);
-    setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新 Tesla');
+    setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新充電樁');
     setBusy(els.ratesBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新費率');
     if (state.sheetUrl) {
       els.sheetLink.href = state.sheetUrl;
@@ -292,7 +292,7 @@ export function initOwner({ apiUrl }) {
     els.unassigned.replaceChildren();
     appendUnassignedRows(els.unassigned, unassigned, makeUnassignedRow);
     els.unassignedEmpty.hidden = unassigned.length > 0;
-    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配 session。';
+    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配充電樁紀錄。';
 
     const pending = state.records.filter((record) => (
       record.car && record.car !== 'unassigned' && record.kWh === null && record.source !== 'legacy'
@@ -382,7 +382,7 @@ export function initOwner({ apiUrl }) {
       await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
     } catch (error) {
       state.offline = true;
-      showToast(els.toast, friendlyError(error, 'Tesla 同步失敗，請檢查網絡後重試。'));
+      showToast(els.toast, friendlyError(error, '充電樁同步失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
