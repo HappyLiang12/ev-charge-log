@@ -307,7 +307,18 @@ export function initOwner({ apiUrl }) {
     if (sortedRates.length === 0) {
       els.rates.append(emptyLabel('未有費率；請按「更新費率」。'));
     } else {
-      for (const rate of sortedRates) els.rates.append(makeRateCard(rate));
+      els.rates.append(makeRateCard(sortedRates[0]));
+      if (sortedRates.length > 1) {
+        const details = document.createElement('details');
+        details.className = 'rate-more';
+        const summary = document.createElement('summary');
+        summary.textContent = `其他月份（${sortedRates.length - 1}）`;
+        const list = document.createElement('div');
+        list.className = 'rate-more-list';
+        for (const rate of sortedRates.slice(1)) list.append(makeRateCard(rate));
+        details.append(summary, list);
+        els.rates.append(details);
+      }
     }
     const latest = sortedRates[0];
     els.rateSource.textContent = latest
@@ -363,7 +374,11 @@ export function initOwner({ apiUrl }) {
     render();
     try {
       const result = await syncTesla(apiUrl);
-      showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
+      if (result.skipped) {
+        showToast(els.toast, '未有待配對的手動紀錄；請家人先按「開始充電」，或設定 SYNC_FROM 後再試。');
+      } else {
+        showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
+      }
       await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
     } catch (error) {
       state.offline = true;

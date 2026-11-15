@@ -257,6 +257,23 @@ select, #exportBtn {
 
 .owner-cards { display: grid; gap: 10px; }
 
+.rate-more {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.rate-more summary {
+  cursor: pointer;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.rate-more[open] summary { border-bottom: 1px solid var(--line); }
+
+.rate-more-list { display: grid; gap: 10px; padding: 10px; }
+
 .owner-card {
   background: var(--surface-2);
   border: 1px solid var(--line);
