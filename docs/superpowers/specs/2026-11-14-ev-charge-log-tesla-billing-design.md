@@ -123,7 +123,6 @@ Components:
 | `family.js` | Family view rendering and actions |
 | `owner.js` | Owner view rendering and actions |
 | `rate-view.js` | Shared owner/family rate cards and latest-month collapse |
-| `assets/cars/` | Model 3, iX3, and Vigo SVG icons |
 | `vendor/qrcode-generator.js` | MIT QR encoder for per-car auto-start codes |
 | `style.css` | Existing dark theme plus owner/family additions |
 | `config.js` | Public `API_URL` only |
@@ -596,8 +595,7 @@ All writes use `LockService`; sync waits up to 30 seconds for the lock.
 
 Shown for `?car=<id>`.
 
-- Header: `EV 充電紀錄`, car name, status chip, a model-specific SVG car
-  hero (Model 3, iX3, or Vigo), and no Sheet link. Unknown cars hide the hero.
+- Header: `EV 充電紀錄`, car name, status chip, and no Sheet link.
 - Auto-start URL: `?car=<id>&start=1` records a start after the initial load
   without pressing the button, then removes the `start` parameter from history.
 - Primary action: `⚡ 開始充電`, full width. It records the current time for
