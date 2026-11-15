@@ -187,6 +187,27 @@ export function mergeRecords(serverRecords, pending) {
   return sortNewestFirst([...byId.values()]);
 }
 
+export function groupUnassignedByDay(records, now = Date.now()) {
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  const sorted = normalizeRecords(records).sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
+  const recent = [];
+  const days = new Map();
+  for (const record of sorted) {
+    const at = Date.parse(record.startAt);
+    if (Number.isFinite(at) && at >= cutoff) {
+      recent.push(record);
+      continue;
+    }
+    const day = formatHkDate(record.startAt);
+    if (!days.has(day)) days.set(day, []);
+    days.get(day).push(record);
+  }
+  return {
+    recent,
+    days: [...days.entries()].map(([day, rows]) => ({ day, records: rows })),
+  };
+}
+
 export function monthsWithRecords(records) {
   return [...new Set(normalizeRecords(records).map((record) => monthKey(record.startAt)))]
     .sort()

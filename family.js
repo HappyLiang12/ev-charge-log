@@ -28,7 +28,7 @@ import {
   syncTesla,
   claimSession,
 } from './api.js';
-import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError, appendUnassignedRows } from './ui.js';
 
 function monthLabel(month) {
   if (month === 'all') return '全部月份';
@@ -262,7 +262,7 @@ export function initFamily({ apiUrl, carId }) {
     els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
 
     els.unassigned.replaceChildren();
-    for (const record of state.unassigned) els.unassigned.append(makeUnassignedRow(record));
+    appendUnassignedRows(els.unassigned, state.unassigned, makeUnassignedRow);
     els.unassignedEmpty.hidden = state.unassigned.length > 0;
     els.unassignedEmpty.textContent = apiUrl ? '冇未配對 Tesla session。' : '未設定 Google Sheet。';
   }

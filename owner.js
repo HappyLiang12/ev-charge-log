@@ -15,7 +15,7 @@ import {
   assignSession,
   ignoreSession,
 } from './api.js';
-import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError, appendUnassignedRows } from './ui.js';
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -290,7 +290,7 @@ export function initOwner({ apiUrl }) {
 
     const unassigned = state.records.filter((record) => record.car === 'unassigned');
     els.unassigned.replaceChildren();
-    for (const record of unassigned) els.unassigned.append(makeUnassignedRow(record));
+    appendUnassignedRows(els.unassigned, unassigned, makeUnassignedRow);
     els.unassignedEmpty.hidden = unassigned.length > 0;
     els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配 session。';
 

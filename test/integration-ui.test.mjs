@@ -107,8 +107,8 @@ test('family UI: claim an unassigned Tesla session', { timeout: 20000 }, async (
 
 test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV', { timeout: 25000 }, async () => {
   const unassigned = [
-    unassignedRecord('u-1', '2026-11-14T02:00:00.000Z', 'din:u1'),
-    unassignedRecord('u-2', '2026-11-13T02:00:00.000Z', 'din:u2'),
+    unassignedRecord('u-1', new Date(Date.now() - 10 * 60 * 1000).toISOString(), 'din:u1'),
+    unassignedRecord('u-2', new Date(Date.now() - 20 * 60 * 1000).toISOString(), 'din:u2'),
   ];
   const harness = await createHarness({
     sheets: defaultSheets({ rates: duplicateRateRows(), records: unassigned }),
@@ -166,7 +166,10 @@ test('owner UI: sync without a manual record imports the last 30 days as unassig
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     ui.document.getElementById('ownerSyncBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('新增未分配 1'));
-    await waitFor(() => ui.document.querySelectorAll('#ownerUnassigned li').length === 1);
+    await waitFor(() => ui.document.querySelector('#ownerUnassigned .unassigned-day'));
+    const dayGroup = ui.document.querySelector('#ownerUnassigned .unassigned-day');
+    assert.equal(dayGroup.querySelector('details').open, false);
+    assert.equal(dayGroup.querySelectorAll('.owner-list li').length, 1);
     const log = harness.env.call('readLog_');
     assert.equal(log.length, 1);
     assert.equal(log[0].car, 'unassigned');
@@ -175,6 +178,31 @@ test('owner UI: sync without a manual record imports the last 30 days as unassig
     ui.document.getElementById('ownerSyncBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('新增未分配 0'));
     assert.equal(harness.env.call('readLog_').length, 1);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: older unassigned sessions are grouped by day and collapsed', { timeout: 20000 }, async () => {
+  const now = Date.now();
+  const records = [
+    unassignedRecord('recent', new Date(now - 60 * 60 * 1000).toISOString(), 'din:recent'),
+    unassignedRecord('old-a', new Date(now - 3 * 86400000).toISOString(), 'din:old-a'),
+    unassignedRecord('old-b', new Date(now - 4 * 86400000).toISOString(), 'din:old-b'),
+  ];
+  const harness = await createHarness({
+    sheets: defaultSheets({ rates: [rateRow('2026-11', 47.4)], records }),
+  });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    assert.equal(ui.document.querySelectorAll('#ownerUnassigned > li:not(.unassigned-day)').length, 1);
+    const groups = ui.document.querySelectorAll('#ownerUnassigned .unassigned-day');
+    assert.equal(groups.length, 2);
+    assert.equal(groups[0].querySelector('details').open, false);
+    groups[0].querySelector('details').open = true;
+    assert.equal(groups[0].querySelectorAll('.owner-list li').length, 1);
   } finally {
     ui.close();
     await harness.close();

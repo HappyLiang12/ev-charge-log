@@ -321,6 +321,29 @@ select, #exportBtn {
   gap: 8px;
 }
 
+.unassigned-day {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.unassigned-day > details {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.unassigned-day summary {
+  cursor: pointer;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.unassigned-day[open] summary { border-bottom: 1px solid var(--line); }
+
+.unassigned-day-list { padding: 10px; }
+
 .owner-row-head {
   display: flex;
   justify-content: space-between;

@@ -1,7 +1,27 @@
+import { groupUnassignedByDay } from './logic.js';
+
 const toastTimers = new WeakMap();
 
 export function byId(id) {
   return document.getElementById(id);
+}
+
+export function appendUnassignedRows(list, records, makeRow, now = Date.now()) {
+  const grouped = groupUnassignedByDay(records, now);
+  for (const record of grouped.recent) list.append(makeRow(record));
+  for (const group of grouped.days) {
+    const li = document.createElement('li');
+    li.className = 'unassigned-day';
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = `${group.day}（${group.records.length}）`;
+    const inner = document.createElement('ul');
+    inner.className = 'owner-list unassigned-day-list';
+    for (const record of group.records) inner.append(makeRow(record));
+    details.append(summary, inner);
+    li.append(details);
+    list.append(li);
+  }
 }
 
 export function showToast(element, message) {
