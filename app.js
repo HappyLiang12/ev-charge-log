@@ -9,6 +9,7 @@ const familyView = document.getElementById('familyView');
 const ownerView = document.getElementById('ownerView');
 const setupView = document.getElementById('setupView');
 const ownerMode = params.has('owner');
+const autoStart = params.has('start');
 const carParam = params.get('car');
 const car = carParam && carParam !== 'unassigned'
   ? normalizeCar({ id: carParam, name: carParam })
@@ -19,7 +20,7 @@ if (ownerMode) {
   initOwner({ apiUrl });
 } else if (car) {
   familyView.hidden = false;
-  initFamily({ apiUrl, carId: car.id });
+  initFamily({ apiUrl, carId: car.id, autoStart });
 } else {
   setupView.hidden = false;
 }
