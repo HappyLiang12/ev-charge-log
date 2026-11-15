@@ -6,6 +6,7 @@ import { createAppsScriptEnv } from './fake-apps-script.mjs';
 
 const codeSource = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
 const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const qrSource = readFileSync(new URL('../vendor/qrcode-generator.js', import.meta.url), 'utf8');
 
 export const FUEL_URL = 'https://www.clp.com.hk/zh/help-support/bills-payment-tariffs/fuel-cost-adjustment';
 export const TARIFF_URL = 'https://www.clp.com.hk/zh/emobility/bills-payment-tariffs-emobility/tariff-for-ev/ev-residential-tariff';
@@ -198,8 +199,10 @@ export async function loadUi({ apiUrl, query }) {
   const dom = new JSDOM(indexHtml, {
     url: `http://127.0.0.1/${query}`,
     pretendToBeVisual: true,
+    runScripts: 'outside-only',
   });
   const { window } = dom;
+  window.eval(qrSource);
   Object.defineProperty(globalThis, 'window', { value: window, configurable: true });
   Object.defineProperty(globalThis, 'document', { value: window.document, configurable: true });
   Object.defineProperty(globalThis, 'navigator', { value: window.navigator, configurable: true });

@@ -93,6 +93,21 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
   }
 });
 
+test('family UI: start=1 records a start and clears the query parameter', { timeout: 20000 }, async () => {
+  const harness = await createHarness();
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
+  try {
+    await waitFor(() => harness.env.call('readLog_').length === 1);
+    const [record] = harness.env.call('readLog_');
+    assert.equal(record.car, 'model3');
+    assert.equal(record.source, 'manual');
+    assert.equal(new URL(ui.window.location.href).searchParams.has('start'), false);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('family UI: claim an unassigned Tesla session', { timeout: 20000 }, async () => {
   const sessionStart = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const unassigned = unassignedRecord('u-1', sessionStart, 'din:claim');
@@ -142,6 +157,14 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
       .find((card) => card.textContent.includes('2026-11'));
     const links = Array.from(november.querySelectorAll('a'));
     assert.deepEqual(links.map((link) => link.href), [FUEL_URL, TARIFF_URL]);
+
+    const linkCard = ui.document.querySelector('#ownerLinks .owner-link');
+    const qrButton = Array.from(linkCard.querySelectorAll('button')).find((button) => button.textContent === 'QR');
+    qrButton.click();
+    await waitFor(() => linkCard.querySelector('.owner-qr svg'));
+    const qrDownload = linkCard.querySelector('.owner-qr a');
+    assert.match(qrDownload.getAttribute('download'), /model3\.gif$/);
+    assert.match(qrDownload.href, /^data:image\//);
 
     ui.document.getElementById('ownerRatesBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('已更新 11'));

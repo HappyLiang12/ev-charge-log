@@ -38,7 +38,7 @@ function monthLabel(month) {
   return `${year} 年 ${Number(value)} 月`;
 }
 
-export function initFamily({ apiUrl, carId }) {
+export function initFamily({ apiUrl, carId, autoStart = false }) {
   const storage = (() => {
     try {
       return window.localStorage;
@@ -66,6 +66,7 @@ export function initFamily({ apiUrl, carId }) {
     connecting: Boolean(apiUrl),
     syncing: false,
     starting: false,
+    autoStarted: false,
     claiming: new Set(),
     deleting: new Set(),
     offline: false,
@@ -204,9 +205,16 @@ export function initFamily({ apiUrl, carId }) {
 
   function render() {
     els.carName.textContent = state.car.name || carId;
-    els.carIcon.src = carIconFor(state.car);
-    els.carIcon.alt = state.car.name || '';
-    els.carHero.hidden = false;
+    const icon = carIconFor(state.car);
+    if (icon) {
+      els.carIcon.src = icon;
+      els.carIcon.alt = state.car.name || '';
+      els.carHero.hidden = false;
+    } else {
+      els.carIcon.removeAttribute('src');
+      els.carIcon.alt = '';
+      els.carHero.hidden = true;
+    }
     els.syncBtn.hidden = !apiUrl;
     const status = !apiUrl
       ? '未設定'
@@ -318,19 +326,39 @@ export function initFamily({ apiUrl, carId }) {
 
   async function load() {
     render();
-    if (!apiUrl) return;
+    if (!apiUrl) {
+      await maybeAutoStart();
+      return;
+    }
     state.connecting = true;
     render();
     try {
       await fetchData();
       state.connecting = false;
       render();
+      await maybeAutoStart();
       if (!state.offline) void runSync(true);
     } catch (error) {
       state.offline = true;
       state.connecting = false;
       render();
       showToast(els.toast, friendlyError(error, '未能連接，請檢查網絡後重試。'));
+      await maybeAutoStart();
+    }
+  }
+
+  async function maybeAutoStart() {
+    if (!autoStart || state.autoStarted) return;
+    state.autoStarted = true;
+    await onStart();
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('start')) {
+        url.searchParams.delete('start');
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch {
+      // History replacement is best-effort; the record is already queued or saved.
     }
   }
 
