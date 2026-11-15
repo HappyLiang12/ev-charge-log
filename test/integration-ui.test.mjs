@@ -67,6 +67,25 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   }
 });
 
+test('family UI: start=1 does not duplicate an existing pending start', { timeout: 20000 }, async () => {
+  const startAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const sheets = defaultSheets({
+    records: [{ id: 'manual-existing', car: 'model3', startAt, kWh: null, source: 'manual' }],
+  });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('startBtn').disabled, 12000);
+    assert.equal(ui.document.getElementById('startBtn').textContent, '已記錄開始時間');
+    await waitFor(() => !new URL(ui.window.location.href).searchParams.has('start'), 12000);
+    assert.match(ui.document.getElementById('familyToast').textContent, /已經記錄咗開始時間/);
+    assert.equal(harness.env.call('readLog_').length, 1);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('family UI: start, sync Tesla, and delete through the live API contract', { timeout: 20000 }, async () => {
   const sessionStart = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const harness = await createHarness({ teslaSessions: [teslaSession(sessionStart)] });
@@ -88,11 +107,18 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
 
     ui.document.getElementById('startBtn').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 1);
+    await waitFor(() => ui.document.getElementById('startBtn').textContent === '已記錄開始時間');
+    assert.equal(ui.document.getElementById('startBtn').disabled, true);
+    ui.document.getElementById('startBtn').click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(harness.env.call('readLog_').length, 1);
 
     ui.document.getElementById('syncBtn').click();
     await waitFor(() => ui.document.getElementById('familyKwh').textContent === '12.0');
     assert.equal(ui.document.getElementById('familyCount').textContent, '1');
     assert.match(ui.document.getElementById('recentList').textContent, /12\.00 kWh/);
+    await waitFor(() => !ui.document.getElementById('startBtn').disabled);
+    assert.equal(ui.document.getElementById('startBtn').textContent, '⚡ 開始充電');
 
     const log = harness.env.call('readLog_');
     assert.equal(log.length, 1);
