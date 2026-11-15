@@ -7,5 +7,8 @@
     "probe:tesla": "node tools/tesla-probe.mjs",
     "register:tesla": "node tools/tesla-probe.mjs --register",
     "auth:tesla": "node tools/tesla-probe.mjs --save-refresh-token"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
   }
 }

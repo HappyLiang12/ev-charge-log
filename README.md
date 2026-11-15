@@ -178,7 +178,7 @@ Open:
 
 The mock server seeds one matched session, one unassigned session, and one pending manual session.
 
-Node 20+ is required for the built-in test runner (verified on v20.20.2). There are no npm dependencies and no build step.
+Node 20+ is required for the built-in test runner (verified on v20.20.2). There are no runtime dependencies and no build step; `jsdom` is a test-only devDependency installed by `npm ci`.
 
 ## API
 
@@ -229,9 +229,9 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 99 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 103 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Four jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
-CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
+CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
 ## License
 
