@@ -51,6 +51,21 @@ function unassignedRecord(id, startAt, teslaKey) {
   };
 }
 
+test('family UI: start=1 records a start and clears the query parameter', { timeout: 20000 }, async () => {
+  const harness = await createHarness();
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
+  try {
+    await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
+    const [record] = harness.env.call('readLog_');
+    assert.equal(record.car, 'model3');
+    assert.equal(record.source, 'manual');
+    assert.equal(new URL(ui.window.location.href).searchParams.has('start'), false);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('family UI: start, sync Tesla, and delete through the live API contract', { timeout: 20000 }, async () => {
   const sessionStart = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const harness = await createHarness({ teslaSessions: [teslaSession(sessionStart)] });
@@ -87,21 +102,6 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 0);
     assert.equal(harness.env.call('readLog_').length, 0);
     assert.equal(harness.env.call('readIgnored_').length, 1);
-  } finally {
-    ui.close();
-    await harness.close();
-  }
-});
-
-test('family UI: start=1 records a start and clears the query parameter', { timeout: 20000 }, async () => {
-  const harness = await createHarness();
-  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
-  try {
-    await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
-    const [record] = harness.env.call('readLog_');
-    assert.equal(record.car, 'model3');
-    assert.equal(record.source, 'manual');
-    assert.equal(new URL(ui.window.location.href).searchParams.has('start'), false);
   } finally {
     ui.close();
     await harness.close();
