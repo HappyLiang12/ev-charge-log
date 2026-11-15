@@ -210,7 +210,7 @@ test('append is idempotent and rejects a Hong Kong date/time mismatch', () => {
   assert.match(mismatch.error, /Date\/time mismatch/);
 });
 
-test('family delete is scoped to its car and records the Tesla key as ignored', () => {
+test('family delete is scoped to its car and releases a Tesla session to unassigned', () => {
   const env = setup({
     sheets: {
       Log: [
@@ -230,8 +230,42 @@ test('family delete is scoped to its car and records the Tesla key as ignored', 
   const result = send(env, { action: 'delete', id: 'rec-1', car: 'model3' });
   assert.equal(result.ok, true);
   assert.equal(result.deleted, true);
-  assert.deepEqual(plain(env.call('readIgnored_')), ['din:rec-1']);
-  assert.equal(plain(env.call('readLog_')).some((record) => record.id === 'rec-1'), false);
+  assert.equal(result.released, true);
+  assert.deepEqual(plain(env.call('readIgnored_')), []);
+  const records = plain(env.call('readLog_'));
+  const released = records.find((record) => record.id === 'rec-1');
+  assert.equal(released.car, 'unassigned');
+  assert.equal(released.source, 'tesla');
+  assert.equal(released.kWh, 20);
+  assert.equal(released.teslaKey, 'din:rec-1');
+  assert.equal(released.startAt, '2026-11-14T05:00:00.000Z');
+
+  const again = send(env, { action: 'delete', id: 'rec-1', car: 'model3' });
+  assert.equal(again.ok, true);
+  assert.equal(again.released, true);
+  assert.equal(plain(env.call('readLog_')).length, 2);
+  assert.deepEqual(plain(env.call('readIgnored_')), []);
+});
+
+test('family delete removes a manual start without touching Ignored', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'manual-1', 4: 'model3', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const result = send(env, { action: 'delete', id: 'manual-1', car: 'model3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.deleted, true);
+  assert.equal(result.released, false);
+  assert.deepEqual(plain(env.call('readIgnored_')), []);
+  assert.equal(plain(env.call('readLog_')).length, 0);
 });
 
 test('owner assign merges a nearby pending manual row', () => {

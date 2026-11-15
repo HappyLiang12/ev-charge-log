@@ -577,7 +577,7 @@ UI then estimates from power. `GET ?status=1` does not read or write the Sheet.
 | Action | Body | Authorization | Result |
 |---|---|---|---|
 | `append` | `{ id, car, startAt, date, time }` | Valid active car | Idempotent by id |
-| `delete` | `{ id, car }` | Car owns row | Deletes row; ignores its `teslaKey` first |
+| `delete` | `{ id, car }` | Car owns row | Releases a Tesla-linked row to `unassigned`; deletes a manual row |
 | `sync` | `{}` (all cars) or `{ car }` | Owner mode, or valid car | Runs matching; returns counts |
 | `assign` | `{ id, car }` | Owner mode | Assigns an unassigned row; merges a pending manual row when possible |
 | `claim` | `{ car, id }` | Valid active car | Family-scoped assign to that car; same merge behavior as `assign` |
@@ -597,9 +597,11 @@ Validation:
 
 `append` always sets `source='manual'` server-side; the client cannot set a
 source. It recomputes `date` and `time` in Asia/Hong_Kong from `startAt` and
-rejects supplied values that do not match. `delete` adds the row's `teslaKey`
-to `Ignored` before removing the row when the key is present. This prevents a
-deleted Tesla session from returning on the next sync.
+rejects supplied values that do not match. `delete` keeps the row when it has
+`teslaKey`: it changes `car` to `unassigned`, `source` to `tesla`, sets
+`startAt` to `teslaStartAt`, recomputes `date`/`time`, and returns
+`released=true`. The session stays claimable by any car and is not added to
+`Ignored`. A repeated delete for the released row is idempotent.
 
 `assign` behavior (also used by the family `claim`):
 
@@ -609,7 +611,8 @@ deleted Tesla session from returning on the next sync.
    change its source to `tesla+manual`, and delete the unassigned row.
 3. Otherwise set the unassigned row's `car` to the target car.
 
-`ignore` requires a non-empty `teslaKey`; use `delete` for a non-Tesla row.
+`ignore` requires a non-empty `teslaKey`; it is the only action that adds a
+key to `Ignored`.
 All Sheet reads and writes use `LockService`; sync locks only its prepare and
 apply phases and waits up to 30 seconds. The Tesla fetch and `?status=1` do not
 take the script lock.
@@ -650,9 +653,9 @@ Shown for `?car=<id>`.
   forgotten-start recovery path. The latest 24 hours stay open; older sessions
   are grouped by Hong Kong month, then by day, and both levels are collapsed.
   Open groups are preserved after claim/assign/ignore.
-- Delete confirmation for a Tesla-linked record warns that the 充電樁紀錄
-  will also be ignored; the owner can remove the key from `Ignored` to allow a
-  later sync to import it again.
+- Delete confirmation for a Tesla-linked record explains that the 充電樁紀錄
+  will return to `未配對充電樁紀錄` for another car to claim. A manual pending
+  record is removed without touching `Ignored`.
 - Live charging card while a manual start is pending: `充電中`/`未充電`,
   instantaneous kW, and an estimated kWh/cost counter. The counter seeds from
   the manual start and the first power sample, then interpolates every second
@@ -811,7 +814,8 @@ times are Asia/Hong_Kong.
 - Start adds a manual record; sync fills it from a mocked session.
 - A forgotten start becomes unassigned; the family claims it, and the owner
   assign/ignore paths still work.
-- Delete ignores the Tesla key; a second sync does not recreate the row.
+- Delete releases a Tesla-linked session to `unassigned` and leaves `Ignored`
+  untouched; a second sync does not duplicate the row.
 - Rate fallback and missing-rate warnings render.
 - CSV download matches the selected car/month and includes the new columns.
 - 390x844 layout has no horizontal scroll; owner table collapses to cards.
