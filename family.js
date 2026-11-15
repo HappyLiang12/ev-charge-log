@@ -32,7 +32,7 @@ import {
   claimSession,
 } from './api.js';
 import { renderRateCards } from './rate-view.js';
-import { byId, showToast, setStatus, setBusy, friendlyError, appendUnassignedRows } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 
 function monthLabel(month) {
   if (month === 'all') return '全部月份';
@@ -272,7 +272,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
 
     els.unassigned.replaceChildren();
-    appendUnassignedRows(els.unassigned, state.unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
+    appendPendingRows(els.unassigned, state.unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
     els.unassignedEmpty.hidden = state.unassigned.length > 0;
     els.unassignedEmpty.textContent = apiUrl ? '冇未配對充電樁紀錄。' : '未設定 Google Sheet。';
   }
