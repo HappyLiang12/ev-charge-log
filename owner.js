@@ -15,7 +15,6 @@ import {
   syncTesla,
   refreshRates,
   assignSession,
-  ignoreSession,
 } from './api.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
@@ -201,13 +200,7 @@ export function initOwner({ apiUrl }) {
     assign.textContent = '分配';
     assign.disabled = state.busy;
     assign.addEventListener('click', () => { void onAssign(record, select); });
-    const ignore = document.createElement('button');
-    ignore.type = 'button';
-    ignore.className = 'danger';
-    ignore.textContent = '忽略';
-    ignore.disabled = state.busy;
-    ignore.addEventListener('click', () => { void onIgnore(record); });
-    actions.append(select, assign, ignore);
+    actions.append(select, assign);
     li.append(head, meta, actions);
     return li;
   }
@@ -406,24 +399,6 @@ export function initOwner({ apiUrl }) {
     } catch (error) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '分配失敗，請檢查網絡後重試。'));
-    } finally {
-      state.busy = false;
-      render();
-    }
-  }
-
-  async function onIgnore(record) {
-    if (!window.confirm('忽略呢個 session？之後唔會再匯入。')) return;
-    if (!apiUrl || state.busy) return;
-    state.busy = true;
-    render();
-    try {
-      await ignoreSession(apiUrl, record.id);
-      showToast(els.toast, '已忽略。');
-      await refreshOrWarn('已忽略，但未能載入最新資料，請重新載入。');
-    } catch (error) {
-      state.offline = true;
-      showToast(els.toast, friendlyError(error, '忽略失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();

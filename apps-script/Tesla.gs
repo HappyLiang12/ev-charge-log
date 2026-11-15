@@ -346,7 +346,6 @@ function syncApply_(sessions, nowIso) {
   var props = PropertiesService.getScriptProperties();
   return withScriptLock_(function () {
     var records = readLog_();
-    var ignored = new Set(readIgnored_());
     var manualRows = manualSyncRows_(records);
     var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
 
@@ -398,14 +397,9 @@ function syncApply_(sessions, nowIso) {
     var matched = 0;
     var unassigned = 0;
     var skippedExisting = 0;
-    var skippedIgnored = 0;
 
     for (var i = 0; i < sessions.length; i += 1) {
       var session = sessions[i];
-      if (ignored.has(session.teslaKey)) {
-        skippedIgnored += 1;
-        continue;
-      }
       if (knownKeys[session.teslaKey]) {
         skippedExisting += 1;
         continue;
@@ -469,7 +463,6 @@ function syncApply_(sessions, nowIso) {
       skipped: false,
       reconciled: reconciled,
       skippedExisting: skippedExisting,
-      skippedIgnored: skippedIgnored,
       pendingManual: manualRows.length,
     };
   });
@@ -485,7 +478,6 @@ function syncTesla_(allowInitialWindow) {
       skipped: true,
       reconciled: 0,
       skippedExisting: 0,
-      skippedIgnored: 0,
       pendingManual: window.pendingManual,
     };
   }

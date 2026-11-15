@@ -431,9 +431,6 @@ select, #exportBtn {
   cursor: pointer;
 }
 
-.owner-row-actions .danger { color: var(--muted); }
-.owner-row-actions .danger:hover { color: #f87171; border-color: #4a2323; }
-
 .owner-links { display: grid; gap: 10px; }
 
 .owner-link {

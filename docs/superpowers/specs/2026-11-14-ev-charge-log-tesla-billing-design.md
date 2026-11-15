@@ -109,7 +109,7 @@ Owner URL ?owner      ┘         │
                          ▼          ▼          ▼
                     Google Sheet  Tesla     CLP pages
                     Log/Cars/     Fleet     (direct, then
-                    Rates/Ignored API       reader fallback)
+                    Rates API     API       reader fallback)
 ```
 
 Components:
@@ -220,18 +220,11 @@ rows, preferring a manual override and then the latest `fetchedAt`. The refresh
 also keeps one row per month: it prefers a manual override row, does not
 overwrite it, and deletes duplicate rows for the refreshed month.
 
-### 7.4 Ignored session
+### 7.4 Legacy Ignored tab
 
-`Ignored` tab columns:
-
-| Column | Meaning |
-|---|---|
-| `teslaKey` | The ignored session key |
-| `ignoredAt` | ISO timestamp |
-| `reason` | Optional text |
-
-A key in this tab is skipped by every future sync. Removing the row allows the
-session to be imported again on the next sync.
+Older deployments may have an `Ignored` tab. It is not created, read, or
+written. Tesla sessions are never ignored: deleting a record releases it to
+`unassigned`.
 
 ### 7.5 Google Sheet layout
 
@@ -248,9 +241,9 @@ If a new column is missing, the script appends it to the header row. Old rows
 receive blank values for the new columns and are normalized to
 `source='legacy'` when read.
 
-Tabs `Cars`, `Rates`, and `Ignored` are created with their headers when
-missing. The script does not seed car or rate values; the owner populates them
-or runs the rate refresh.
+Tabs `Cars` and `Rates` are created with their headers when missing, and `Log`
+is created by the read path. The script does not seed car or rate values; the
+owner populates them or runs the rate refresh.
 
 ### 7.6 Timezone
 
@@ -383,24 +376,23 @@ Sync order, in two lock phases:
    updating `SYNC_CURSOR`. Release the lock.
 2. Fetch and normalize all eligible Tesla sessions in the range without
    holding the lock.
-3. Reacquire the lock, re-read `Log` and `Ignored`, and reconcile existing
+3. Reacquire the lock, re-read `Log`, and reconcile existing
    unassigned rows with manual candidates:
    for every `source='tesla'` row with `car='unassigned'`, find the nearest
    manual candidate for any car whose `startAt` is within the window. If one
    exists, copy kWh, duration, Tesla timestamps, split, and `teslaKey` into the
    manual row, change its source to `tesla+manual`, and delete the unassigned
    row. This handles a family member pressing start after an earlier sync.
-4. For every Tesla session whose `teslaKey` is in `Ignored`, skip it.
-5. For every Tesla session whose `teslaKey` already exists in `Log`, skip it.
-6. For the remaining sessions, choose the nearest manual candidate within the
+4. For every Tesla session whose `teslaKey` already exists in `Log`, skip it.
+5. For the remaining sessions, choose the nearest manual candidate within the
    window. If one exists, fill it and keep its id, car, and manual startAt.
-7. If no candidate exists, append an unassigned row.
-8. After applying without throwing, set `SYNC_CURSOR` to the fetch end time,
+6. If no candidate exists, append an unassigned row.
+7. After applying without throwing, set `SYNC_CURSOR` to the fetch end time,
    never moving it backwards when concurrent syncs finish out of order. Release
    the lock.
-9. Return counts: `matched`, `unassigned`, `skippedExisting`,
-   `skippedIgnored`, `reconciled`, and `pendingManual`.
-10. `pendingManual` counts manual rows that still have no kWh.
+8. Return counts: `matched`, `unassigned`, `skippedExisting`,
+   `reconciled`, and `pendingManual`.
+9. `pendingManual` counts manual rows that still have no kWh.
 
 Re-reading under the apply lock makes concurrent syncs idempotent: a session
 written by the first sync is skipped by the second. No partial writes occur if
@@ -581,7 +573,6 @@ UI then estimates from power. `GET ?status=1` does not read or write the Sheet.
 | `sync` | `{}` (all cars) or `{ car }` | Owner mode, or valid car | Runs matching; returns counts |
 | `assign` | `{ id, car }` | Owner mode | Assigns an unassigned row; merges a pending manual row when possible |
 | `claim` | `{ car, id }` | Valid active car | Family-scoped assign to that car; same merge behavior as `assign` |
-| `ignore` | `{ id }` | Owner mode | Adds `teslaKey` to `Ignored` and deletes the row |
 | `refreshRates` | `{}` | Owner mode | Fetches and upserts rates |
 
 Validation:
@@ -600,8 +591,8 @@ source. It recomputes `date` and `time` in Asia/Hong_Kong from `startAt` and
 rejects supplied values that do not match. `delete` keeps the row when it has
 `teslaKey`: it changes `car` to `unassigned`, `source` to `tesla`, sets
 `startAt` to `teslaStartAt`, recomputes `date`/`time`, and returns
-`released=true`. The session stays claimable by any car and is not added to
-`Ignored`. A repeated delete for the released row is idempotent.
+`released=true`. The session stays claimable by any car. A repeated delete for
+the released row is idempotent.
 
 `assign` behavior (also used by the family `claim`):
 
@@ -611,8 +602,8 @@ rejects supplied values that do not match. `delete` keeps the row when it has
    change its source to `tesla+manual`, and delete the unassigned row.
 3. Otherwise set the unassigned row's `car` to the target car.
 
-`ignore` requires a non-empty `teslaKey`; it is the only action that adds a
-key to `Ignored`.
+`ignore` is removed; there is no action that marks a real charge session as
+never-import-again.
 All Sheet reads and writes use `LockService`; sync locks only its prepare and
 apply phases and waits up to 30 seconds. The Tesla fetch and `?status=1` do not
 take the script lock.
@@ -652,10 +643,10 @@ Shown for `?car=<id>`.
   manual pending row) without entering a backdated time. This is the
   forgotten-start recovery path. The latest 24 hours stay open; older sessions
   are grouped by Hong Kong month, then by day, and both levels are collapsed.
-  Open groups are preserved after claim/assign/ignore.
+  Open groups are preserved after claim/assign.
 - Delete confirmation for a Tesla-linked record explains that the 充電樁紀錄
   will return to `未配對充電樁紀錄` for another car to claim. A manual pending
-  record is removed without touching `Ignored`.
+  record is removed.
 - Live charging card while a manual start is pending: `充電中`/`未充電`,
   instantaneous kW, and an estimated kWh/cost counter. The counter seeds from
   the manual start and the first power sample, then interpolates every second
@@ -684,8 +675,8 @@ Shown for `?owner`.
   - a charger session without a car.
   The latest 24 hours stay open; older sessions are grouped by Hong Kong
   month, then by day, and both levels are collapsed. Open groups are preserved
-  after assign/ignore. Unassigned rows have a car selector, `分配`, and
-  `忽略`; manual rows show the car and wait.
+  after assign. Unassigned rows have a car selector and `分配`; manual rows
+  show the car and wait. There is no `忽略` action.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
   source, fetchedAt, manual override. The latest month is shown first; older
   months are collapsed. Read-only; edit in the Sheet.
@@ -694,7 +685,7 @@ Shown for `?owner`.
   offers a downloadable image for the charger/car.
 - Empty states: no cars configured, no rates configured, no unassigned
   sessions.
-- Loading and error states for sync, rate refresh, assign, and ignore.
+- Loading and error states for sync, rate refresh, and assign.
 - The owner view keeps no credential in memory or storage; `?owner` selects the
   view and is not sent as an API credential.
 - `index.html` sets `<meta name="referrer" content="no-referrer">` and
@@ -767,7 +758,6 @@ times are Asia/Hong_Kong.
 - Lock scope: `?status=1` takes no script lock; a sync does not hold the lock
   during the Tesla fetch, holds it for its two Sheet phases, and releases it
   when the fetch throws. A repeated sync skips the already-written session.
-- Ignored keys are skipped.
 - Unassigned rows reconcile into later manual rows.
 - Assign merges a pending manual row when appropriate; family claim follows the
   same merge contract and keeps the manual row's identity.
@@ -789,7 +779,7 @@ times are Asia/Hong_Kong.
 
 - A Node harness runs pure `Logic.gs` functions against fixtures.
 - Mock `SpreadsheetApp` tests cover header migration, append idempotency,
-  delete/ignore behavior, assign merging, and sync counts.
+  delete-release behavior, assign merging, and sync counts.
 - Mock Tesla responses cover success, no sessions, malformed session arrays,
   401, 412, 429, and network errors.
 - Mock CLP responses cover direct 200, direct 403 followed by reader 200, parse
@@ -801,7 +791,7 @@ times are Asia/Hong_Kong.
 - Family coverage: load, start, auto-start from `start=1`, refusing a duplicate start while pending, re-enabling the button after match, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
   older months collapsed, one combined pending list, live charging card/estimate,
-  assign, ignore, CSV export, 12-hour times, preserved open groups, and the
+  assign, CSV export, 12-hour times, preserved open groups, and the
   initial 30-day Tesla import. Family-scoped sync without a manual start returns
   skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
@@ -813,9 +803,9 @@ times are Asia/Hong_Kong.
 - Owner URL shows all cars, unassigned sessions, and rates.
 - Start adds a manual record; sync fills it from a mocked session.
 - A forgotten start becomes unassigned; the family claims it, and the owner
-  assign/ignore paths still work.
-- Delete releases a Tesla-linked session to `unassigned` and leaves `Ignored`
-  untouched; a second sync does not duplicate the row.
+  assign path still works.
+- Delete releases a Tesla-linked session to `unassigned`; a second sync does
+  not duplicate the row.
 - Rate fallback and missing-rate warnings render.
 - CSV download matches the selected car/month and includes the new columns.
 - 390x844 layout has no horizontal scroll; owner table collapses to cards.
@@ -823,7 +813,7 @@ times are Asia/Hong_Kong.
 ### 14.4 Live verification
 
 - One real home session: start record, sync, matched kWh, split, and cost.
-- One intentionally unassigned session: assign and ignore behavior.
+- One intentionally unassigned session: assign behavior.
 - Rate refresh returns the current month's fuel adjustment and tariff values
   (2026-11: 47.4 and 94.5/137.5 at the time of writing).
 - Family URL on a second device shows the same records.
@@ -855,7 +845,7 @@ Rollout order:
 1. Backend tabs, migration, and read APIs.
 2. Tesla sync, matching, split, and tests.
 3. Family view and CSV.
-4. Owner view, assign/ignore, and family links.
+4. Owner view, assign, and family links.
 5. Rate refresh and warnings.
 6. Live verification.
 

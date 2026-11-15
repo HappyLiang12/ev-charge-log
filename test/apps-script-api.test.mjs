@@ -52,18 +52,18 @@ const send = (env, body) => JSON.parse(env.call('doPost', {
 }).getContent());
 const receive = (env, parameter) => JSON.parse(env.call('doGet', { parameter }).getContent());
 
-test('setup creates all four tabs and reports counts', () => {
+test('setup creates all three tabs and reports counts', () => {
   const env = setup();
   const result = plain(env.call('setup'));
   assert.equal(result.ok, true);
   assert.equal(result.cars, 0);
   assert.equal(result.records, 0);
   assert.equal(result.rates, 0);
-  assert.equal(result.ignored, 0);
   assert.match(result.sheetUrl, /\/d\/fake-sheet\/edit$/);
-  for (const name of ['Log', 'Cars', 'Rates', 'Ignored']) {
+  for (const name of ['Log', 'Cars', 'Rates']) {
     assert.ok(env.spreadsheet.getSheetByName(name), name);
   }
+  assert.equal(env.spreadsheet.getSheetByName('Ignored'), null);
 });
 
 test('charger status returns live power and charging state', () => {
@@ -231,7 +231,6 @@ test('family delete is scoped to its car and releases a Tesla session to unassig
   assert.equal(result.ok, true);
   assert.equal(result.deleted, true);
   assert.equal(result.released, true);
-  assert.deepEqual(plain(env.call('readIgnored_')), []);
   const records = plain(env.call('readLog_'));
   const released = records.find((record) => record.id === 'rec-1');
   assert.equal(released.car, 'unassigned');
@@ -244,10 +243,9 @@ test('family delete is scoped to its car and releases a Tesla session to unassig
   assert.equal(again.ok, true);
   assert.equal(again.released, true);
   assert.equal(plain(env.call('readLog_')).length, 2);
-  assert.deepEqual(plain(env.call('readIgnored_')), []);
 });
 
-test('family delete removes a manual start without touching Ignored', () => {
+test('family delete removes a manual start', () => {
   const env = setup({
     sheets: {
       Log: [
@@ -264,7 +262,6 @@ test('family delete removes a manual start without touching Ignored', () => {
   assert.equal(result.ok, true);
   assert.equal(result.deleted, true);
   assert.equal(result.released, false);
-  assert.deepEqual(plain(env.call('readIgnored_')), []);
   assert.equal(plain(env.call('readLog_')).length, 0);
 });
 
@@ -387,7 +384,7 @@ test('unknown actions report an invalid action', () => {
   assert.match(result.error, /Invalid action/);
 });
 
-test('owner ignore requires a Tesla key and removes the record', () => {
+test('the ignore action is removed', () => {
   const env = setup({
     sheets: {
       Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a' })],
@@ -395,10 +392,9 @@ test('owner ignore requires a Tesla key and removes the record', () => {
     },
   });
   const result = send(env, { action: 'ignore', id: 'unassigned-1' });
-  assert.equal(result.ok, true);
-  assert.equal(result.ignored, true);
-  assert.deepEqual(plain(env.call('readIgnored_')), ['din:a']);
-  assert.equal(plain(env.call('readLog_')).length, 0);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Invalid action/);
+  assert.equal(plain(env.call('readLog_')).length, 1);
 });
 
 test('sync matches a manual row, updates the cursor, and exposes the full result shape', () => {
@@ -442,7 +438,6 @@ test('sync matches a manual row, updates the cursor, and exposes the full result
   assert.equal(result.skipped, false);
   assert.equal(result.reconciled, 0);
   assert.equal(result.skippedExisting, 0);
-  assert.equal(result.skippedIgnored, 0);
   assert.equal(result.pendingManual, 0);
   const target = plain(env.call('readLog_')).find((record) => record.id === 'manual-1');
   assert.equal(target.kWh, 20);
@@ -551,6 +546,45 @@ test('a failed Tesla fetch releases the sync lock and leaves Log unchanged', () 
   assert.equal(records[0].source, 'manual');
 });
 
+test('sync imports a session even when a legacy Ignored tab lists its key', () => {
+  const key = `din:legacy:${Math.floor(Date.parse(SESSION_START) / 1000)}`;
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Ignored: [['teslaKey', 'ignoredAt', 'reason'], [key, '2026-11-14T00:00:00.000Z', 'legacy']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 7200 },
+              energy_added_wh: 20000,
+              target_id: 'target-1',
+              din: 'din:legacy',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.unassigned, 1);
+  assert.equal(result.skippedExisting, 0);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].car, 'unassigned');
+  assert.equal(records[0].teslaKey, key);
+});
+
 test('owner sync initializes a 30-day window; family sync without a manual row stays skipped', () => {
   const makeEnv = () => setup({
     sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] },
@@ -624,7 +658,6 @@ test('sync reconciles an existing unassigned session into the matching manual ro
   assert.equal(result.fetched, 0);
   assert.equal(result.skipped, false);
   assert.equal(result.skippedExisting, 0);
-  assert.equal(result.skippedIgnored, 0);
   assert.equal(result.pendingManual, 0);
   const records = plain(env.call('readLog_'));
   const target = records.find((record) => record.id === 'manual-new');
