@@ -70,6 +70,20 @@ function createEnv({ sheets = {}, props = {}, fetch: fetchHandler } = {}) {
         deleteProperty: (key) => { delete scriptProps[key]; },
       }),
     },
+    Utilities: {
+      formatDate: (date, timeZone, format) => {
+        if (format !== 'HH:mm') return '';
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).formatToParts(date);
+        const hour = parts.find((part) => part.type === 'hour').value;
+        const minute = parts.find((part) => part.type === 'minute').value;
+        return `${hour}:${minute}`;
+      },
+    },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     UrlFetchApp: {
       fetch: fetchHandler || (() => { throw new Error('Unexpected UrlFetchApp.fetch'); }),
@@ -375,12 +389,12 @@ test('readRates_ accepts Sheet date cells for month and dedupes', () => {
         header,
         [
           new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0,
-          new Date('1899-12-30T16:00:00+08:00'), new Date('1899-12-30T23:00:00+08:00'),
+          new Date('1899-12-30T08:23:18.000Z'), new Date('1899-12-30T15:23:18.000Z'),
           'clp', new Date('2026-11-15T00:00:00.000Z'), false,
         ],
         [
           new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0,
-          new Date('1899-12-30T16:00:00+08:00'), new Date('1899-12-30T23:00:00+08:00'),
+          new Date('1899-12-30T08:23:18.000Z'), new Date('1899-12-30T15:23:18.000Z'),
           'clp', new Date('2026-11-16T00:00:00.000Z'), true,
         ],
       ],

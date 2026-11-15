@@ -87,8 +87,8 @@ export function rateRow(month, fuelAdjustment, { duplicate = false, sourceUrl = 
   const monthDate = new Date(`${month}-01T00:00:00+08:00`);
   return [
     monthDate, 94.5, 137.5, fuelAdjustment, 0,
-    new Date('1899-12-30T16:00:00+08:00'),
-    new Date('1899-12-30T23:00:00+08:00'),
+    new Date('1899-12-30T08:23:18.000Z'),
+    new Date('1899-12-30T15:23:18.000Z'),
     sourceUrl,
     duplicate ? '2026-11-15T00:00:59.000Z' : '2026-11-15T00:00:25.000Z',
     false,

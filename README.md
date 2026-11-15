@@ -65,7 +65,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 - Values are HK cents per kWh.
 - `manualOverride=TRUE` rows are never overwritten by the rate refresh.
 - `sourceUrl` is a comma-separated list of the CLP pages used; the owner view renders each valid URL as a separate link.
-- Google Sheets may store `month` as a date cell; the API normalizes it to `YYYY-MM`. The rate refresh keeps one row per month, removes duplicate month rows, and keeps a manual override row.
+- Google Sheets may store `month` as a date cell and `peakStart`/`peakEnd` as time cells; the API normalizes the month to `YYYY-MM` and formats times in `Asia/Hong_Kong` (not with a fixed offset, because the 1899 time-cell epoch predates modern HKT).
 - The read path also dedupes duplicate month rows, preferring `manualOverride` then the latest `fetchedAt`.
 
 ### `Ignored`
