@@ -84,10 +84,6 @@ export async function claimSession(apiUrl, car, id, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'claim', car, id }, fetchImpl);
 }
 
-export async function ignoreSession(apiUrl, id, fetchImpl = fetch) {
-  return apiPost(apiUrl, { action: 'ignore', id }, fetchImpl);
-}
-
 export async function refreshRates(apiUrl, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'refreshRates' }, fetchImpl);
 }

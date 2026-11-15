@@ -9,7 +9,6 @@ import {
   deleteRecord,
   syncTesla,
   assignSession,
-  ignoreSession,
   refreshRates,
   claimSession,
 } from '../api.js';
@@ -106,7 +105,7 @@ test('deleteRecord sends the family car scope', async () => {
   assert.deepEqual(JSON.parse(family.init.body), { action: 'delete', id: 'rec-1', car: 'model3' });
 });
 
-test('syncTesla, assignSession, ignoreSession, refreshRates, and claimSession send their actions', async () => {
+test('syncTesla, assignSession, refreshRates, and claimSession send their actions', async () => {
   const sync = {};
   await syncTesla(base, { car: 'model3' }, captureFetch({ ok: true }, sync));
   assert.deepEqual(JSON.parse(sync.init.body), { action: 'sync', car: 'model3' });
@@ -114,10 +113,6 @@ test('syncTesla, assignSession, ignoreSession, refreshRates, and claimSession se
   const assign = {};
   await assignSession(base, 'rec-1', 'leaf', captureFetch({ ok: true }, assign));
   assert.deepEqual(JSON.parse(assign.init.body), { action: 'assign', id: 'rec-1', car: 'leaf' });
-
-  const ignore = {};
-  await ignoreSession(base, 'rec-1', captureFetch({ ok: true }, ignore));
-  assert.deepEqual(JSON.parse(ignore.init.body), { action: 'ignore', id: 'rec-1' });
 
   const claim = {};
   await claimSession(base, 'leaf', 'unassigned-1', captureFetch({ ok: true }, claim));

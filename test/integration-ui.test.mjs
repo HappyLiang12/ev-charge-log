@@ -140,7 +140,6 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     assert.equal(released.length, 1);
     assert.equal(released[0].car, 'unassigned');
     assert.equal(released[0].source, 'tesla');
-    assert.equal(harness.env.call('readIgnored_').length, 0);
   } finally {
     ui.close();
     await harness.close();
@@ -170,7 +169,7 @@ test('family UI: claim an unassigned Tesla session', { timeout: 20000 }, async (
   }
 });
 
-test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV', { timeout: 25000 }, async () => {
+test('owner UI: dedupe rates, refresh CLP, source links, assign, and CSV', { timeout: 25000 }, async () => {
   const unassigned = [
     unassignedRecord('u-1', new Date(Date.now() - 10 * 60 * 1000).toISOString(), 'din:u1'),
     unassignedRecord('u-2', new Date(Date.now() - 20 * 60 * 1000).toISOString(), 'din:u2'),
@@ -218,10 +217,13 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
     await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 1);
     await waitFor(() => harness.env.call('readLog_').some((record) => record.car === 'leaf'));
 
-    await waitFor(() => !ui.document.querySelectorAll('#ownerPending li button')[1].disabled);
-    ui.document.querySelectorAll('#ownerPending li button')[1].click();
+    const secondSelect = ui.document.querySelector('#ownerPending select');
+    await waitFor(() => !secondSelect.disabled);
+    secondSelect.value = 'model3';
+    ui.document.querySelector('#ownerPending li button').click();
     await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 0);
-    assert.equal(harness.env.call('readIgnored_').length, 1);
+    const log = harness.env.call('readLog_');
+    assert.deepEqual(Array.from(log, (record) => record.car).sort(), ['leaf', 'model3']);
 
     ui.document.getElementById('ownerExportBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('CSV 已下載'));

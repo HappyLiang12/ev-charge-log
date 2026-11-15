@@ -117,7 +117,6 @@ export function defaultSheets({ rates, records = [], cars } = {}) {
     ],
     Rates: [RATES_HEADER, ...(rates || [rateRow('2026-11', 47.4)])],
     Log: [LOG_HEADER, ...records.map(logRow)],
-    Ignored: [['teslaKey', 'ignoredAt', 'reason']],
   };
 }
 

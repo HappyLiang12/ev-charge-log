@@ -71,7 +71,6 @@ const records = [
     source: 'manual',
   },
 ];
-const ignored = new Set();
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -229,12 +228,17 @@ const server = http.createServer(async (req, res) => {
         const car = findCar(data.car);
         if (!car) return fail(res, 404, 'Unknown car');
         const index = records.findIndex((record) => record.id === data.id);
-        if (index >= 0) {
-          if (records[index].car !== car.id) return fail(res, 400, 'Record does not belong to this car');
-          const [removed] = records.splice(index, 1);
-          if (removed.teslaKey) ignored.add(removed.teslaKey);
+        if (index < 0) return sendJson(res, 200, { ok: true, deleted: false, released: false });
+        if (records[index].car !== car.id) return fail(res, 400, 'Record does not belong to this car');
+        const target = records[index];
+        if (target.teslaKey) {
+          target.car = 'unassigned';
+          target.source = 'tesla';
+          target.startAt = target.teslaStartAt || target.startAt;
+          return sendJson(res, 200, { ok: true, deleted: true, released: true, record: target });
         }
-        return sendJson(res, 200, { ok: true });
+        records.splice(index, 1);
+        return sendJson(res, 200, { ok: true, deleted: true, released: false });
       }
       if (action === 'sync') {
         if (keepPending) return sendJson(res, 200, { ok: true, matched: 0, unassigned: 0 });
@@ -261,14 +265,6 @@ const server = http.createServer(async (req, res) => {
         if (!target || !car || target.car !== 'unassigned') return fail(res, 400, 'Invalid claim');
         assignMock(target, car);
         return sendJson(res, 200, { ok: true, assigned: true });
-      }
-      if (action === 'ignore') {
-        const index = records.findIndex((record) => record.id === data.id);
-        if (index >= 0) {
-          const [removed] = records.splice(index, 1);
-          if (removed.teslaKey) ignored.add(removed.teslaKey);
-        }
-        return sendJson(res, 200, { ok: true });
       }
       if (action === 'refreshRates') {
         rates[0].fetchedAt = new Date().toISOString();

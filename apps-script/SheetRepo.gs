@@ -7,7 +7,6 @@ var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
 ];
-var IGNORED_COLUMNS = ['teslaKey', 'ignoredAt', 'reason'];
 
 function sheetId_() {
   var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
@@ -329,28 +328,4 @@ function upsertRates_(rates) {
   var deleteRows = Object.keys(toDelete).map(Number).sort(function (a, b) { return b - a; });
   for (var d = 0; d < deleteRows.length; d += 1) sheet.deleteRow(deleteRows[d] + 1);
   return updated;
-}
-
-function readIgnored_() {
-  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
-  var rows = readObjects_(sheet, IGNORED_COLUMNS);
-  var keys = [];
-  for (var i = 0; i < rows.length; i += 1) {
-    var key = String(rows[i].teslaKey || '').trim();
-    if (key) keys.push(key);
-  }
-  return keys;
-}
-
-function addIgnored_(teslaKey, reason) {
-  if (!teslaKey) return;
-  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
-  var rows = readObjects_(sheet, IGNORED_COLUMNS);
-  for (var i = 0; i < rows.length; i += 1) {
-    if (String(rows[i].teslaKey || '').trim() === teslaKey) return;
-  }
-  var entry = { teslaKey: teslaKey, ignoredAt: new Date().toISOString(), reason: reason || '' };
-  sheet.appendRow(headerRow_(sheet).map(function (column) {
-    return Object.prototype.hasOwnProperty.call(entry, column) ? entry[column] : '';
-  }));
 }

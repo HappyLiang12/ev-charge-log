@@ -358,7 +358,6 @@ test('syncTesla_ fills the nearest manual row and advances SYNC_CURSOR to the fe
     skipped: false,
     reconciled: 0,
     skippedExisting: 0,
-    skippedIgnored: 0,
     pendingManual: 0,
   });
   const records = plain(env.call('readLog_'));
@@ -485,24 +484,6 @@ test('syncTesla_ skips a session whose teslaKey already exists in Log', () => {
   assert.equal(plain(env.call('readLog_')).length, 1);
 });
 
-test('syncTesla_ skips sessions listed in Ignored', () => {
-  const env = createAppsScriptEnv({
-    props: cachedTeslaProps({ SYNC_FROM: '2026-11-01T00:00:00.000Z' }),
-    sheets: {
-      Log: logSheet([]),
-      Rates: ratesSheet(),
-      Ignored: [['teslaKey', 'ignoredAt', 'reason'], [SESSION_KEY, '2026-11-14T00:00:00.000Z', 'test']],
-    },
-    fetch: telemetryFetch({ sessions: [verifiedSession()] }),
-  });
-  const result = plain(env.call('syncTesla_'));
-  assert.equal(result.skippedIgnored, 1);
-  assert.equal(result.unassigned, 0);
-  assert.equal(result.matched, 0);
-  assert.equal(result.fetched, 1);
-  assert.equal(plain(env.call('readLog_')).length, 0);
-});
-
 test('teslaGet_ retries once after a 401 and then reports authorization expiry on 403', () => {
   const calls = [];
   const env = createAppsScriptEnv({
@@ -618,7 +599,6 @@ test('syncTesla_ returns a skipped result without fetching or writing when no fe
     skipped: true,
     reconciled: 0,
     skippedExisting: 0,
-    skippedIgnored: 0,
     pendingManual: 0,
   });
   assert.equal(env.props.SYNC_CURSOR, undefined);

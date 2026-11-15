@@ -200,16 +200,12 @@ test('readCars_ filters invalid ids, reserved unassigned, and active flags', () 
   ]);
 });
 
-test('readRates_ normalizes rows and readIgnored_ returns unique keys', () => {
+test('readRates_ normalizes rows', () => {
   const env = createEnv({
     sheets: {
       Rates: [
         ['month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate', 'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride'],
         ['2026-11', '94.5', '137.5', '47.4', '0', '16:00', '23:00', 'u', 'f', 'FALSE'],
-      ],
-      Ignored: [
-        ['teslaKey', 'ignoredAt', 'reason'],
-        ['din:a', 'x', 'deleted'],
       ],
     },
   });
@@ -217,7 +213,6 @@ test('readRates_ normalizes rows and readIgnored_ returns unique keys', () => {
   assert.equal(rates.length, 1);
   assert.equal(rates[0].month, '2026-11');
   assert.equal(rates[0].manualOverride, false);
-  assert.deepEqual(plain(env.call('readIgnored_')), ['din:a']);
 });
 
 test('upsertRates_ updates automatic rows, appends missing months, and skips manual overrides', () => {
@@ -243,14 +238,6 @@ test('upsertRates_ updates automatic rows, appends missing months, and skips man
   const rates = plain(env.call('readRates_'));
   assert.equal(rates.find((row) => row.month === '2026-10').basicOffPeak, 90);
   assert.equal(rates.find((row) => row.month === '2026-11').basicOffPeak, 94.5);
-});
-
-test('addIgnored_ deduplicates and readIgnored_ returns the key', () => {
-  const env = createEnv({});
-  env.call('addIgnored_', 'din:x', 'deleted');
-  env.call('addIgnored_', 'din:x', 'again');
-  assert.deepEqual(plain(env.call('readIgnored_')), ['din:x']);
-  assert.equal(env.values('Ignored').length, 2);
 });
 
 test('appendLog_ writes in actual header order and fills unknown columns blank', () => {
@@ -350,27 +337,6 @@ test('upsertRates_ writes in actual header order and preserves extra columns', (
   const rates = plain(env.call('readRates_'));
   assert.equal(rates.find((row) => row.month === '2026-10').basicOffPeak, 95);
   assert.equal(rates.find((row) => row.month === '2026-11').basicOffPeak, 94.5);
-});
-
-test('addIgnored_ appends in actual header order and leaves unknown columns blank', () => {
-  const env = createEnv({
-    sheets: {
-      Ignored: [
-        ['note', 'reason', 'teslaKey', 'ignoredAt'],
-        ['keep-me', 'deleted', 'din:a', 'x'],
-      ],
-    },
-  });
-  env.call('addIgnored_', 'din:b', 'manual delete');
-  env.call('addIgnored_', 'din:a', 'again');
-  const sheetRows = env.values('Ignored');
-  const header = sheetRows[0];
-  assert.equal(sheetRows.length, 3);
-  const added = sheetRows.find((row, index) => index > 0 && row[header.indexOf('teslaKey')] === 'din:b');
-  assert.equal(added[header.indexOf('reason')], 'manual delete');
-  assert.equal(added[header.indexOf('note')], '');
-  assert.ok(added[header.indexOf('ignoredAt')]);
-  assert.deepEqual(plain(env.call('readIgnored_')), ['din:a', 'din:b']);
 });
 
 test('openSpreadsheet_ requires the SHEET_ID script property', () => {

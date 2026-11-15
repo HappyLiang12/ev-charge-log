@@ -19,7 +19,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Each car has its own family URL: `https://<your-user>.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet. A pending start disables the button until it is matched or deleted.
 - The owner opens the owner URL (`?owner`), presses `更新充電樁`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
-- If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign or ignore unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
+- If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
 - The family view never receives Tesla credentials. The owner view has no key or login; its URL is a mode flag.
 
 ## Features
@@ -27,14 +27,14 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - One-tap start recording with a per-car URL; no login and no car picker. While a manual start is pending, the start button is disabled and a QR auto-start does not create a second record. It re-enables after the session is matched or the pending record is deleted.
 - On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
-- Unmatched Tesla sessions appear as `unassigned` for the family to claim or the owner to assign/ignore.
+- Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
-- Recent records with start and end times, kWh, estimated cost, and real delete. Deleting a Tesla-linked record releases it back to `unassigned` for another car to claim; it is not added to `Ignored`. The end date is included when a session crosses midnight.
+- Recent records with start and end times, kWh, estimated cost, and real delete. Deleting a Tesla-linked record releases it back to `unassigned` for another car to claim. The end date is included when a session crosses midnight.
 - Owner month totals, one `待配對` list that combines manual starts and unassigned charger sessions, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - UI times use 12-hour AM/PM; unassigned rows show both start and end times. CSV keeps 24-hour times.
-- Month and day groups remember their open state after a claim, assign, or ignore, so several sessions can be handled without reopening the groups.
+- Month and day groups remember their open state after a claim or assign, so several sessions can be handled without reopening the groups.
 - The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
 - Live charging card while a manual start is pending: Wall Connector state/power from Tesla, with an estimated kWh/cost counter that updates every second from the last 5-minute power sample. The final Tesla session replaces the estimate.
@@ -44,7 +44,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 ## Data model
 
-The Google Sheet has four tabs. The script creates missing tabs and appends missing `Log` columns to the right; existing rows are never moved or deleted.
+The Google Sheet has three tabs. The script creates missing tabs and appends missing `Log` columns to the right; existing rows are never moved or deleted. An older deployment may still have an unused `Ignored` tab; it is no longer created, read, or written.
 
 ### `Log`
 
@@ -73,12 +73,6 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 - Google Sheets may store `month` as a date cell and `peakStart`/`peakEnd` as time cells; the API normalizes the month to `YYYY-MM` and formats times in `Asia/Hong_Kong` (not with a fixed offset, because the 1899 time-cell epoch predates modern HKT).
 - The read path also dedupes duplicate month rows, preferring `manualOverride` then the latest `fetchedAt`.
 
-### `Ignored`
-
-`teslaKey`, `ignoredAt`, `reason`.
-
-- Ignoring a Tesla-linked record from the owner pending list adds its key here so it is not imported again. Remove the key to allow a later sync to import it again. Deleting a matched record from the family view does not add a key; it releases the session back to `unassigned`.
-
 ## Billing
 
 The app uses the CLP EV residential time-of-use tariff. In 2026 the peak window is 16:00–23:00 and non-peak is 23:00–16:00.
@@ -104,7 +98,7 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 4. Do not edit the code. The Sheet ID is a Script Property; add `SHEET_ID` in the next section.
 5. Save the project.
 6. Set the Script Properties in section 2, including `SHEET_ID`.
-7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, `Rates`, and `Ignored`, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
+7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, and `Rates`, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
 8. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
 
 `Code.gs` is the router: `doGet` serves status, family, and owner reads and `doPost` handles the actions. Status and Tesla telemetry fetches run outside the script lock; family/owner reads and every Sheet write hold it, because reads can migrate headers and writes are read-modify-write. Sync locks only the prepare and apply phases, not the Tesla request. This replaces the legacy fixed-position `Log` API; existing rows are migrated in place and never moved or deleted.
@@ -200,7 +194,6 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'sync' }` (all cars) or `{ action: 'sync', car }`
 - `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
-- `{ action: 'ignore', id }`
 - `{ action: 'refreshRates' }`
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
@@ -210,7 +203,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - No accounts and no secrets in the frontend. The Apps Script URL and each family `?car=` URL are capabilities.
 - Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records and claim unassigned Tesla sessions to that car. Share it only with that car's driver.
 - A car QR encodes the same family URL plus `start=1`; anyone who scans it can start a charge for that car. Treat the QR like the family link.
-- The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign or ignore sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
+- The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
 - The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link. Set General access to Restricted if you want it private.
 - Family actions require a valid car ID; owner actions require only the Apps Script Web App URL.
@@ -238,7 +231,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 117 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 115 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
