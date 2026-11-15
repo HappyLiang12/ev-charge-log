@@ -107,7 +107,7 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, `Rates`, and `Ignored`, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
 8. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
 
-`Code.gs` is the router: `doGet` serves family and owner reads and `doPost` handles the actions. Both paths hold the Apps Script script lock because reads can migrate headers. This replaces the legacy fixed-position `Log` API; existing rows are migrated in place and never moved or deleted.
+`Code.gs` is the router: `doGet` serves status, family, and owner reads and `doPost` handles the actions. Status and Tesla telemetry fetches run outside the script lock; family/owner reads and every Sheet write hold it, because reads can migrate headers and writes are read-modify-write. Sync locks only the prepare and apply phases, not the Tesla request. This replaces the legacy fixed-position `Log` API; existing rows are migrated in place and never moved or deleted.
 
 If your account or Workspace policy does not offer "Anyone" access, stop: this zero-login design requires it.
 
@@ -238,7 +238,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 114 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 116 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

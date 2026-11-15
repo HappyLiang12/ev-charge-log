@@ -2,12 +2,13 @@ var MAX_BODY_BYTES_ = 16384;
 
 function doGet(e) {
   try {
-    // Reads migrate headers (ensureHeader_ writes), so GET shares the POST lock.
+    var params = (e && e.parameter) || {};
+    // Status only calls Tesla; it must not queue behind Sheet writes or a sync.
+    if (params.status !== undefined) return json_(chargerStatusPayload_());
+    // Reads migrate headers (ensureHeader_ writes), so they share the POST lock.
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
-      var params = (e && e.parameter) || {};
-      if (params.status !== undefined) return json_(chargerStatusPayload_());
       if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
       throw new Error('Missing car or owner parameter');
@@ -25,13 +26,14 @@ function doPost(e) {
     if (!raw || raw.length > MAX_BODY_BYTES_) throw new Error('Request body too large');
     var data = JSON.parse(raw);
     var action = String(data.action || 'append');
+    // Sync fetches Tesla outside the lock and locks only for Sheet reads/writes.
+    if (action === 'sync') return json_(merge_({ ok: true }, syncAction_(data)));
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
       var result;
       if (action === 'append') result = appendAction_(data);
       else if (action === 'delete') result = deleteAction_(data);
-      else if (action === 'sync') result = syncAction_(data);
       else if (action === 'assign') result = assignAction_(data);
       else if (action === 'claim') result = claimAction_(data);
       else if (action === 'ignore') result = ignoreAction_(data);

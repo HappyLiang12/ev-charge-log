@@ -375,33 +375,38 @@ Definitions:
 - A manual candidate is a row with `source='manual'`, a non-empty `car` other
   than `unassigned`, `kWh` empty, and `teslaKey` empty.
 
-Sync order, inside one script lock:
+Sync order, in two lock phases:
 
-1. Read `Log`, `Cars`, and `Ignored`.
-2. Determine the fetch lower bound from `SYNC_CURSOR`, `SYNC_FROM`, or the
-   earliest manual record, as described in 9.5. If no bound exists, return
-   with zero counts without fetching or updating `SYNC_CURSOR`.
-3. Fetch and normalize all eligible Tesla sessions in the range.
-4. Reconcile existing unassigned rows with newly created manual rows:
+1. Under the script lock, read `Log`, then determine the fetch lower bound from
+   `SYNC_CURSOR`, `SYNC_FROM`, or the earliest manual record, as described in
+   9.5. If no bound exists, return with zero counts without fetching or
+   updating `SYNC_CURSOR`. Release the lock.
+2. Fetch and normalize all eligible Tesla sessions in the range without
+   holding the lock.
+3. Reacquire the lock, re-read `Log` and `Ignored`, and reconcile existing
+   unassigned rows with manual candidates:
    for every `source='tesla'` row with `car='unassigned'`, find the nearest
    manual candidate for any car whose `startAt` is within the window. If one
    exists, copy kWh, duration, Tesla timestamps, split, and `teslaKey` into the
    manual row, change its source to `tesla+manual`, and delete the unassigned
    row. This handles a family member pressing start after an earlier sync.
-5. For every Tesla session whose `teslaKey` is in `Ignored`, skip it.
-6. For every Tesla session whose `teslaKey` already exists in `Log`, skip it.
-7. For the remaining sessions, choose the nearest manual candidate within the
+4. For every Tesla session whose `teslaKey` is in `Ignored`, skip it.
+5. For every Tesla session whose `teslaKey` already exists in `Log`, skip it.
+6. For the remaining sessions, choose the nearest manual candidate within the
    window. If one exists, fill it and keep its id, car, and manual startAt.
-8. If no candidate exists, append an unassigned row.
-9. After the sync completes without throwing, set `SYNC_CURSOR` to the fetch
-   end time.
-10. Return counts: `matched`, `unassigned`, `skippedExisting`,
-    `skippedIgnored`, `reconciled`, and `pendingManual`.
-11. `pendingManual` counts manual rows that still have no kWh.
+7. If no candidate exists, append an unassigned row.
+8. After applying without throwing, set `SYNC_CURSOR` to the fetch end time,
+   never moving it backwards when concurrent syncs finish out of order. Release
+   the lock.
+9. Return counts: `matched`, `unassigned`, `skippedExisting`,
+   `skippedIgnored`, `reconciled`, and `pendingManual`.
+10. `pendingManual` counts manual rows that still have no kWh.
 
-No partial writes occur if the Tesla fetch fails. Parsing and validation finish
-before the first Sheet write. Every write is under `LockService` with a 30
-second wait.
+Re-reading under the apply lock makes concurrent syncs idempotent: a session
+written by the first sync is skipped by the second. No partial writes occur if
+the Tesla fetch fails. Parsing and validation finish before the first Sheet
+write. Sheet reads and writes use `LockService` with a 30 second wait; the
+Tesla fetch and the `?status=1` route do not.
 
 ### 9.7 Peak/off-peak split
 
@@ -605,7 +610,9 @@ deleted Tesla session from returning on the next sync.
 3. Otherwise set the unassigned row's `car` to the target car.
 
 `ignore` requires a non-empty `teslaKey`; use `delete` for a non-Tesla row.
-All writes use `LockService`; sync waits up to 30 seconds for the lock.
+All Sheet reads and writes use `LockService`; sync locks only its prepare and
+apply phases and waits up to 30 seconds. The Tesla fetch and `?status=1` do not
+take the script lock.
 
 ## 12. UI
 
@@ -752,6 +759,9 @@ times are Asia/Hong_Kong.
 - Matching chooses the nearest manual record within the window, is
   deterministic on ties, and ignores rows outside the window.
 - Sync is idempotent by `teslaKey`.
+- Lock scope: `?status=1` takes no script lock; a sync does not hold the lock
+  during the Tesla fetch, holds it for its two Sheet phases, and releases it
+  when the fetch throws. A repeated sync skips the already-written session.
 - Ignored keys are skipped.
 - Unassigned rows reconcile into later manual rows.
 - Assign merges a pending manual row when appropriate; family claim follows the

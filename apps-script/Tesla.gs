@@ -293,35 +293,191 @@ function chargerLiveStatus_() {
   return normalizeChargerLive_(payload);
 }
 
-function syncTesla_(allowInitialWindow) {
-  var props = PropertiesService.getScriptProperties();
-  var records = readLog_();
-  var ignored = new Set(readIgnored_());
-  var manualRows = records.filter(function (record) {
+function withScriptLock_(fn) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function manualSyncRows_(records) {
+  return records.filter(function (record) {
     return record.source === 'manual' && record.car && record.car !== 'unassigned'
       && record.kWh === null && !record.teslaKey;
   });
-  var cursor = props.getProperty('SYNC_CURSOR');
-  var syncFrom = props.getProperty('SYNC_FROM');
-  var now = new Date();
-  var lookback = new Date(now.getTime() - TESLA_MAX_LOOKBACK_DAYS_ * 86400000);
-  var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
+}
 
-  var lower = null;
-  if (cursor && validIso_(cursor)) {
-    lower = new Date(Math.max(Date.parse(cursor) - 2 * 86400000, lookback.getTime()));
-  } else if (syncFrom && validIso_(syncFrom)) {
-    lower = new Date(Math.max(Date.parse(syncFrom), lookback.getTime()));
-  } else if (manualRows.length) {
-    var earliest = manualRows.reduce(function (min, row) {
-      return Math.min(min, Date.parse(row.startAt));
-    }, Infinity);
-    lower = new Date(Math.max(earliest - 2 * 86400000, lookback.getTime()));
-  }
-  if (!lower && allowInitialWindow) {
-    lower = new Date(now.getTime() - TESLA_INIT_LOOKBACK_DAYS_ * 86400000);
-  }
-  if (!lower) {
+function syncWindow_(allowInitialWindow) {
+  var props = PropertiesService.getScriptProperties();
+  return withScriptLock_(function () {
+    var records = readLog_();
+    var manualRows = manualSyncRows_(records);
+    var cursor = props.getProperty('SYNC_CURSOR');
+    var syncFrom = props.getProperty('SYNC_FROM');
+    var now = new Date();
+    var lookback = new Date(now.getTime() - TESLA_MAX_LOOKBACK_DAYS_ * 86400000);
+
+    var lower = null;
+    if (cursor && validIso_(cursor)) {
+      lower = new Date(Math.max(Date.parse(cursor) - 2 * 86400000, lookback.getTime()));
+    } else if (syncFrom && validIso_(syncFrom)) {
+      lower = new Date(Math.max(Date.parse(syncFrom), lookback.getTime()));
+    } else if (manualRows.length) {
+      var earliest = manualRows.reduce(function (min, row) {
+        return Math.min(min, Date.parse(row.startAt));
+      }, Infinity);
+      lower = new Date(Math.max(earliest - 2 * 86400000, lookback.getTime()));
+    }
+    if (!lower && allowInitialWindow) {
+      lower = new Date(now.getTime() - TESLA_INIT_LOOKBACK_DAYS_ * 86400000);
+    }
+    return {
+      lowerIso: lower ? lower.toISOString() : null,
+      nowIso: now.toISOString(),
+      pendingManual: manualRows.length,
+    };
+  });
+}
+
+function syncApply_(sessions, nowIso) {
+  var props = PropertiesService.getScriptProperties();
+  return withScriptLock_(function () {
+    var records = readLog_();
+    var ignored = new Set(readIgnored_());
+    var manualRows = manualSyncRows_(records);
+    var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
+
+    var reconciled = 0;
+    var unassignedRows = records.filter(function (record) {
+      return record.source === 'tesla' && record.car === 'unassigned' && record.teslaKey && record.kWh != null;
+    });
+    for (var u = 0; u < unassignedRows.length; u += 1) {
+      var unassignedRow = unassignedRows[u];
+      var candidate = closestManualCandidate_(
+        unassignedRow.teslaStartAt || unassignedRow.startAt,
+        manualRows,
+        windowMs,
+      );
+      if (!candidate) continue;
+      var updated = updateLog_(candidate.id, {
+        kWh: unassignedRow.kWh,
+        durationSec: unassignedRow.durationSec,
+        teslaStartAt: unassignedRow.teslaStartAt,
+        teslaEndAt: unassignedRow.teslaEndAt,
+        peakKWh: unassignedRow.peakKWh,
+        offPeakKWh: unassignedRow.offPeakKWh,
+        teslaKey: unassignedRow.teslaKey,
+        source: 'tesla+manual',
+      });
+      if (!updated) continue;
+      deleteLog_(unassignedRow.id);
+      candidate.kWh = updated.kWh;
+      candidate.durationSec = updated.durationSec;
+      candidate.teslaStartAt = updated.teslaStartAt;
+      candidate.teslaEndAt = updated.teslaEndAt;
+      candidate.peakKWh = updated.peakKWh;
+      candidate.offPeakKWh = updated.offPeakKWh;
+      candidate.teslaKey = updated.teslaKey;
+      candidate.source = updated.source;
+      var candidateIndex = manualRows.indexOf(candidate);
+      if (candidateIndex >= 0) manualRows.splice(candidateIndex, 1);
+      var unassignedIndex = records.indexOf(unassignedRow);
+      if (unassignedIndex >= 0) records.splice(unassignedIndex, 1);
+      reconciled += 1;
+    }
+
+    var knownKeys = {};
+    for (var k = 0; k < records.length; k += 1) {
+      if (records[k].teslaKey) knownKeys[records[k].teslaKey] = true;
+    }
+
+    var rates = readRates_();
+    var matched = 0;
+    var unassigned = 0;
+    var skippedExisting = 0;
+    var skippedIgnored = 0;
+
+    for (var i = 0; i < sessions.length; i += 1) {
+      var session = sessions[i];
+      if (ignored.has(session.teslaKey)) {
+        skippedIgnored += 1;
+        continue;
+      }
+      if (knownKeys[session.teslaKey]) {
+        skippedExisting += 1;
+        continue;
+      }
+      var rate = selectRateRow_(hkMonth_(session.startAt), rates);
+      var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
+      var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
+      var split = splitPeakKwh_(session.startAt, session.durationSec, session.kWh, peakStart, peakEnd);
+      var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
+      if (manual) {
+        var filled = updateLog_(manual.id, {
+          car: manual.car,
+          startAt: manual.startAt,
+          date: manual.date,
+          time: manual.time,
+          kWh: session.kWh,
+          durationSec: session.durationSec,
+          teslaStartAt: session.startAt,
+          teslaEndAt: session.endAt,
+          peakKWh: split.peakKWh,
+          offPeakKWh: split.offPeakKWh,
+          teslaKey: session.teslaKey,
+          source: 'tesla+manual',
+        });
+        if (filled) {
+          knownKeys[session.teslaKey] = true;
+          var index = manualRows.indexOf(manual);
+          if (index >= 0) manualRows.splice(index, 1);
+          matched += 1;
+          continue;
+        }
+      }
+      appendLog_({
+        id: teslaRecordId_(session),
+        car: 'unassigned',
+        startAt: session.startAt,
+        date: hkDateString_(session.startAt),
+        time: hkTimeString_(session.startAt),
+        kWh: session.kWh,
+        durationSec: session.durationSec,
+        teslaStartAt: session.startAt,
+        teslaEndAt: session.endAt,
+        peakKWh: split.peakKWh,
+        offPeakKWh: split.offPeakKWh,
+        teslaKey: session.teslaKey,
+        source: 'tesla',
+      });
+      knownKeys[session.teslaKey] = true;
+      unassigned += 1;
+    }
+
+    // A concurrent, later-started sync must not move the cursor backwards.
+    var previousCursor = props.getProperty('SYNC_CURSOR');
+    if (!previousCursor || !validIso_(previousCursor) || Date.parse(nowIso) > Date.parse(previousCursor)) {
+      props.setProperty('SYNC_CURSOR', nowIso);
+    }
+    return {
+      matched: matched,
+      unassigned: unassigned,
+      fetched: sessions.length,
+      skipped: false,
+      reconciled: reconciled,
+      skippedExisting: skippedExisting,
+      skippedIgnored: skippedIgnored,
+      pendingManual: manualRows.length,
+    };
+  });
+}
+
+function syncTesla_(allowInitialWindow) {
+  var window = syncWindow_(allowInitialWindow);
+  if (!window.lowerIso) {
     return {
       matched: 0,
       unassigned: 0,
@@ -330,130 +486,11 @@ function syncTesla_(allowInitialWindow) {
       reconciled: 0,
       skippedExisting: 0,
       skippedIgnored: 0,
-      pendingManual: manualRows.length,
+      pendingManual: window.pendingManual,
     };
   }
-
   // The fetch must succeed before any Sheet write; a failure surfaces with Log intact.
   var siteId = discoverSiteId_();
-  var sessions = fetchSessions_(siteId, lower.toISOString(), now.toISOString());
-
-  var reconciled = 0;
-  var unassignedRows = records.filter(function (record) {
-    return record.source === 'tesla' && record.car === 'unassigned' && record.teslaKey && record.kWh != null;
-  });
-  for (var u = 0; u < unassignedRows.length; u += 1) {
-    var unassignedRow = unassignedRows[u];
-    var candidate = closestManualCandidate_(
-      unassignedRow.teslaStartAt || unassignedRow.startAt,
-      manualRows,
-      windowMs,
-    );
-    if (!candidate) continue;
-    var updated = updateLog_(candidate.id, {
-      kWh: unassignedRow.kWh,
-      durationSec: unassignedRow.durationSec,
-      teslaStartAt: unassignedRow.teslaStartAt,
-      teslaEndAt: unassignedRow.teslaEndAt,
-      peakKWh: unassignedRow.peakKWh,
-      offPeakKWh: unassignedRow.offPeakKWh,
-      teslaKey: unassignedRow.teslaKey,
-      source: 'tesla+manual',
-    });
-    if (!updated) continue;
-    deleteLog_(unassignedRow.id);
-    candidate.kWh = updated.kWh;
-    candidate.durationSec = updated.durationSec;
-    candidate.teslaStartAt = updated.teslaStartAt;
-    candidate.teslaEndAt = updated.teslaEndAt;
-    candidate.peakKWh = updated.peakKWh;
-    candidate.offPeakKWh = updated.offPeakKWh;
-    candidate.teslaKey = updated.teslaKey;
-    candidate.source = updated.source;
-    var candidateIndex = manualRows.indexOf(candidate);
-    if (candidateIndex >= 0) manualRows.splice(candidateIndex, 1);
-    var unassignedIndex = records.indexOf(unassignedRow);
-    if (unassignedIndex >= 0) records.splice(unassignedIndex, 1);
-    reconciled += 1;
-  }
-
-  var knownKeys = {};
-  for (var k = 0; k < records.length; k += 1) {
-    if (records[k].teslaKey) knownKeys[records[k].teslaKey] = true;
-  }
-
-  var rates = readRates_();
-  var matched = 0;
-  var unassigned = 0;
-  var skippedExisting = 0;
-  var skippedIgnored = 0;
-
-  for (var i = 0; i < sessions.length; i += 1) {
-    var session = sessions[i];
-    if (ignored.has(session.teslaKey)) {
-      skippedIgnored += 1;
-      continue;
-    }
-    if (knownKeys[session.teslaKey]) {
-      skippedExisting += 1;
-      continue;
-    }
-    var rate = selectRateRow_(hkMonth_(session.startAt), rates);
-    var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
-    var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
-    var split = splitPeakKwh_(session.startAt, session.durationSec, session.kWh, peakStart, peakEnd);
-    var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
-    if (manual) {
-      var filled = updateLog_(manual.id, {
-        car: manual.car,
-        startAt: manual.startAt,
-        date: manual.date,
-        time: manual.time,
-        kWh: session.kWh,
-        durationSec: session.durationSec,
-        teslaStartAt: session.startAt,
-        teslaEndAt: session.endAt,
-        peakKWh: split.peakKWh,
-        offPeakKWh: split.offPeakKWh,
-        teslaKey: session.teslaKey,
-        source: 'tesla+manual',
-      });
-      if (filled) {
-        knownKeys[session.teslaKey] = true;
-        var index = manualRows.indexOf(manual);
-        if (index >= 0) manualRows.splice(index, 1);
-        matched += 1;
-        continue;
-      }
-    }
-    appendLog_({
-      id: teslaRecordId_(session),
-      car: 'unassigned',
-      startAt: session.startAt,
-      date: hkDateString_(session.startAt),
-      time: hkTimeString_(session.startAt),
-      kWh: session.kWh,
-      durationSec: session.durationSec,
-      teslaStartAt: session.startAt,
-      teslaEndAt: session.endAt,
-      peakKWh: split.peakKWh,
-      offPeakKWh: split.offPeakKWh,
-      teslaKey: session.teslaKey,
-      source: 'tesla',
-    });
-    knownKeys[session.teslaKey] = true;
-    unassigned += 1;
-  }
-
-  props.setProperty('SYNC_CURSOR', now.toISOString());
-  return {
-    matched: matched,
-    unassigned: unassigned,
-    fetched: sessions.length,
-    skipped: false,
-    reconciled: reconciled,
-    skippedExisting: skippedExisting,
-    skippedIgnored: skippedIgnored,
-    pendingManual: manualRows.length,
-  };
+  var sessions = fetchSessions_(siteId, window.lowerIso, window.nowIso);
+  return syncApply_(sessions, window.nowIso);
 }

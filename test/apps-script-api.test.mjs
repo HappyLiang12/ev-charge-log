@@ -86,6 +86,13 @@ test('charger status returns live power and charging state', () => {
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
+  let waits = 0;
+  env.context.LockService = {
+    getScriptLock: () => ({
+      waitLock: () => { waits += 1; },
+      releaseLock: () => {},
+    }),
+  };
   const result = receive(env, { status: '1' });
   assert.equal(result.ok, true);
   assert.equal(result.charging, true);
@@ -94,6 +101,7 @@ test('charger status returns live power and charging state', () => {
   assert.equal(result.energyWh, null);
   assert.ok(result.keys.includes('wall_connector_power'));
   assert.equal(result.keys.includes('vin'), true);
+  assert.equal(waits, 0);
 });
 
 test('doGet returns only the requested car records and the owner returns all records', () => {
@@ -409,6 +417,104 @@ test('sync matches a manual row, updates the cursor, and exposes the full result
   assert.equal(target.startAt, '2026-11-14T05:00:00.000Z');
   assert.equal(target.teslaStartAt, SESSION_START);
   assert.ok(env.props.SYNC_CURSOR);
+});
+
+test('sync fetches Tesla outside the script lock and applies Sheet work under it', () => {
+  const lock = {
+    held: false,
+    waits: 0,
+    waitLock() {
+      this.waits += 1;
+      this.held = true;
+    },
+    releaseLock() {
+      this.held = false;
+    },
+  };
+  let telemetryLocked = null;
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'manual-1', 4: 'model3', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        telemetryLocked = lock.held;
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 7200 },
+              energy_added_wh: 20000,
+              target_id: 'target-1',
+              din: 'din:sync',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.context.LockService = { getScriptLock: () => lock };
+
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.matched, 1);
+  assert.equal(telemetryLocked, false);
+  assert.equal(lock.held, false);
+  assert.equal(lock.waits, 2);
+
+  const again = send(env, { action: 'sync' });
+  assert.equal(again.ok, true);
+  assert.equal(again.matched, 0);
+  assert.equal(again.skippedExisting, 1);
+  assert.equal(plain(env.call('readLog_')).length, 1);
+});
+
+test('a failed Tesla fetch releases the sync lock and leaves Log unchanged', () => {
+  const lock = {
+    held: false,
+    waitLock() { this.held = true; },
+    releaseLock() { this.held = false; },
+  };
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'manual-1', 4: 'model3', 5: '', 6: '', 7: '', 8: '',
+          9: '', 10: '', 11: '', 12: 'manual',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      throw new Error('Tesla unavailable');
+    },
+  });
+  env.context.LockService = { getScriptLock: () => lock };
+
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Tesla unavailable/);
+  assert.equal(lock.held, false);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].kWh, null);
+  assert.equal(records[0].source, 'manual');
 });
 
 test('owner sync initializes a 30-day window; family sync without a manual row stays skipped', () => {
