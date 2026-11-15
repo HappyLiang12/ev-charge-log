@@ -373,15 +373,44 @@ test('readRates_ accepts Sheet date cells for month and dedupes', () => {
     sheets: {
       Rates: [
         header,
-        [new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-15T00:00:00.000Z', 'FALSE'],
-        [new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-16T00:00:00.000Z', 'FALSE'],
+        [
+          new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0,
+          new Date('1899-12-30T16:00:00+08:00'), new Date('1899-12-30T23:00:00+08:00'),
+          'clp', new Date('2026-11-15T00:00:00.000Z'), false,
+        ],
+        [
+          new Date('2026-11-01T00:00:00+08:00'), 94.5, 137.5, 47.4, 0,
+          new Date('1899-12-30T16:00:00+08:00'), new Date('1899-12-30T23:00:00+08:00'),
+          'clp', new Date('2026-11-16T00:00:00.000Z'), true,
+        ],
       ],
     },
   });
   const rates = plain(env.call('readRates_'));
   assert.equal(rates.length, 1);
   assert.equal(rates[0].month, '2026-11');
+  assert.equal(rates[0].peakStart, '16:00');
+  assert.equal(rates[0].peakEnd, '23:00');
   assert.equal(rates[0].fetchedAt, '2026-11-16T00:00:00.000Z');
+  assert.equal(rates[0].manualOverride, true);
+});
+
+test('readCars_ accepts boolean active cells', () => {
+  const header = ['id', 'name', 'active', 'createdAt'];
+  const env = createEnv({
+    sheets: {
+      Cars: [
+        header,
+        ['model3', 'Model 3', true, new Date('2026-11-01T00:00:00+08:00')],
+        ['leaf', 'Leaf', false, new Date('2026-11-02T00:00:00+08:00')],
+      ],
+    },
+  });
+  const cars = plain(env.call('readCars_'));
+  assert.deepEqual(cars.map((car) => [car.id, car.active]), [
+    ['model3', true],
+    ['leaf', false],
+  ]);
 });
 
 test('upsertRates_ matches a date month cell instead of appending a duplicate', () => {
@@ -411,6 +440,65 @@ test('upsertRates_ matches a date month cell instead of appending a duplicate', 
   assert.equal(rows.length, 2);
   assert.equal(rows[1][0], '2026-11');
   assert.equal(rows[1][1], 94.5);
+});
+
+test('upsertRates_ removes duplicate month rows and updates the kept row', () => {
+  const header = [
+    'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+    'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+  ];
+  const env = createEnv({
+    sheets: {
+      Rates: [
+        header,
+        ['2026-10', 1, 2, 3, 0, '16:00', '23:00', 'old', 'old', 'FALSE'],
+        ['2026-11', 1, 2, 3, 0, '16:00', '23:00', 'old', 'old', 'FALSE'],
+        ['2026-11', 4, 5, 6, 0, '16:00', '23:00', 'old', 'old', 'FALSE'],
+      ],
+    },
+  });
+  const updated = env.call('upsertRates_', [
+    {
+      month: '2026-10', basicOffPeak: 94.5, basicPeak: 137.5, fuelAdjustment: 46.2,
+      rebate: 0, peakStart: '16:00', peakEnd: '23:00', sourceUrl: 'new', fetchedAt: '2026-11-15T00:00:00.000Z', manualOverride: false,
+    },
+    {
+      month: '2026-11', basicOffPeak: 94.5, basicPeak: 137.5, fuelAdjustment: 47.4,
+      rebate: 0, peakStart: '16:00', peakEnd: '23:00', sourceUrl: 'new', fetchedAt: '2026-11-15T00:00:00.000Z', manualOverride: false,
+    },
+  ]);
+  assert.equal(updated, 2);
+  const rows = env.values('Rates');
+  assert.equal(rows.length, 3);
+  const november = rows.filter((row) => row[0] === '2026-11');
+  assert.equal(november.length, 1);
+  assert.equal(november[0][3], 47.4);
+});
+
+test('upsertRates_ keeps one manual row and removes an automatic duplicate', () => {
+  const header = [
+    'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
+    'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+  ];
+  const env = createEnv({
+    sheets: {
+      Rates: [
+        header,
+        ['2026-11', 1, 2, 3, 0, '17:00', '22:00', 'manual', '', 'TRUE'],
+        ['2026-11', 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', '2026-11-15T00:00:00.000Z', 'FALSE'],
+      ],
+    },
+  });
+  const updated = env.call('upsertRates_', [{
+    month: '2026-11', basicOffPeak: 94.5, basicPeak: 137.5, fuelAdjustment: 47.4,
+    rebate: 0, peakStart: '16:00', peakEnd: '23:00', sourceUrl: 'clp', fetchedAt: '2026-11-15T00:00:00.000Z', manualOverride: false,
+  }]);
+  assert.equal(updated, 0);
+  const rows = env.values('Rates');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1][1], 1);
+  assert.equal(rows[1][5], '17:00');
+  assert.equal(rows[1][9], 'TRUE');
 });
 
 test('readLog_ accepts Sheet date cells for timestamps', () => {

@@ -211,7 +211,9 @@ when eligible. The fetch must not infer eligibility.
 
 Google Sheets may store `month` as a date cell. The reader normalizes it to
 `YYYY-MM` and dedupes duplicate month rows, preferring a manual override and
-then the latest `fetchedAt`.
+then the latest `fetchedAt`. The refresh also keeps one row per month: it
+prefers a manual override row, does not overwrite it, and deletes duplicate
+rows for the refreshed month.
 
 ### 7.4 Ignored session
 
@@ -454,8 +456,9 @@ The official `FCA.csv` is not used. It ended at 2025-12 when checked.
    month present with the same value. On any failure, leave existing rows
    unchanged and return an error that prompts the owner to set
    `manualOverride=TRUE`.
-8. Upsert one `Rates` row per month. Skip rows whose `manualOverride` is
-   `TRUE`.
+8. Upsert one `Rates` row per month, matching date-formatted month cells.
+   Remove duplicate month rows; prefer a `manualOverride` row and do not
+   overwrite it.
 9. Set `sourceUrl` and `fetchedAt` on rows written by the fetch.
 
 Months outside the year table shown on the current page are not fetched; the
