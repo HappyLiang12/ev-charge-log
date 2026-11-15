@@ -169,7 +169,13 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     if (req.method === 'GET') {
       if (url.searchParams.has('owner')) {
-        return sendJson(res, 200, { ok: true, cars, records, rates });
+        return sendJson(res, 200, {
+          ok: true,
+          cars,
+          records,
+          rates,
+          sheetUrl: 'https://docs.google.com/spreadsheets/d/mock/edit',
+        });
       }
       const carId = url.searchParams.get('car');
       const car = findCar(carId);
@@ -262,7 +268,7 @@ const server = http.createServer(async (req, res) => {
   const path = requested === '/' ? '/index.html' : requested;
   if (path === '/config.js') {
     res.writeHead(200, { 'Content-Type': types['.js'] });
-    res.end(`window.APP_CONFIG = { API_URL: '${apiUrl}', SHEET_URL: '' };\n`);
+    res.end(`window.APP_CONFIG = { API_URL: '${apiUrl}' };\n`);
     return;
   }
 

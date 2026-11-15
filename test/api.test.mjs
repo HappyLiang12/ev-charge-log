@@ -78,10 +78,12 @@ test('fetchOwnerData sends the owner mode flag and parses all cars', async () =>
     cars: [{ id: 'model3', name: 'Model 3', active: true }],
     records: [record],
     rates: [rate],
+    sheetUrl: 'https://docs.google.com/spreadsheets/d/abc/edit',
   }, captured));
   assert.match(captured.url, /^https:\/\/example\.test\/api\?owner=1$/);
   assert.equal(data.cars.length, 1);
   assert.equal(data.records[0].car, 'model3');
+  assert.equal(data.sheetUrl, 'https://docs.google.com/spreadsheets/d/abc/edit');
 });
 
 test('postRecord sends car, startAt, and Hong Kong date/time as text/plain', async () => {

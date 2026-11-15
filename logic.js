@@ -159,6 +159,7 @@ export function parseOwnerPayload(payload) {
     cars: normalizeCars(payload.cars),
     records: normalizeRecords(payload.records),
     rates: normalizeRates(payload.rates),
+    sheetUrl: typeof payload.sheetUrl === 'string' ? payload.sheetUrl.trim() : '',
   };
 }
 

@@ -48,6 +48,7 @@ function makeSheet(initial) {
 }
 
 function createEnv({ sheets = {}, props = {}, fetch: fetchHandler } = {}) {
+  const scriptProps = { SHEET_ID: 'fake-sheet', ...props };
   const sheetMap = new Map();
   for (const [name, values] of Object.entries(sheets)) {
     sheetMap.set(name, makeSheet(values));
@@ -64,9 +65,9 @@ function createEnv({ sheets = {}, props = {}, fetch: fetchHandler } = {}) {
     SpreadsheetApp: { openById: () => spreadsheet },
     PropertiesService: {
       getScriptProperties: () => ({
-        getProperty: (key) => (Object.prototype.hasOwnProperty.call(props, key) ? props[key] : null),
-        setProperty: (key, value) => { props[key] = String(value); },
-        deleteProperty: (key) => { delete props[key]; },
+        getProperty: (key) => (Object.prototype.hasOwnProperty.call(scriptProps, key) ? scriptProps[key] : null),
+        setProperty: (key, value) => { scriptProps[key] = String(value); },
+        deleteProperty: (key) => { delete scriptProps[key]; },
       }),
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
@@ -83,13 +84,12 @@ function createEnv({ sheets = {}, props = {}, fetch: fetchHandler } = {}) {
     },
     MimeType: { JSON: 'application/json' },
     console: { log() {}, error() {} },
-    SHEET_ID: 'fake-sheet',
   });
   vm.runInContext(logicSource, context);
   vm.runInContext(repoSource, context);
   return {
     context,
-    props,
+    props: scriptProps,
     spreadsheet,
     call: (name, ...args) => context[name](...args),
     values: (name) => {
@@ -357,4 +357,9 @@ test('addIgnored_ appends in actual header order and leaves unknown columns blan
   assert.equal(added[header.indexOf('note')], '');
   assert.ok(added[header.indexOf('ignoredAt')]);
   assert.deepEqual(plain(env.call('readIgnored_')), ['din:a', 'din:b']);
+});
+
+test('openSpreadsheet_ requires the SHEET_ID script property', () => {
+  const env = createEnv({ props: { SHEET_ID: '' } });
+  assert.throws(() => env.call('openSpreadsheet_'), /SHEET_ID/);
 });

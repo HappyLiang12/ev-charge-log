@@ -42,6 +42,7 @@ function makeSheet(initial) {
 }
 
 export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandler } = {}) {
+  const scriptProps = { SHEET_ID: 'fake-sheet', ...props };
   const sheetMap = new Map();
   for (const [name, values] of Object.entries(sheets)) {
     sheetMap.set(name, makeSheet(values));
@@ -58,9 +59,9 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
     SpreadsheetApp: { openById: () => spreadsheet },
     PropertiesService: {
       getScriptProperties: () => ({
-        getProperty: (key) => (Object.prototype.hasOwnProperty.call(props, key) ? props[key] : null),
-        setProperty: (key, value) => { props[key] = String(value); },
-        deleteProperty: (key) => { delete props[key]; },
+        getProperty: (key) => (Object.prototype.hasOwnProperty.call(scriptProps, key) ? scriptProps[key] : null),
+        setProperty: (key, value) => { scriptProps[key] = String(value); },
+        deleteProperty: (key) => { delete scriptProps[key]; },
       }),
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
@@ -77,12 +78,11 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
     },
     MimeType: { JSON: 'application/json' },
     console: { log() {}, error() {} },
-    SHEET_ID: 'fake-sheet',
   });
   for (const source of sources) vm.runInContext(source, context);
   return {
     context,
-    props,
+    props: scriptProps,
     spreadsheet,
     call: (name, ...args) => context[name](...args),
     values: (name) => {
