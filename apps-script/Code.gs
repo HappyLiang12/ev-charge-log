@@ -45,6 +45,21 @@ function doPost(e) {
   }
 }
 
+function setup() {
+  var cars = readCars_();
+  var records = readLog_();
+  var rates = readRates_();
+  var ignored = readIgnored_();
+  return {
+    ok: true,
+    cars: cars.length,
+    records: records.length,
+    rates: rates.length,
+    ignored: ignored.length,
+    sheetUrl: sheetUrl_(),
+  };
+}
+
 function merge_(base, extra) {
   var out = {};
   for (var key in base) if (Object.prototype.hasOwnProperty.call(base, key)) out[key] = base[key];
