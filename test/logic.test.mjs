@@ -17,6 +17,7 @@ import {
   parseFamilyPayload,
   parseOwnerPayload,
   mergeRecords,
+  groupUnassignedByDay,
   monthsWithRecords,
   defaultMonth,
   filterByMonth,
@@ -153,6 +154,19 @@ test('sourceUrls splits valid URLs and drops duplicates', () => {
     'https://b.example/y',
   ]);
   assert.deepEqual(sourceUrls(''), []);
+});
+
+test('groupUnassignedByDay keeps the last 24 hours open and groups older rows by HK day', () => {
+  const now = Date.parse('2026-11-15T10:00:00.000Z');
+  const grouped = groupUnassignedByDay([
+    record({ id: 'old-a', startAt: '2026-11-13T09:00:00.000Z' }),
+    record({ id: 'recent', startAt: '2026-11-15T09:00:00.000Z' }),
+    record({ id: 'old-b', startAt: '2026-11-12T09:00:00.000Z' }),
+    record({ id: 'old-c', startAt: '2026-11-13T08:00:00.000Z' }),
+  ], now);
+  assert.deepEqual(grouped.recent.map((row) => row.id), ['recent']);
+  assert.deepEqual(grouped.days.map((day) => day.day), ['2026-11-13', '2026-11-12']);
+  assert.deepEqual(grouped.days[0].records.map((row) => row.id), ['old-a', 'old-c']);
 });
 
 test('merge, month filtering, and default month use startAt', () => {
