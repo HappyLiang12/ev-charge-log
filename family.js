@@ -157,6 +157,16 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     meta.className = info.pending ? 'record-meta pending' : 'record-meta';
     meta.textContent = info.text;
     main.append(date, meta);
+    const endIso = sessionEndIso(record);
+    if (endIso) {
+      const end = document.createElement('span');
+      end.className = 'record-end';
+      const sameDay = formatHkDate(endIso) === formatHkDate(record.startAt);
+      end.textContent = sameDay
+        ? `至 ${formatHkTime12(endIso)}`
+        : `至 ${formatHkDate(endIso).slice(5)} ${formatHkTime12(endIso)}`;
+      main.append(end);
+    }
 
     const right = document.createElement('span');
     right.className = 'record-right';

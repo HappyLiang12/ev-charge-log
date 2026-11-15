@@ -114,7 +114,13 @@ button:focus-visible, select:focus-visible, a:focus-visible {
   min-width: 0;
 }
 
-.stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-value {
+  font-size: clamp(15px, 4.6vw, 20px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
 .stat-label { color: var(--muted); font-size: 12px; }
 
 .panel {
@@ -150,6 +156,12 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 }
 .record-meta.pending { color: var(--warn); }
 .record-time { color: var(--accent); font-weight: 600; }
+.record-end {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .record-right { display: flex; align-items: center; gap: 8px; }
 .delete-btn {
   width: 44px;
@@ -255,6 +267,7 @@ select, #exportBtn {
 .owner-toolbar-actions button:disabled { opacity: 0.4; cursor: default; }
 
 .owner-cards { display: grid; gap: 10px; }
+#familyRates { margin-top: 10px; }
 
 .live-title-row {
   display: flex;
@@ -290,8 +303,9 @@ select, #exportBtn {
 }
 
 .live-metric strong {
-  font-size: 20px;
+  font-size: clamp(15px, 4.6vw, 20px);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .live-metric span {
@@ -498,6 +512,14 @@ select, #exportBtn {
 }
 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 360px) {
+  .stats { gap: 8px; }
+  .stat { padding: 12px 9px; }
+  .live-metric { padding: 8px; }
+  .record-date { font-size: 14px; }
+  .record-weekday { font-size: 11px; margin-left: 4px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }

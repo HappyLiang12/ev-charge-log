@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { formatHkDate, formatHkTime12 } from '../logic.js';
 import {
   FUEL_URL,
   TARIFF_URL,
@@ -125,6 +126,11 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     assert.equal(log[0].car, 'model3');
     assert.equal(log[0].kWh, 12);
     assert.equal(log[0].source, 'tesla+manual');
+    const endIso = new Date(Date.parse(log[0].teslaStartAt) + log[0].durationSec * 1000).toISOString();
+    const endLabel = `至 ${
+      formatHkDate(endIso) === formatHkDate(log[0].startAt) ? '' : `${formatHkDate(endIso).slice(5)} `
+    }${formatHkTime12(endIso)}`;
+    assert.ok(ui.document.getElementById('recentList').textContent.includes(endLabel));
 
     ui.document.querySelector('#recentList li button').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 0);
