@@ -95,7 +95,9 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/).
 4. Do not edit the code. The Sheet ID is a Script Property; add `SHEET_ID` in the next section.
 5. Save the project.
-6. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
+6. Set the Script Properties in section 2, including `SHEET_ID`.
+7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, `Rates`, and `Ignored`, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
+8. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
 
 `Code.gs` is the router: `doGet` serves family and owner reads and `doPost` handles the actions. Both paths hold the Apps Script script lock because reads can migrate headers. This replaces the legacy fixed-position `Log` API; existing rows are migrated in place and never moved or deleted.
 
@@ -224,7 +226,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 86 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 87 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 

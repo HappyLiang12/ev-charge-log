@@ -52,6 +52,20 @@ const send = (env, body) => JSON.parse(env.call('doPost', {
 }).getContent());
 const receive = (env, parameter) => JSON.parse(env.call('doGet', { parameter }).getContent());
 
+test('setup creates all four tabs and reports counts', () => {
+  const env = setup();
+  const result = plain(env.call('setup'));
+  assert.equal(result.ok, true);
+  assert.equal(result.cars, 0);
+  assert.equal(result.records, 0);
+  assert.equal(result.rates, 0);
+  assert.equal(result.ignored, 0);
+  assert.match(result.sheetUrl, /\/d\/fake-sheet\/edit$/);
+  for (const name of ['Log', 'Cars', 'Rates', 'Ignored']) {
+    assert.ok(env.spreadsheet.getSheetByName(name), name);
+  }
+});
+
 test('doGet returns only the requested car records and the owner returns all records', () => {
   const env = setup({
     sheets: {
