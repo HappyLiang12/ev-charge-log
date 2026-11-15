@@ -31,7 +31,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
-- Recent records with start and end times, kWh, estimated cost, and real delete. The end date is included when a session crosses midnight.
+- Recent records with start and end times, kWh, estimated cost, and real delete. Deleting a Tesla-linked record releases it back to `unassigned` for another car to claim; it is not added to `Ignored`. The end date is included when a session crosses midnight.
 - Owner month totals, one `待配對` list that combines manual starts and unassigned charger sessions, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - UI times use 12-hour AM/PM; unassigned rows show both start and end times. CSV keeps 24-hour times.
 - Month and day groups remember their open state after a claim, assign, or ignore, so several sessions can be handled without reopening the groups.
@@ -77,7 +77,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 `teslaKey`, `ignoredAt`, `reason`.
 
-- Deleting or ignoring a Tesla-linked record adds its key here so it is not imported again. Remove the key to allow a later sync to import it again.
+- Ignoring a Tesla-linked record from the owner pending list adds its key here so it is not imported again. Remove the key to allow a later sync to import it again. Deleting a matched record from the family view does not add a key; it releases the session back to `unassigned`.
 
 ## Billing
 
@@ -238,7 +238,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 116 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 117 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

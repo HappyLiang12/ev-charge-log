@@ -448,19 +448,40 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   async function onDelete(record) {
     const message = record.teslaKey
-      ? '刪除呢筆紀錄？充電樁紀錄亦會被忽略，之後同步唔會再自動匯入。你仍可手動開始新紀錄；要重新匯入，請喺 Sheet 嘅 Ignored 刪除對應 key。'
+      ? '刪除呢筆紀錄？充電樁紀錄會放返去「未配對充電樁紀錄」，其他車可以認領。'
       : '刪除呢筆紀錄？';
     if (!window.confirm(message)) return;
     state.deleting.add(record.id);
     render();
     try {
       const localOnly = state.pending.some((row) => row.id === record.id);
-      if (apiUrl && !localOnly) await deleteRecord(apiUrl, record.id, { car: carId });
+      let released = false;
+      if (apiUrl && !localOnly) {
+        const result = await deleteRecord(apiUrl, record.id, { car: carId });
+        released = result.released === true;
+      }
       state.pending = state.pending.filter((row) => row.id !== record.id);
       state.server = state.server.filter((row) => row.id !== record.id);
       persist();
       render();
-      showToast(els.toast, '已刪除。');
+      let refreshFailed = false;
+      if (released) {
+        try {
+          await fetchData();
+        } catch {
+          refreshFailed = true;
+          state.offline = true;
+          render();
+        }
+      }
+      showToast(
+        els.toast,
+        released
+          ? (refreshFailed
+            ? '已放回未配對充電樁紀錄；未能重新載入，請重新整理。'
+            : '已刪除，並放回未配對充電樁紀錄。')
+          : '已刪除。',
+      );
     } catch (error) {
       state.offline = true;
       render();

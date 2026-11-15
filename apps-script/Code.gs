@@ -157,11 +157,27 @@ function deleteAction_(data) {
   for (var i = 0; i < records.length; i += 1) {
     if (records[i].id === String(data.id)) target = records[i];
   }
-  if (!target) return { deleted: false };
-  if (target.car !== data.car) throw new Error('Record does not belong to this car');
-  if (target.teslaKey) addIgnored_(target.teslaKey, 'deleted');
+  if (!target) return { deleted: false, released: false };
+  if (target.car !== data.car) {
+    if (target.car === 'unassigned' && target.source === 'tesla' && target.teslaKey) {
+      return { deleted: true, released: true, alreadyReleased: true };
+    }
+    throw new Error('Record does not belong to this car');
+  }
+  if (target.teslaKey) {
+    var startAt = target.teslaStartAt || target.startAt;
+    var released = updateLog_(target.id, {
+      car: 'unassigned',
+      startAt: startAt,
+      date: hkDateString_(startAt),
+      time: hkTimeString_(startAt),
+      source: 'tesla',
+    });
+    if (!released) throw new Error('Failed to release record');
+    return { deleted: true, released: true, record: released };
+  }
   deleteLog_(target.id);
-  return { deleted: true };
+  return { deleted: true, released: false };
 }
 
 function syncAction_(data) {

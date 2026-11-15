@@ -134,8 +134,13 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
 
     ui.document.querySelector('#recentList li button').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 0);
-    assert.equal(harness.env.call('readLog_').length, 0);
-    assert.equal(harness.env.call('readIgnored_').length, 1);
+    await waitFor(() => ui.document.querySelectorAll('#familyUnassigned li').length === 1);
+    assert.match(ui.document.getElementById('familyUnassigned').textContent, /認領/);
+    const released = harness.env.call('readLog_');
+    assert.equal(released.length, 1);
+    assert.equal(released[0].car, 'unassigned');
+    assert.equal(released[0].source, 'tesla');
+    assert.equal(harness.env.call('readIgnored_').length, 0);
   } finally {
     ui.close();
     await harness.close();
