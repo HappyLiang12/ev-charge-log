@@ -9,8 +9,18 @@ var RATES_COLUMNS = [
 ];
 var IGNORED_COLUMNS = ['teslaKey', 'ignoredAt', 'reason'];
 
+function sheetId_() {
+  var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+  if (!id) throw new Error('Missing SHEET_ID script property (Project Settings -> Script Properties)');
+  return String(id).trim();
+}
+
+function sheetUrl_() {
+  return 'https://docs.google.com/spreadsheets/d/' + sheetId_() + '/edit';
+}
+
 function openSpreadsheet_() {
-  return SpreadsheetApp.openById(SHEET_ID);
+  return SpreadsheetApp.openById(sheetId_());
 }
 
 function headerRow_(sheet) {

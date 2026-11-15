@@ -93,7 +93,7 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 1. Open the existing Google Sheet. The Sheet is currently link-shared by the owner's choice; anyone with the link can read the log. Set General access to Restricted if you want it private. The family view never links to it.
 2. Open Extensions -> Apps Script.
 3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/).
-4. Set `SHEET_ID` at the top of `Code.gs` to the ID from the Sheet URL (`https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`).
+4. Do not edit the code. The Sheet ID is a Script Property; add `SHEET_ID` in the next section.
 5. Save the project.
 6. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
 
@@ -107,6 +107,7 @@ In Apps Script, Project Settings -> Script Properties:
 
 | Property | Value |
 | --- | --- |
+| `SHEET_ID` | ID from the Sheet URL (`https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`) |
 | `TESLA_CLIENT_ID` | Tesla developer app client ID |
 | `TESLA_CLIENT_SECRET` | Tesla developer app client secret |
 | `TESLA_REFRESH_TOKEN` | Refresh token from the local OAuth helper |
@@ -139,16 +140,15 @@ Rotate the Tesla client secret after development and deployment are complete. Up
 
 ### 4. Frontend
 
-`config.js` contains only public values:
+`config.js` contains only the Apps Script URL:
 
 ```js
 window.APP_CONFIG = {
   API_URL: '<Apps Script Web app URL>',
-  SHEET_URL: '<Google Sheet URL>',
 };
 ```
 
-Deploy the static files to GitHub Pages. `config.js` holds only the Apps Script URL and the Sheet URL.
+Deploy the static files to GitHub Pages. The owner view gets its Sheet link from the owner API, which derives it from the `SHEET_ID` Script Property; the Sheet URL is not committed to the repository.
 
 ### 5. Cars, rates, and the owner URL
 
@@ -200,7 +200,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records and claim unassigned Tesla sessions to that car. Share it only with that car's driver.
 - The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign or ignore sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
-- The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The family view does not link to it. Set General access to Restricted if you want it private.
+- The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link. Set General access to Restricted if you want it private.
 - Family actions require a valid car ID; owner actions require only the Apps Script Web App URL.
 - `index.html` uses `<meta name="referrer" content="no-referrer">`; owner external links use `rel="noreferrer"`.
 - A leaked family URL allows that car's append/delete and claims. Remove the car from the `Cars` tab to stop the old link; existing records stay in the `Log`.
@@ -224,7 +224,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 85 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
+The suite currently has 86 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Tesla token/session mapping, CLP parsers, owner actions, family claims, and the API envelope. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm test` on Node 20 for every push and pull request.
 

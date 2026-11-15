@@ -68,7 +68,8 @@ type Record = { id: string; startAt: string } // startAt = ISO 8601 UTC (toISOSt
 - `POST` body `{ action: 'delete', id }` → deletes the matching row, returns `{ ok: true, deleted: boolean }`; missing ids are idempotent.
 - Validation: `id` matches `[A-Za-z0-9-]{1,64}`, `startAt` parses as a date, `date` matches `YYYY-MM-DD`, `time` matches `HH:mm`; invalid → `{ ok: false, error }`.
 - Idempotency: `doPost` checks for an existing `id` under `LockService` before appending, so retries cannot duplicate rows; delete is also idempotent under the same lock.
-- `SHEET_ID` and sheet name are constants at the top of `Code.gs`.
+- `SHEET_ID` and the sheet-name mapping live in Script Properties and code
+  constants; the personal spreadsheet ID is not committed.
 - CORS: primary approach is `fetch` with `Content-Type: text/plain;charset=utf-8` (simple request, no preflight). If the live deployment blocks CORS, fall back to JSONP for GET and a hidden-form POST for writes; the API shape stays the same.
 
 ## 3. UI
@@ -155,7 +156,8 @@ Live verification after the user deploys the Apps Script:
 User one-time setup:
 
 1. Create a Google Sheet.
-2. Extensions → Apps Script; paste `apps-script/Code.gs`; set `SHEET_ID`.
+2. Extensions → Apps Script; paste `apps-script/Code.gs`; add `SHEET_ID` in
+   Script Properties.
 3. Deploy as Web app: execute as me, access Anyone; copy the deployment URL.
 4. Provide the deployment URL (and Sheet URL) to the developer.
 

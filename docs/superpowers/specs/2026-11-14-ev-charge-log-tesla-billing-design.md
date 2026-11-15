@@ -123,7 +123,7 @@ Components:
 | `family.js` | Family view rendering and actions |
 | `owner.js` | Owner view rendering and actions |
 | `style.css` | Existing dark theme plus owner/family additions |
-| `config.js` | Public `API_URL` and `SHEET_URL` only |
+| `config.js` | Public `API_URL` only |
 | `apps-script/Code.gs` | Web app routing, validation, locking |
 | `apps-script/SheetRepo.gs` | Sheet tabs, header migration, row operations |
 | `apps-script/Tesla.gs` | Tesla token refresh, site discovery, session fetch |
@@ -271,6 +271,7 @@ Apps Script Script Properties:
 
 | Property | Purpose |
 |---|---|
+| `SHEET_ID` | Target spreadsheet ID from the Sheet URL |
 | `TESLA_CLIENT_ID` | Tesla app client ID |
 | `TESLA_CLIENT_SECRET` | Tesla app client secret |
 | `TESLA_REFRESH_TOKEN` | OAuth refresh token |
@@ -515,6 +516,7 @@ forgotten start; legacy rows are not returned.
   "cars": [Car],
   "records": [SessionRecord],
   "rates": [Rate],
+  "sheetUrl": "https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit",
   "serverTime": "2026-11-14T14:00:00.000Z"
 }
 ```
@@ -649,9 +651,9 @@ times are Asia/Hong_Kong.
   trade-off for a family-only app; the owner keeps the URL private.
 - Tesla credentials live only in Apps Script Script Properties.
 - The Sheet is link-shared by the current owner choice; anyone with the link
-  can read the log. Set General access to Restricted if privacy is required.
-  The family view does not link to the Sheet, but `config.js` contains the
-  Sheet URL in the public repository, so treat that URL as non-secret.
+  can read the log. The Sheet URL is not in the repository: `SHEET_ID` is a
+  Script Property and the owner payload derives the link. Set General access to
+  Restricted if privacy is required.
 - The Apps Script URL and each family URL are capabilities. Anyone with a
   family URL can add/delete that car's records and claim unassigned Tesla
   sessions to that car. This matches the existing no-login model; the household
@@ -731,7 +733,7 @@ times are Asia/Hong_Kong.
 
 1. Update the Apps Script project with the new `.gs` files. Keep the existing
    deployment URL and publish a new version.
-2. Add Script Properties: Tesla client id, client secret, refresh token,
+2. Add Script Properties: Sheet id, Tesla client id, client secret, refresh token,
    optional base URL/site id, optional match window, and optional
    `SYNC_FROM`. There is no owner key. Leave `SYNC_FROM` empty unless you
    intentionally want to backfill pre-launch sessions. `SYNC_CURSOR` is managed

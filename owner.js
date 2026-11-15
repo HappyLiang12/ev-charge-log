@@ -16,11 +16,12 @@ import {
 } from './api.js';
 import { byId, showToast, setStatus, setBusy, friendlyError } from './ui.js';
 
-export function initOwner({ apiUrl, sheetUrl }) {
+export function initOwner({ apiUrl }) {
   const state = {
     cars: [],
     records: [],
     rates: [],
+    sheetUrl: '',
     loading: Boolean(apiUrl),
     offline: false,
     busy: false,
@@ -219,8 +220,8 @@ export function initOwner({ apiUrl, sheetUrl }) {
     setStatus(els.status, status);
     setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新 Tesla');
     setBusy(els.ratesBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新費率');
-    if (sheetUrl) {
-      els.sheetLink.href = sheetUrl;
+    if (state.sheetUrl) {
+      els.sheetLink.href = state.sheetUrl;
       els.sheetLink.hidden = false;
     } else {
       els.sheetLink.hidden = true;
@@ -305,6 +306,7 @@ export function initOwner({ apiUrl, sheetUrl }) {
     state.cars = data.cars;
     state.records = data.records;
     state.rates = data.rates;
+    state.sheetUrl = data.sheetUrl;
     state.offline = false;
   }
 

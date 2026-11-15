@@ -1,4 +1,3 @@
-var SHEET_ID = 'PASTE_SHEET_ID_HERE';
 var MAX_BODY_BYTES_ = 16384;
 
 function doGet(e) {
@@ -87,6 +86,7 @@ function ownerPayload_() {
     cars: readCars_(),
     records: readLog_(),
     rates: readRates_(),
+    sheetUrl: sheetUrl_(),
     serverTime: new Date().toISOString(),
   };
 }

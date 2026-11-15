@@ -137,8 +137,10 @@ test('parse payloads validate the family and owner envelopes', () => {
     cars: [{ id: 'model3', name: 'Model 3', active: true }],
     records: [record()],
     rates: [rate],
+    sheetUrl: 'https://docs.google.com/spreadsheets/d/abc/edit',
   });
   assert.equal(owner.cars.length, 1);
+  assert.equal(owner.sheetUrl, 'https://docs.google.com/spreadsheets/d/abc/edit');
   assert.deepEqual(owner.records, [record()]);
   assert.throws(() => parseServerRecords({ ok: false }), /Invalid API response/);
   assert.throws(() => parseFamilyPayload({ ok: true, car: null, records: [] }), /Invalid car payload/);

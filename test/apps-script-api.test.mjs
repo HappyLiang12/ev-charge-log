@@ -84,6 +84,7 @@ test('doGet returns only the requested car records and the owner returns all rec
   assert.equal(owner.ok, true);
   assert.equal(owner.cars.length, 2);
   assert.equal(owner.records.length, 4);
+  assert.equal(owner.sheetUrl, 'https://docs.google.com/spreadsheets/d/fake-sheet/edit');
   assert.equal(receive(env, { owner: '' }).ok, true);
   assert.equal(receive(env, { car: 'missing' }).ok, false);
   assert.match(receive(env, { car: 'missing' }).error, /Unknown car: missing/);
