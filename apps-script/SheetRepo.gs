@@ -101,8 +101,11 @@ function monthValue_(value) {
 
 function hmValue_(value) {
   if (isDateValue_(value)) {
-    var shifted = new Date(value.getTime() + HK_OFFSET_MS_);
-    return pad2_(shifted.getUTCHours()) + ':' + pad2_(shifted.getUTCMinutes());
+    // Time-only Sheet cells are stored at the 1899 epoch, where Hong Kong's
+    // historical offset was not UTC+08:00. Format in the billing timezone
+    // rather than adding a fixed offset.
+    var formatted = Utilities.formatDate(value, 'Asia/Hong_Kong', 'HH:mm');
+    return parseHm_(formatted) === null ? '' : formatted;
   }
   var text = String(value || '').trim();
   return parseHm_(text) === null ? '' : text;

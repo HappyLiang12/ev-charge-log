@@ -209,11 +209,13 @@ The owner edits this tab directly. The app does not provide a car editor.
 `rebate` is subtracted from both peak and non-peak rates. The owner sets it
 when eligible. The fetch must not infer eligibility.
 
-Google Sheets may store `month` as a date cell. The reader normalizes it to
-`YYYY-MM` and dedupes duplicate month rows, preferring a manual override and
-then the latest `fetchedAt`. The refresh also keeps one row per month: it
-prefers a manual override row, does not overwrite it, and deletes duplicate
-rows for the refreshed month.
+Google Sheets may store `month` as a date cell and `peakStart`/`peakEnd` as
+time cells. The reader normalizes the month to `YYYY-MM` and formats time-only
+cells in `Asia/Hong_Kong`; a fixed `+08:00` shift is wrong because the 1899
+time-cell epoch uses Hong Kong's historical offset. It dedupes duplicate month
+rows, preferring a manual override and then the latest `fetchedAt`. The refresh
+also keeps one row per month: it prefers a manual override row, does not
+overwrite it, and deletes duplicate rows for the refreshed month.
 
 ### 7.4 Ignored session
 
