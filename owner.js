@@ -1,6 +1,7 @@
 import {
   formatHkDate,
-  formatHkTime,
+  formatHkTime12,
+  sessionEndIso,
   filterByMonth,
   monthKey,
   monthsWithRecords,
@@ -29,6 +30,7 @@ export function initOwner({ apiUrl }) {
     busy: false,
     selectedMonth: null,
     monthTouched: false,
+    openUnassigned: new Set(),
   };
 
   const els = {
@@ -163,7 +165,7 @@ export function initOwner({ apiUrl }) {
     const head = document.createElement('div');
     head.className = 'owner-row-head';
     const when = document.createElement('span');
-    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
     const kwh = document.createElement('strong');
     kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
     head.append(when, kwh);
@@ -171,7 +173,9 @@ export function initOwner({ apiUrl }) {
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
-    meta.textContent = `充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+    const end = sessionEndIso(record);
+    const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
+    meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
@@ -209,7 +213,7 @@ export function initOwner({ apiUrl }) {
     const head = document.createElement('div');
     head.className = 'owner-row-head';
     const when = document.createElement('span');
-    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
     const car = state.cars.find((item) => item.id === record.car);
     const title = document.createElement('strong');
     title.textContent = car ? car.name : record.car;
@@ -281,7 +285,7 @@ export function initOwner({ apiUrl }) {
 
     const unassigned = state.records.filter((record) => record.car === 'unassigned');
     els.unassigned.replaceChildren();
-    appendUnassignedRows(els.unassigned, unassigned, makeUnassignedRow);
+    appendUnassignedRows(els.unassigned, unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
     els.unassignedEmpty.hidden = unassigned.length > 0;
     els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配充電樁紀錄。';
 

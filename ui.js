@@ -6,13 +6,19 @@ export function byId(id) {
   return document.getElementById(id);
 }
 
-export function appendUnassignedRows(list, records, makeRow, now = Date.now()) {
+export function appendUnassignedRows(list, records, makeRow, now = Date.now(), openKeys = new Set()) {
   const grouped = groupUnassignedByMonthDay(records, now);
   for (const record of grouped.recent) list.append(makeRow(record));
   for (const month of grouped.months) {
     const li = document.createElement('li');
     li.className = 'unassigned-month';
     const details = document.createElement('details');
+    const monthKey = `month:${month.month}`;
+    details.open = openKeys.has(monthKey);
+    details.addEventListener('toggle', () => {
+      if (details.open) openKeys.add(monthKey);
+      else openKeys.delete(monthKey);
+    });
     const summary = document.createElement('summary');
     const count = month.days.reduce((total, day) => total + day.records.length, 0);
     const [year, monthNumber] = month.month.split('-');
@@ -23,6 +29,12 @@ export function appendUnassignedRows(list, records, makeRow, now = Date.now()) {
       const dayLi = document.createElement('li');
       dayLi.className = 'unassigned-day';
       const dayDetails = document.createElement('details');
+      const dayKey = `day:${day.day}`;
+      dayDetails.open = openKeys.has(dayKey);
+      dayDetails.addEventListener('toggle', () => {
+        if (dayDetails.open) openKeys.add(dayKey);
+        else openKeys.delete(dayKey);
+      });
       const daySummary = document.createElement('summary');
       daySummary.textContent = `${day.day}（${day.records.length}）`;
       const dayList = document.createElement('ul');

@@ -5,6 +5,9 @@ import {
   storageKeys,
   formatHkDate,
   formatHkTime,
+  formatHkTime12,
+  formatHkRange,
+  sessionEndIso,
   formatHkWeekday,
   monthKey,
   isValidRecord,
@@ -64,6 +67,20 @@ const record = (overrides = {}) => ({
   teslaKey: 'din:1786968749',
   source: 'tesla+manual',
   ...overrides,
+});
+
+test('formatHkTime12 and formatHkRange use Hong Kong time with AM/PM', () => {
+  assert.equal(formatHkTime12('2026-11-14T13:05:00.000Z'), '9:05 PM');
+  assert.equal(formatHkTime12('2026-11-14T04:05:00.000Z'), '12:05 PM');
+  assert.equal(formatHkTime12('2026-11-13T16:05:00.000Z'), '12:05 AM');
+  assert.equal(
+    formatHkRange('2026-11-14T13:10:33.000Z', '2026-11-14T18:20:18.000Z'),
+    '2026-11-14 9:10 PM – 2026-11-15 2:20 AM',
+  );
+  assert.equal(
+    sessionEndIso({ teslaStartAt: '2026-11-14T13:10:33.000Z', durationSec: 3600 }),
+    '2026-11-14T14:10:33.000Z',
+  );
 });
 
 test('Hong Kong formatting and month keys ignore the device timezone', () => {

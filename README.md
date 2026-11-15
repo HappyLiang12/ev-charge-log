@@ -33,6 +33,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with kWh, estimated cost, and real delete.
 - Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
+- UI times use 12-hour AM/PM; unassigned rows show both start and end times. CSV keeps 24-hour times.
+- Month and day groups remember their open state after a claim, assign, or ignore, so several sessions can be handled without reopening the groups.
 - The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
 - Model-specific 3D-style SVG car icons for Model 3, iX3, and Vigo. Unknown cars hide the hero instead of showing a generic placeholder.
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
@@ -75,7 +77,7 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 `teslaKey`, `ignoredAt`, `reason`.
 
-- Deleting or ignoring a Tesla-linked record adds its key here so it is not imported again.
+- Deleting or ignoring a Tesla-linked record adds its key here so it is not imported again. Remove the key to allow a later sync to import it again.
 
 ## Billing
 
@@ -234,7 +236,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 110 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, car icon mapping, QR auto-start URLs, and the API envelope. Seven jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 111 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, car icon mapping, QR auto-start URLs, 12-hour Hong Kong time, and the API envelope. Seven jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

@@ -610,17 +610,19 @@ Shown for `?car=<id>`.
   and split, export.
 - Summary cards: current-month session count, total kWh, estimated cost.
   A smaller line shows the peak/off-peak kWh split and the rate month.
-- Recent list: date, weekday, time, kWh, estimated cost, delete button.
-  A record without kWh shows `待配對` and `—` for cost.
+- Recent list: date, weekday, time in 12-hour AM/PM, kWh, estimated cost,
+  delete button. A record without kWh shows `待配對` and `—` for cost.
 - Rate and split: the split line plus the same rate cards as the owner view;
   the latest month is open and older months are collapsed.
-- Unassigned list: Tesla start, kWh, duration, and `認領`. Claiming a session
-  assigns it to this car (or merges a nearby manual pending row) without
-  entering a backdated time. This is the forgotten-start recovery path. The
-  latest 24 hours stay open; older sessions are grouped by Hong Kong month,
-  then by day, and both levels are collapsed.
+- Unassigned list: Tesla start and end time in 12-hour AM/PM, kWh, duration,
+  and `認領`. Claiming a session assigns it to this car (or merges a nearby
+  manual pending row) without entering a backdated time. This is the
+  forgotten-start recovery path. The latest 24 hours stay open; older sessions
+  are grouped by Hong Kong month, then by day, and both levels are collapsed.
+  Open groups are preserved after claim/assign/ignore.
 - Delete confirmation for a Tesla-linked record warns that the 充電樁紀錄
-  will also be ignored.
+  will also be ignored; the owner can remove the key from `Ignored` to allow a
+  later sync to import it again.
 - Month selector and `匯出 CSV`; default month follows the existing behavior.
 - Rate note: `按 CLP <month> 費率估算；實際電費以中電賬單為準`.
 - If no rate exists at or before the month, show `未設定費率` and no cost. If
@@ -638,10 +640,12 @@ Shown for `?owner`.
 - Month selector for the per-car table; default current month.
 - Per-car monthly table: car name, sessions, kWh, non-peak kWh, peak kWh,
   estimated cost. Legacy rows are counted separately and excluded from totals.
-- Unassigned list: Tesla start, kWh, duration, car selector, `分配`, `忽略`.
-  The latest 24 hours stay open; older sessions are grouped by Hong Kong
-  month, then by day, and both levels are collapsed.
-- Pending manual list: car, startAt, `等待充電樁紀錄配對`.
+- Unassigned list: Tesla start and end time in 12-hour AM/PM, kWh, duration,
+  car selector, `分配`, `忽略`. The latest 24 hours stay open; older sessions
+  are grouped by Hong Kong month, then by day, and both levels are collapsed.
+  Open groups are preserved after assign/ignore.
+- Pending manual list: car, startAt in 12-hour AM/PM,
+  `手動開始咗，等待充電樁紀錄同步配對`.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
   source, fetchedAt, manual override. The latest month is shown first; older
   months are collapsed. Read-only; edit in the Sheet.
@@ -753,8 +757,9 @@ times are Asia/Hong_Kong.
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
 - Family coverage: load, start, auto-start from `start=1`, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
-  older months collapsed, assign, ignore, CSV export, and the initial 30-day
-  Tesla import. Family-scoped sync without a manual start returns skipped.
+  older months collapsed, assign, ignore, CSV export, 12-hour times, preserved
+  open groups, and the initial 30-day Tesla import. Family-scoped sync without a
+  manual start returns skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
 
 ### 14.4 Browser smoke
