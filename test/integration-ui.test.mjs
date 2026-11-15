@@ -55,21 +55,7 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   const harness = await createHarness();
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
   try {
-    try {
-      await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
-    } catch (error) {
-      const storage = ui.window.localStorage;
-      const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index));
-      console.error('auto-start-debug', JSON.stringify({
-        href: ui.window.location.href,
-        status: ui.document.getElementById('familyStatus').textContent,
-        toast: ui.document.getElementById('familyToast').textContent,
-        familyHidden: ui.document.getElementById('familyView').hidden,
-        setupHidden: ui.document.getElementById('setupView').hidden,
-        storage: Object.fromEntries(keys.map((key) => [key, storage.getItem(key)])),
-      }));
-      throw error;
-    }
+    await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
     const [record] = harness.env.call('readLog_');
     assert.equal(record.car, 'model3');
     assert.equal(record.source, 'manual');
