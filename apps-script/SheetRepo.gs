@@ -99,6 +99,15 @@ function monthValue_(value) {
   return String(value || '').trim();
 }
 
+function hmValue_(value) {
+  if (isDateValue_(value)) {
+    var shifted = new Date(value.getTime() + HK_OFFSET_MS_);
+    return pad2_(shifted.getUTCHours()) + ':' + pad2_(shifted.getUTCMinutes());
+  }
+  var text = String(value || '').trim();
+  return parseHm_(text) === null ? '' : text;
+}
+
 function normalizeLogRow_(row) {
   var car = row.car ? String(row.car).trim() : '';
   var source = row.source ? String(row.source).trim() : (car ? 'manual' : 'legacy');
@@ -214,10 +223,8 @@ function normalizeRateRow_(row) {
   var basicPeak = numberOrNull_(row.basicPeak);
   var fuelAdjustment = numberOrNull_(row.fuelAdjustment);
   if (basicOffPeak === null || basicPeak === null || fuelAdjustment === null) return null;
-  var peakStart = String(row.peakStart || DEFAULT_PEAK_START_).trim();
-  var peakEnd = String(row.peakEnd || DEFAULT_PEAK_END_).trim();
-  if (parseHm_(peakStart) === null) peakStart = DEFAULT_PEAK_START_;
-  if (parseHm_(peakEnd) === null) peakEnd = DEFAULT_PEAK_END_;
+  var peakStart = hmValue_(row.peakStart) || DEFAULT_PEAK_START_;
+  var peakEnd = hmValue_(row.peakEnd) || DEFAULT_PEAK_END_;
   return {
     month: month,
     basicOffPeak: basicOffPeak,
@@ -227,7 +234,7 @@ function normalizeRateRow_(row) {
     peakStart: peakStart,
     peakEnd: peakEnd,
     sourceUrl: String(row.sourceUrl || ''),
-    fetchedAt: String(row.fetchedAt || ''),
+    fetchedAt: isoValue_(row.fetchedAt) || String(row.fetchedAt || '').trim(),
     manualOverride: String(row.manualOverride || '').toUpperCase() === 'TRUE',
   };
 }
@@ -271,34 +278,53 @@ function upsertRates_(rates) {
   var header = values[0].map(function (value) { return String(value || '').trim(); });
   var monthCol = header.indexOf('month');
   var manualCol = header.indexOf('manualOverride');
+  var groups = {};
+  for (var rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    var rowMonth = monthValue_(values[rowIndex][monthCol]);
+    if (!validMonth_(rowMonth)) continue;
+    if (!groups[rowMonth]) groups[rowMonth] = [];
+    groups[rowMonth].push(rowIndex);
+  }
+  var toDelete = {};
   var updated = 0;
   for (var r = 0; r < rates.length; r += 1) {
     var rate = rates[r];
     if (!rate || !validMonth_(rate.month)) continue;
-    var found = -1;
-    var manual = false;
-    for (var i = 1; i < values.length; i += 1) {
-      if (monthValue_(values[i][monthCol]) === rate.month) {
-        found = i;
-        manual = String(values[i][manualCol] || '').toUpperCase() === 'TRUE';
-        break;
+    var indices = groups[rate.month] || [];
+    var manualIndices = indices.filter(function (index) {
+      return String(values[index][manualCol] || '').toUpperCase() === 'TRUE';
+    });
+    var target = -1;
+    if (manualIndices.length) {
+      target = manualIndices[manualIndices.length - 1];
+      for (var m = 0; m < indices.length; m += 1) {
+        if (indices[m] !== target) toDelete[indices[m]] = true;
       }
+    } else if (indices.length) {
+      target = indices[0];
+      for (var n = 1; n < indices.length; n += 1) toDelete[indices[n]] = true;
     }
-    if (manual) continue;
+    if (target < 0) {
+      var appended = header.map(function (column) {
+        return RATES_COLUMNS.indexOf(column) !== -1 ? rateValue_(rate, column) : '';
+      });
+      sheet.appendRow(appended);
+      values = sheet.getDataRange().getValues();
+      groups[rate.month] = [values.length - 1];
+      updated += 1;
+      continue;
+    }
+    if (manualIndices.length) continue;
     var row = header.map(function (column, index) {
       if (RATES_COLUMNS.indexOf(column) !== -1) return rateValue_(rate, column);
-      if (found < 0) return '';
-      var existing = values[found][index];
+      var existing = values[target][index];
       return existing === undefined || existing === null ? '' : existing;
     });
-    if (found >= 0) {
-      sheet.getRange(found + 1, 1, 1, row.length).setValues([row]);
-    } else {
-      sheet.appendRow(row);
-      values = sheet.getDataRange().getValues();
-    }
+    sheet.getRange(target + 1, 1, 1, row.length).setValues([row]);
     updated += 1;
   }
+  var deleteRows = Object.keys(toDelete).map(Number).sort(function (a, b) { return b - a; });
+  for (var d = 0; d < deleteRows.length; d += 1) sheet.deleteRow(deleteRows[d] + 1);
   return updated;
 }
 
