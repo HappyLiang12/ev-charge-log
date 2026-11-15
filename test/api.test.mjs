@@ -71,15 +71,15 @@ test('fetchFamilyData sends the car query and parses the payload', async () => {
   assert.equal(data.rates[0].month, '2026-11');
 });
 
-test('fetchOwnerData sends the owner query and parses all cars', async () => {
+test('fetchOwnerData sends the owner mode flag and parses all cars', async () => {
   const captured = {};
-  const data = await fetchOwnerData(base, 'secret-key', captureFetch({
+  const data = await fetchOwnerData(base, captureFetch({
     ok: true,
     cars: [{ id: 'model3', name: 'Model 3', active: true }],
     records: [record],
     rates: [rate],
   }, captured));
-  assert.match(captured.url, /^https:\/\/example\.test\/api\?owner=secret-key$/);
+  assert.match(captured.url, /^https:\/\/example\.test\/api\?owner=1$/);
   assert.equal(data.cars.length, 1);
   assert.equal(data.records[0].car, 'model3');
 });
@@ -98,13 +98,10 @@ test('postRecord sends car, startAt, and Hong Kong date/time as text/plain', asy
   });
 });
 
-test('deleteRecord supports family and owner authorization', async () => {
+test('deleteRecord sends the family car scope', async () => {
   const family = {};
   await deleteRecord(base, 'rec-1', { car: 'model3' }, captureFetch({ ok: true }, family));
   assert.deepEqual(JSON.parse(family.init.body), { action: 'delete', id: 'rec-1', car: 'model3' });
-  const owner = {};
-  await deleteRecord(base, 'rec-1', { ownerKey: 'secret' }, captureFetch({ ok: true }, owner));
-  assert.deepEqual(JSON.parse(owner.init.body), { action: 'delete', id: 'rec-1', ownerKey: 'secret' });
 });
 
 test('syncTesla, assignSession, ignoreSession, refreshRates, and claimSession send their actions', async () => {
@@ -113,20 +110,20 @@ test('syncTesla, assignSession, ignoreSession, refreshRates, and claimSession se
   assert.deepEqual(JSON.parse(sync.init.body), { action: 'sync', car: 'model3' });
 
   const assign = {};
-  await assignSession(base, 'secret', 'rec-1', 'leaf', captureFetch({ ok: true }, assign));
-  assert.deepEqual(JSON.parse(assign.init.body), { action: 'assign', ownerKey: 'secret', id: 'rec-1', car: 'leaf' });
+  await assignSession(base, 'rec-1', 'leaf', captureFetch({ ok: true }, assign));
+  assert.deepEqual(JSON.parse(assign.init.body), { action: 'assign', id: 'rec-1', car: 'leaf' });
 
   const ignore = {};
-  await ignoreSession(base, 'secret', 'rec-1', captureFetch({ ok: true }, ignore));
-  assert.deepEqual(JSON.parse(ignore.init.body), { action: 'ignore', ownerKey: 'secret', id: 'rec-1' });
+  await ignoreSession(base, 'rec-1', captureFetch({ ok: true }, ignore));
+  assert.deepEqual(JSON.parse(ignore.init.body), { action: 'ignore', id: 'rec-1' });
 
   const claim = {};
   await claimSession(base, 'leaf', 'unassigned-1', captureFetch({ ok: true }, claim));
   assert.deepEqual(JSON.parse(claim.init.body), { action: 'claim', car: 'leaf', id: 'unassigned-1' });
 
   const rates = {};
-  await refreshRates(base, 'secret', captureFetch({ ok: true }, rates));
-  assert.deepEqual(JSON.parse(rates.init.body), { action: 'refreshRates', ownerKey: 'secret' });
+  await refreshRates(base, captureFetch({ ok: true }, rates));
+  assert.deepEqual(JSON.parse(rates.init.body), { action: 'refreshRates' });
 });
 
 test('apiGet and apiPost reject HTTP and API-level errors', async () => {

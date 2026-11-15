@@ -16,9 +16,9 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 - Each car has its own family URL: `https://happyliang12.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet.
-- The owner opens the owner URL (`?owner=<owner-key>`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
+- The owner opens the owner URL (`?owner`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign or ignore unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
-- The family view never receives Tesla credentials or the owner key. The owner view receives the owner key from its URL and keeps it in memory.
+- The family view never receives Tesla credentials. The owner view has no key or login; its URL is a mode flag.
 
 ## Features
 
@@ -110,7 +110,6 @@ In Apps Script, Project Settings -> Script Properties:
 | `TESLA_REFRESH_TOKEN` | Refresh token from the local OAuth helper |
 | `TESLA_BASE_URL` | `https://fleet-api.prd.na.vn.cloud.tesla.com` (optional; this is the default) |
 | `TESLA_SITE_ID` | Observed Wall Connector energy site ID; optional, discovered automatically when omitted |
-| `OWNER_KEY` | 48 lowercase hex characters; generate with `openssl rand -hex 24` |
 | `MATCH_WINDOW_MINUTES` | `30` |
 | `SYNC_FROM` | Leave unset; only set for an intentional backfill |
 | `SYNC_CURSOR` | Internal; do not set manually |
@@ -147,16 +146,16 @@ window.APP_CONFIG = {
 };
 ```
 
-Deploy the static files to GitHub Pages. The owner key is never in `config.js`.
+Deploy the static files to GitHub Pages. `config.js` holds only the Apps Script URL and the Sheet URL.
 
 ### 5. Cars, rates, and the owner URL
 
 1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
-2. Open the owner URL on the deployed site: `https://happyliang12.github.io/ev-charge-log/?owner=<OWNER_KEY>`.
+2. Open the owner URL on the deployed site: `https://happyliang12.github.io/ev-charge-log/?owner=1`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
 4. Run one owner `更新 Tesla` and confirm the Wall Connector site is discovered.
 5. Copy each family link from the owner view and send it to that car's driver.
-6. Keep the owner URL private. It is a capability, not a login.
+6. Keep the owner URL private. The owner mode has no key or login; anyone with the URL can manage.
 
 ## Local development
 
@@ -168,7 +167,7 @@ PORT=8787 node test/dev-server.mjs
 Open:
 
 - Family: `http://127.0.0.1:8787/?car=model3`
-- Owner: `http://127.0.0.1:8787/?owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+- Owner: `http://127.0.0.1:8787/?owner=1`
 
 The mock server seeds one matched session, one unassigned session, and one pending manual session.
 
@@ -179,31 +178,32 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 `GET`:
 
 - `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
-- `?owner=<key>` returns `{ ok, cars, records, rates, serverTime }` for the owner.
+- `?owner` returns `{ ok, cars, records, rates, serverTime }` for the owner.
 
 `POST` with a `text/plain` JSON body:
 
 - `{ action: 'append', id, car, startAt, date, time }`
-- `{ action: 'delete', id, car }` or `{ action: 'delete', id, ownerKey }`
-- `{ action: 'sync', car }` or `{ action: 'sync', ownerKey }`
-- `{ action: 'assign', ownerKey, id, car }`
+- `{ action: 'delete', id, car }`
+- `{ action: 'sync' }` (all cars) or `{ action: 'sync', car }`
+- `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
-- `{ action: 'ignore', ownerKey, id }`
-- `{ action: 'refreshRates', ownerKey }`
+- `{ action: 'ignore', id }`
+- `{ action: 'refreshRates' }`
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
 
 ## Security
 
-- No accounts and no secrets in the frontend. The Apps Script URL and owner key are capability URLs.
+- No accounts and no secrets in the frontend. The Apps Script URL and each family `?car=` URL are capabilities.
 - Each family `?car=` URL is a capability: anyone who has it can append and delete that car's records and claim unassigned Tesla sessions to that car. Share it only with that car's driver.
+- The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign or ignore sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
 - The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The family view does not link to it. Set General access to Restricted if you want it private.
-- Owner actions require `OWNER_KEY`; family actions require a valid car ID.
-- The owner key is kept in memory from the URL; it is not written to localStorage, logs, CSV, or family links.
+- Family actions require a valid car ID; owner actions require only the Apps Script Web App URL.
 - `index.html` uses `<meta name="referrer" content="no-referrer">`; owner external links use `rel="noreferrer"`.
-- A leaked owner key allows owner actions. Rotate `OWNER_KEY` and resend the new owner URL; family URLs keep working.
+- A leaked family URL allows that car's append/delete and claims. Remove the car from the `Cars` tab to stop the old link; existing records stay in the `Log`.
 - A leaked Tesla secret or refresh token must be rotated. Rotate the client secret in the Tesla developer portal and replace `TESLA_CLIENT_SECRET`; revoke the app grant if a refresh token leaked.
+- If the owner URL is exposed, create a new Apps Script deployment URL and update `config.js`; every family link keeps working after the frontend redeploy.
 
 ## Known limits
 

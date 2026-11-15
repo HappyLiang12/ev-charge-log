@@ -32,7 +32,6 @@ function setup({ sheets = {}, props = {}, fetch } = {}) {
   const env = createAppsScriptEnv({
     sheets,
     props: {
-      OWNER_KEY: 'owner-secret',
       MATCH_WINDOW_MINUTES: '30',
       TESLA_SITE_ID: 'site-1',
       TESLA_CLIENT_ID: 'id',
@@ -81,16 +80,14 @@ test('doGet returns only the requested car records and the owner returns all rec
   assert.equal(family.rates.length, 1);
   assert.ok(family.serverTime);
 
-  const owner = receive(env, { owner: 'owner-secret' });
+  const owner = receive(env, { owner: '1' });
   assert.equal(owner.ok, true);
   assert.equal(owner.cars.length, 2);
   assert.equal(owner.records.length, 4);
+  assert.equal(receive(env, { owner: '' }).ok, true);
   assert.equal(receive(env, { car: 'missing' }).ok, false);
   assert.match(receive(env, { car: 'missing' }).error, /Unknown car: missing/);
   assert.match(receive(env, { car: 'BAD CAR' }).error, /Invalid car id/);
-  const badOwner = receive(env, { owner: 'wrong' });
-  assert.equal(badOwner.ok, false);
-  assert.doesNotMatch(badOwner.error, /owner-secret/);
 });
 
 test('doGet and doPost both serialize on the script lock', () => {
@@ -207,7 +204,6 @@ test('owner assign merges a nearby pending manual row', () => {
   });
   const result = send(env, {
     action: 'assign',
-    ownerKey: 'owner-secret',
     id: 'unassigned-1',
     car: 'leaf',
   });
@@ -311,7 +307,7 @@ test('owner ignore requires a Tesla key and removes the record', () => {
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
     },
   });
-  const result = send(env, { action: 'ignore', ownerKey: 'owner-secret', id: 'unassigned-1' });
+  const result = send(env, { action: 'ignore', id: 'unassigned-1' });
   assert.equal(result.ok, true);
   assert.equal(result.ignored, true);
   assert.deepEqual(plain(env.call('readIgnored_')), ['din:a']);
@@ -351,7 +347,7 @@ test('sync matches a manual row, updates the cursor, and exposes the full result
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
-  const result = send(env, { action: 'sync', ownerKey: 'owner-secret' });
+  const result = send(env, { action: 'sync' });
   assert.equal(result.ok, true);
   assert.equal(result.matched, 1);
   assert.equal(result.unassigned, 0);
@@ -396,7 +392,7 @@ test('sync reconciles an existing unassigned session into the matching manual ro
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
-  const result = send(env, { action: 'sync', ownerKey: 'owner-secret' });
+  const result = send(env, { action: 'sync' });
   assert.equal(result.ok, true);
   assert.equal(result.reconciled, 1);
   assert.equal(result.matched, 0);
@@ -462,8 +458,7 @@ test('owner refreshRates updates the Rates tab and is owner-only', () => {
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
-  assert.equal(send(env, { action: 'refreshRates', ownerKey: 'wrong' }).ok, false);
-  const result = send(env, { action: 'refreshRates', ownerKey: 'owner-secret' });
+  const result = send(env, { action: 'refreshRates' });
   assert.equal(result.ok, true);
   assert.equal(result.updated, 11);
   assert.equal(plain(env.call('readRates_')).length, 11);
