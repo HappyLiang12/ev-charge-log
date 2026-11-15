@@ -64,6 +64,20 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         deleteProperty: (key) => { delete scriptProps[key]; },
       }),
     },
+    Utilities: {
+      formatDate: (date, timeZone, format) => {
+        if (format !== 'HH:mm') return '';
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).formatToParts(date);
+        const hour = parts.find((part) => part.type === 'hour').value;
+        const minute = parts.find((part) => part.type === 'minute').value;
+        return `${hour}:${minute}`;
+      },
+    },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     UrlFetchApp: {
       fetch: fetchHandler || (() => { throw new Error('Unexpected UrlFetchApp.fetch'); }),
