@@ -24,7 +24,8 @@ const PROBE_DAYS = clampInt(process.env.TESLA_PROBE_DAYS, 90, 1, 3650);
 const TIME_ZONE = process.env.TESLA_PROBE_TIME_ZONE || 'Asia/Hong_Kong';
 const RAW = process.env.TESLA_PROBE_RAW === '1';
 const INSPECT_IDS = process.env.TESLA_PROBE_IDS === '1';
-const DOMAIN = process.env.TESLA_DOMAIN || 'happyliang12.github.io';
+const DOMAIN = process.env.TESLA_DOMAIN || '';
+const DOMAIN_DISPLAY = DOMAIN || '<your-user>.github.io';
 const CLIENT_ID = process.env.TESLA_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.TESLA_CLIENT_SECRET || '';
 
@@ -208,6 +209,7 @@ async function getPartnerToken() {
 
 async function registerPartner() {
   validateCredentials();
+  if (!DOMAIN) throw new Error('Set TESLA_DOMAIN to your public app origin host before --register');
   const keyUrl = `https://${DOMAIN}/.well-known/appspecific/com.tesla.3p.public-key.pem`;
 
   console.log('Tesla Fleet API partner registration');
@@ -495,11 +497,11 @@ function setupText() {
 Tesla side setup:
 1. Sign in at https://developer.tesla.com/dashboard and enable MFA.
 2. Create a Fleet API application as "Just for me".
-3. Allowed origins: ${redirect.origin} and https://${DOMAIN}
+3. Allowed origins: ${redirect.origin} and https://${DOMAIN_DISPLAY}
 4. Allowed redirect URI: ${REDIRECT_URI}
 5. Grant type: Authorization Code.
 6. Scopes: Energy Product Information (energy_device_data).
-7. Host the public key at https://${DOMAIN}/.well-known/appspecific/com.tesla.3p.public-key.pem
+7. Host the public key at https://${DOMAIN_DISPLAY}/.well-known/appspecific/com.tesla.3p.public-key.pem
 8. Add a payment method and a small billing limit; with no payment method the limit is 0.
 9. After approval, copy the Client ID and Client Secret.
 
@@ -507,6 +509,7 @@ Local setup:
 Create tools/.env.tesla.local with:
 TESLA_CLIENT_ID=your_client_id
 TESLA_CLIENT_SECRET=your_client_secret
+TESLA_DOMAIN=your-user.github.io
 
 Do not paste the secret into chat and do not commit that file.`;
 }
@@ -526,7 +529,7 @@ history. It never writes to the Sheet, and it saves tokens locally only when
 Optional environment variables:
   TESLA_REDIRECT_URI       default ${DEFAULT_REDIRECT_URI}
   TESLA_FLEET_BASE_URL     default ${DEFAULT_BASE_URL}
-  TESLA_DOMAIN             default happyliang12.github.io
+  TESLA_DOMAIN             public app origin host (required for --register; e.g. your-user.github.io)
   TESLA_PROBE_DAYS         default 90
   TESLA_PROBE_TIME_ZONE    default Asia/Hong_Kong
   TESLA_PROBE_RAW=1        print sanitized raw JSON responses

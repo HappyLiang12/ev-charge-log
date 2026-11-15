@@ -2,7 +2,9 @@
 
 Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/off-peak cost estimates. A static app on GitHub Pages; a Google Apps Script Web App owns the Sheet, Tesla OAuth, and CLP rate fetch.
 
-Deployment target (the new UI is not live until the deployment step): https://happyliang12.github.io/ev-charge-log/
+This repository is the application code. The deployed instance is for private family use; there is no public demo deployment. Replace `<your-user>` below with your own GitHub Pages account.
+
+Deployment target (not live until the deployment step): `https://<your-user>.github.io/ev-charge-log/`
 
 Deployment order: do not merge or publish the static frontend before the Apps Script backend is cut over. The live frontend currently points at the legacy deployment; deploy the backend first, then merge/publish the frontend.
 
@@ -14,7 +16,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 ## How it works
 
-- Each car has its own family URL: `https://happyliang12.github.io/ev-charge-log/?car=<car-id>`.
+- Each car has its own family URL: `https://<your-user>.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet.
 - The owner opens the owner URL (`?owner`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign or ignore unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
@@ -120,7 +122,7 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 
 Tesla API access is read-only for energy data. The app uses the official Fleet API with scopes `openid offline_access energy_device_data`.
 
-1. The Tesla developer app needs both allowed origins: `https://happyliang12.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
+1. The Tesla developer app needs both allowed origins: `https://<your-user>.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
 2. The app also needs its EC public key hosted at the app origin's `.well-known/appspecific/com.tesla.3p.public-key.pem` path, and partner registration completed. The probe's setup text in `tools/tesla-probe.mjs` lists the exact commands.
 3. On a machine with the repository and `tools/.env.tesla.local` (mode 600) containing `TESLA_CLIENT_ID` and `TESLA_CLIENT_SECRET`, run:
 
@@ -151,7 +153,7 @@ Deploy the static files to GitHub Pages. `config.js` holds only the Apps Script 
 ### 5. Cars, rates, and the owner URL
 
 1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
-2. Open the owner URL on the deployed site: `https://happyliang12.github.io/ev-charge-log/?owner=1`.
+2. Open the owner URL on the deployed site: `https://<your-user>.github.io/ev-charge-log/?owner=1`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
 4. Run one owner `更新 Tesla` and confirm the Wall Connector site is discovered.
 5. Copy each family link from the owner view and send it to that car's driver.
