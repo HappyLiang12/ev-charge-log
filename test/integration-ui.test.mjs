@@ -201,11 +201,13 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
     await waitFor(() => ui.document.querySelectorAll('#ownerRates .owner-card').length === 11);
 
     const firstSelect = ui.document.querySelector('#ownerPending select');
+    await waitFor(() => !firstSelect.disabled);
     firstSelect.value = 'leaf';
     ui.document.querySelectorAll('#ownerPending li button')[0].click();
     await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 1);
     await waitFor(() => harness.env.call('readLog_').some((record) => record.car === 'leaf'));
 
+    await waitFor(() => !ui.document.querySelectorAll('#ownerPending li button')[1].disabled);
     ui.document.querySelectorAll('#ownerPending li button')[1].click();
     await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 0);
     assert.equal(harness.env.call('readIgnored_').length, 1);
