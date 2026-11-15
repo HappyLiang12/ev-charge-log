@@ -254,6 +254,45 @@ function teslaRecordId_(session) {
   return 'tesla-' + Math.floor(Date.parse(session.startAt) / 1000) + '-' + tinyHash_(session.teslaKey);
 }
 
+function normalizeChargerLive_(payload) {
+  var root = payload && payload.response ? payload.response : (payload || {});
+  var connectors = root.wall_connectors || root.wallConnectors || [];
+  var boxes = root.wall_boxes || root.wallBoxes || [];
+  var list = connectors.length ? connectors : boxes;
+  var item = list[0] || {};
+  var powerW = numberOrNull_(item.wall_connector_power);
+  if (powerW === null) powerW = numberOrNull_(item.charger_power_watts);
+  if (powerW === null) powerW = numberOrNull_(item.charger_power);
+  if (powerW === null) powerW = numberOrNull_(item.power);
+  var energyWh = numberOrNull_(item.session_energy_wh);
+  if (energyWh === null) energyWh = numberOrNull_(item.charge_energy_added_wh);
+  if (energyWh === null) energyWh = numberOrNull_(item.energy_added_wh);
+  if (energyWh === null) energyWh = numberOrNull_(item.wall_connector_energy_wh);
+  if (energyWh === null) energyWh = numberOrNull_(item.energy_wh);
+  var state = item.wall_connector_state;
+  if (state === undefined || state === null) state = item.charger_state;
+  if (state === undefined || state === null) state = '';
+  var power = powerW === null ? 0 : Math.max(0, powerW);
+  return {
+    charging: power > 50 || /charg/i.test(String(state)),
+    powerW: power,
+    energyWh: energyWh === null ? null : Math.max(0, energyWh),
+    state: String(state),
+    available: list.length > 0,
+    keys: Object.keys(item),
+    sampledAt: new Date().toISOString(),
+  };
+}
+
+function chargerLiveStatus_() {
+  var siteId = discoverSiteId_();
+  var payload = teslaGet_(
+    '/api/1/energy_sites/' + encodeURIComponent(siteId) + '/charger_live_status',
+    {},
+  );
+  return normalizeChargerLive_(payload);
+}
+
 function syncTesla_(allowInitialWindow) {
   var props = PropertiesService.getScriptProperties();
   var records = readLog_();

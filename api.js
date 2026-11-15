@@ -1,6 +1,7 @@
 import {
   formatHkDate,
   formatHkTime,
+  parseChargerStatus,
   parseFamilyPayload,
   parseOwnerPayload,
 } from './logic.js';
@@ -51,6 +52,10 @@ export async function fetchFamilyData(apiUrl, car, fetchImpl = fetch) {
 
 export async function fetchOwnerData(apiUrl, fetchImpl = fetch) {
   return parseOwnerPayload(await apiGet(apiUrl, { owner: '1' }, fetchImpl));
+}
+
+export async function fetchChargerStatus(apiUrl, fetchImpl = fetch) {
+  return parseChargerStatus(await apiGet(apiUrl, { status: '1' }, fetchImpl));
 }
 
 export async function postRecord(apiUrl, record, car, fetchImpl = fetch) {

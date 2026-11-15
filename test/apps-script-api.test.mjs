@@ -66,6 +66,36 @@ test('setup creates all four tabs and reports counts', () => {
   }
 });
 
+test('charger status returns live power and charging state', () => {
+  const env = setup({
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/charger_live_status')) {
+        return response(200, JSON.stringify({
+          response: {
+            wall_connectors: [{
+              wall_connector_state: 1,
+              wall_connector_power: 7200,
+              vin: '5YJ3E111111111111',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = receive(env, { status: '1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.charging, true);
+  assert.equal(result.powerW, 7200);
+  assert.equal(result.available, true);
+  assert.equal(result.energyWh, null);
+  assert.ok(result.keys.includes('wall_connector_power'));
+  assert.equal(result.keys.includes('vin'), true);
+});
+
 test('doGet returns only the requested car records and the owner returns all records', () => {
   const env = setup({
     sheets: {
