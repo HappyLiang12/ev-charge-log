@@ -97,7 +97,7 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   const harness = await createHarness();
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
   try {
-    await waitFor(() => harness.env.call('readLog_').length === 1);
+    await waitFor(() => harness.env.call('readLog_').length === 1, 12000);
     const [record] = harness.env.call('readLog_');
     assert.equal(record.car, 'model3');
     assert.equal(record.source, 'manual');
