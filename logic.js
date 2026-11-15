@@ -113,6 +113,19 @@ export function normalizeRate(value) {
   };
 }
 
+export function sourceUrls(value) {
+  const seen = new Set();
+  return String(value || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter((url) => /^https?:\/\//i.test(url))
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+}
+
 export function normalizeRates(list) {
   return Array.isArray(list) ? list.map(normalizeRate).filter(Boolean) : [];
 }
