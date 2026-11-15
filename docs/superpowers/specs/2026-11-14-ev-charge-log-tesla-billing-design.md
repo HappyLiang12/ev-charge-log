@@ -616,12 +616,17 @@ Shown for `?car=<id>`.
 - Header: `EV 充電紀錄`, car name, status chip, and no Sheet link.
 - Auto-start URL: `?car=<id>&start=1` records a start after the initial load
   without pressing the button, then removes the `start` parameter from history.
+  It does not record a second start while a manual start is pending.
 - Primary action: `⚡ 開始充電`, full width. It records the current time for
-  this car and shows a toast.
+  this car and shows a toast. While a manual start is pending (kWh null), the
+  button is disabled and reads `已記錄開始時間`; it re-enables when the record
+  is matched or deleted.
 - Secondary action: `更新充電樁`. It calls `sync`, shows a spinner, and
   reports `已配對 X 個 session`.
 - After the initial record load, the family view runs one sync automatically
-  when online. The button allows a manual retry. There is no polling.
+  when online. The button allows a manual retry. There is no polling. A page
+  refresh after a charge ends syncs and replaces `待配對` with the matched
+  session.
 - Section order: monthly summary cards, unassigned list, recent list, rate
   and split, export.
 - Summary cards: current-month session count, total kWh, estimated cost.
@@ -778,7 +783,7 @@ times are Asia/Hong_Kong.
 ### 14.3 UI integration
 
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
-- Family coverage: load, start, auto-start from `start=1`, sync a mocked Tesla session, delete, and claim an unassigned session.
+- Family coverage: load, start, auto-start from `start=1`, refusing a duplicate start while pending, re-enabling the button after match, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
   older months collapsed, one combined pending list, live charging card/estimate,
   assign, ignore, CSV export, 12-hour times, preserved open groups, and the

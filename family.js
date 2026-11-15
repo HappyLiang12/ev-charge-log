@@ -135,6 +135,12 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     };
   }
 
+  function pendingStartRecord(records) {
+    return records.find((record) => (
+      record.car === carId && record.source === 'manual' && record.kWh === null && !record.teslaKey
+    )) || null;
+  }
+
   function makeRow(record) {
     const li = document.createElement('li');
     const main = document.createElement('span');
@@ -224,10 +230,15 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
             ? '未同步'
             : '已連接';
     setStatus(els.status, status);
+    const records = mergeRecords(state.server, state.pending);
+    const pendingStart = pendingStartRecord(records);
     setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
+    if (pendingStart && !state.starting) {
+      els.startBtn.disabled = true;
+      els.startBtn.textContent = '已記錄開始時間';
+    }
     setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新充電樁');
 
-    const records = mergeRecords(state.server, state.pending);
     const current = monthKey(new Date().toISOString());
     const summary = summarizeRecords(records, state.rates, current);
     els.kwh.textContent = summary.matched > 0 ? summary.kWh.toFixed(1) : '0';
@@ -378,6 +389,10 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     if (state.starting) return;
     const startAt = new Date().toISOString();
     const records = mergeRecords(state.server, state.pending);
+    if (pendingStartRecord(records)) {
+      showToast(els.toast, '已經記錄咗開始時間，完成配對後再開始下一次。');
+      return;
+    }
     if (isRecentDuplicate(records[0]?.startAt, Date.now())) {
       showToast(els.toast, '已經記錄咗，請稍等 2 秒再試。');
       return;
