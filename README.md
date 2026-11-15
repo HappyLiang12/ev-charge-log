@@ -6,7 +6,7 @@ This repository is the application code. The deployed instance is for private fa
 
 Deployment target (not live until the deployment step): `https://<your-user>.github.io/ev-charge-log/`
 
-Deployment order: do not merge or publish the static frontend before the Apps Script backend is cut over. The live frontend currently points at the legacy deployment; deploy the backend first, then merge/publish the frontend.
+Deployment order: cut over the Apps Script backend before publishing the static frontend. Deploy the backend first, then merge/publish the frontend.
 
 ![Family view](docs/screenshot-family.png)
 
