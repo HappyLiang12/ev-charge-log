@@ -60,6 +60,14 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);
     assert.equal(ui.document.getElementById('syncBtn').textContent, '更新充電樁');
     assert.match(ui.document.querySelector('#familyView h2').textContent, /充電樁紀錄/);
+    assert.match(ui.document.getElementById('familyCarIcon').src, /assets\/cars\/model3\.svg$/);
+    assert.equal(ui.document.getElementById('familyCarHero').hidden, false);
+    await waitFor(() => ui.document.querySelectorAll('#familyRates .owner-card').length === 1);
+    assert.deepEqual(
+      Array.from(ui.document.querySelectorAll('#familyView main > section h2')).map((h) => h.textContent),
+      ['未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
+    );
+    assert.equal(ui.document.querySelectorAll('#familyRates .owner-card a').length, 2);
 
     ui.document.getElementById('startBtn').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 1);

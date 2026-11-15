@@ -4,10 +4,10 @@ import {
   filterByMonth,
   monthKey,
   monthsWithRecords,
-  sourceUrls,
   summarizeRecords,
   toCsv,
 } from './logic.js';
+import { formatStamp, renderRateCards } from './rate-view.js';
 import {
   fetchOwnerData,
   syncTesla,
@@ -67,12 +67,6 @@ export function initOwner({ apiUrl }) {
     return p;
   }
 
-  function formatStamp(value) {
-    return value && !Number.isNaN(Date.parse(value))
-      ? `${formatHkDate(value)} ${formatHkTime(value)}`
-      : '未記錄';
-  }
-
   function makeCarCard(car, rows) {
     const summary = summarizeRecords(rows, state.rates, 'all');
     const card = document.createElement('div');
@@ -92,51 +86,6 @@ export function initOwner({ apiUrl }) {
     card.append(textRow('非高峰 / 高峰', `${summary.offPeakKWh.toFixed(1)} / ${summary.peakKWh.toFixed(1)} kWh`));
     if (summary.pending > 0) card.append(textRow('待配對', String(summary.pending)));
     if (summary.missingRate > 0) card.append(textRow('缺少費率', `${summary.missingRate} 筆`));
-    return card;
-  }
-
-  function makeRateCard(rate) {
-    const card = document.createElement('div');
-    card.className = 'owner-card';
-    const head = document.createElement('div');
-    head.className = 'owner-card-head';
-    const title = document.createElement('span');
-    title.className = 'owner-card-title';
-    title.textContent = rate.month;
-    const badge = document.createElement('span');
-    badge.className = 'owner-card-total';
-    badge.textContent = rate.manualOverride ? '手動' : '自動';
-    head.append(title, badge);
-    card.append(head);
-    const rebate = Number(rate.rebate) || 0;
-    const off = (Number(rate.basicOffPeak) + Number(rate.fuelAdjustment) - rebate) / 100;
-    const peak = (Number(rate.basicPeak) + Number(rate.fuelAdjustment) - rebate) / 100;
-    card.append(textRow('非高峰', `$${off.toFixed(3)}/kWh`));
-    card.append(textRow('高峰', `$${peak.toFixed(3)}/kWh`));
-    card.append(textRow('燃料調整 / 回贈', `${Number(rate.fuelAdjustment).toFixed(1)} / ${rebate.toFixed(1)} 港仙`));
-    card.append(textRow('高峰時段', `${rate.peakStart}–${rate.peakEnd}`));
-    const links = rate.manualOverride ? [] : sourceUrls(rate.sourceUrl);
-    if (links.length) {
-      const source = document.createElement('div');
-      source.className = 'owner-card-row';
-      const label = document.createElement('span');
-      label.textContent = '來源';
-      const value = document.createElement('strong');
-      for (let i = 0; i < links.length; i += 1) {
-        if (i) value.append(document.createTextNode(' · '));
-        const link = document.createElement('a');
-        link.href = links[i];
-        link.target = '_blank';
-        link.rel = 'noreferrer';
-        link.textContent = i === 0 ? 'CLP 燃料調整費' : i === 1 ? 'CLP EV 價目' : `來源 ${i + 1}`;
-        value.append(link);
-      }
-      source.append(label, value);
-      card.append(source);
-    } else {
-      card.append(textRow('來源', rate.manualOverride ? '手動設定' : 'CLP 官方'));
-    }
-    card.append(textRow('更新', formatStamp(rate.fetchedAt)));
     return card;
   }
 
@@ -303,24 +252,8 @@ export function initOwner({ apiUrl }) {
     els.pendingEmpty.textContent = '所有月份都冇待配對記錄。';
 
     els.rates.replaceChildren();
-    const sortedRates = state.rates.slice().sort((a, b) => b.month.localeCompare(a.month));
-    if (sortedRates.length === 0) {
-      els.rates.append(emptyLabel('未有費率；請按「更新費率」。'));
-    } else {
-      els.rates.append(makeRateCard(sortedRates[0]));
-      if (sortedRates.length > 1) {
-        const details = document.createElement('details');
-        details.className = 'rate-more';
-        const summary = document.createElement('summary');
-        summary.textContent = `其他月份（${sortedRates.length - 1}）`;
-        const list = document.createElement('div');
-        list.className = 'rate-more-list';
-        for (const rate of sortedRates.slice(1)) list.append(makeRateCard(rate));
-        details.append(summary, list);
-        els.rates.append(details);
-      }
-    }
-    const latest = sortedRates[0];
+    renderRateCards(els.rates, state.rates, '未有費率；請按「更新費率」。');
+    const latest = state.rates.slice().sort((a, b) => b.month.localeCompare(a.month))[0];
     els.rateSource.textContent = latest
       ? `來源：${latest.manualOverride ? '手動設定' : 'CLP 官方網站'} · 最後更新 ${formatStamp(latest.fetchedAt)}`
       : '未有費率資料。';

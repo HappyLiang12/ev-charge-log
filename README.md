@@ -33,6 +33,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with kWh, estimated cost, and real delete.
 - Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
+- The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
+- Model-specific 3D-style SVG car icons for Model 3, iX3, and Vigo, with a generic EV fallback.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
@@ -230,7 +232,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 107 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Six jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 108 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, car icon mapping, and the API envelope. Six jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

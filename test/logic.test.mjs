@@ -13,6 +13,7 @@ import {
   normalizeRates,
   sourceUrls,
   normalizeCars,
+  carIconFor,
   parseServerRecords,
   parseFamilyPayload,
   parseOwnerPayload,
@@ -154,6 +155,13 @@ test('sourceUrls splits valid URLs and drops duplicates', () => {
     'https://b.example/y',
   ]);
   assert.deepEqual(sourceUrls(''), []);
+});
+
+test('carIconFor maps the family cars and falls back to the generic EV', () => {
+  assert.equal(carIconFor({ id: 'model3', name: 'Model 3' }), 'assets/cars/model3.svg');
+  assert.equal(carIconFor({ id: 'car-1', name: 'iX3' }), 'assets/cars/ix3.svg');
+  assert.equal(carIconFor({ id: 'vigo', name: 'Vigo' }), 'assets/cars/vigo.svg');
+  assert.equal(carIconFor({ id: 'other', name: 'Other EV' }), 'assets/cars/ev.svg');
 });
 
 test('groupUnassignedByMonthDay keeps 24 hours open and nests older days under months', () => {
