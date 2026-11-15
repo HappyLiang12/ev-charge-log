@@ -9,7 +9,6 @@ import {
   monthKey,
   normalizeRecords,
   normalizeRates,
-  carIconFor,
   mergeRecords,
   monthsWithRecords,
   defaultMonth,
@@ -82,8 +81,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     syncBtn: byId('syncBtn'),
     status: byId('familyStatus'),
     carName: byId('familyCarName'),
-    carHero: byId('familyCarHero'),
-    carIcon: byId('familyCarIcon'),
     kwh: byId('familyKwh'),
     cost: byId('familyCost'),
     count: byId('familyCount'),
@@ -210,16 +207,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   function render() {
     els.carName.textContent = state.car.name || carId;
-    const icon = carIconFor(state.car);
-    if (icon) {
-      els.carIcon.src = icon;
-      els.carIcon.alt = state.car.name || '';
-      els.carHero.hidden = false;
-    } else {
-      els.carIcon.removeAttribute('src');
-      els.carIcon.alt = '';
-      els.carHero.hidden = true;
-    }
     els.syncBtn.hidden = !apiUrl;
     const status = !apiUrl
       ? '未設定'
