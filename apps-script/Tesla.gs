@@ -2,6 +2,7 @@ var TESLA_TOKEN_URL_ = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/toke
 var DEFAULT_TESLA_BASE_URL_ = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
 var TESLA_SCOPE_ = 'openid offline_access energy_device_data';
 var TESLA_MAX_LOOKBACK_DAYS_ = 90;
+var TESLA_INIT_LOOKBACK_DAYS_ = 30;
 
 function scriptProperty_(key) {
   return PropertiesService.getScriptProperties().getProperty(key);
@@ -253,7 +254,7 @@ function teslaRecordId_(session) {
   return 'tesla-' + Math.floor(Date.parse(session.startAt) / 1000) + '-' + tinyHash_(session.teslaKey);
 }
 
-function syncTesla_() {
+function syncTesla_(allowInitialWindow) {
   var props = PropertiesService.getScriptProperties();
   var records = readLog_();
   var ignored = new Set(readIgnored_());
@@ -277,6 +278,9 @@ function syncTesla_() {
       return Math.min(min, Date.parse(row.startAt));
     }, Infinity);
     lower = new Date(Math.max(earliest - 2 * 86400000, lookback.getTime()));
+  }
+  if (!lower && allowInitialWindow) {
+    lower = new Date(now.getTime() - TESLA_INIT_LOOKBACK_DAYS_ * 86400000);
   }
   if (!lower) {
     return {

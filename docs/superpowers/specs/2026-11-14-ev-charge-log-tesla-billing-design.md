@@ -339,9 +339,12 @@ The fetch lower bound is:
 
 - If `SYNC_CURSOR` exists: `max(SYNC_CURSOR - 2 days, now - 90 days)`.
 - Otherwise, if `SYNC_FROM` is set: `max(SYNC_FROM, now - 90 days)`.
-- Otherwise: the earliest manual record's `startAt` minus 2 days. If no manual
-  record exists, return without fetching. This prevents a first sync from
-  importing the entire 90-day history as unassigned sessions.
+- Otherwise, if manual records exist: the earliest manual record's `startAt`
+  minus 2 days.
+- Otherwise, for an owner sync (`更新 Tesla` with no `car`): `now - 30 days`.
+  This is the initial load and may create unassigned sessions.
+- Otherwise, for a family-scoped sync: return without fetching. Family page
+  load must not import 30 days of history before anyone presses start.
 
 After a successful sync, `SYNC_CURSOR` is set to the fetch end time. The
 owner can set `SYNC_FROM` to an earlier ISO date to intentionally backfill up
@@ -730,8 +733,8 @@ times are Asia/Hong_Kong.
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
 - Family coverage: load, start, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, latest-month-first rates with
-  older months collapsed, assign, ignore, CSV export, and the sync-skipped
-  message when no manual start or `SYNC_FROM` exists.
+  older months collapsed, assign, ignore, CSV export, and the initial 30-day
+  Tesla import. Family-scoped sync without a manual start returns skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
 
 ### 14.4 Browser smoke
@@ -805,9 +808,10 @@ No old Sheet rows are deleted at any step.
 - The official fuel CSV is stale and is not used.
 - Apps Script quotas and Tesla API rate limits apply. The on-demand design
   avoids polling.
-- Pre-launch sessions are not imported by default. The first sync starts two
-  days before the earliest manual record. Setting `SYNC_FROM` to an earlier
-  date can create a large unassigned queue.
+- The initial owner sync imports the last 30 days as unassigned sessions.
+  Family page loads do not initialize that window. Setting `SYNC_FROM` to an
+  earlier date can create a larger unassigned queue; each sync is one Tesla
+  telemetry request, not one request per session.
 - The Tesla refresh token can expire or be revoked. The owner must re-run the
   setup tool.
 - The owner mode and family URLs are unauthenticated; whoever holds the URL has
