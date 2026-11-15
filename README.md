@@ -18,7 +18,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 - Each car has its own family URL: `https://<your-user>.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet.
-- The owner opens the owner URL (`?owner`), presses `更新 Tesla`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
+- The owner opens the owner URL (`?owner`), presses `更新充電樁`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign or ignore unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
 - The family view never receives Tesla credentials. The owner view has no key or login; its URL is a mode flag.
 
@@ -139,7 +139,7 @@ npm run auth:tesla
 3. Authorize the app in the browser. The token is saved to `tools/.tesla-refresh-token.local` with mode 600.
 4. Copy the token value into the `TESLA_REFRESH_TOKEN` Script Property. Do not print it, paste it into chat, or commit it.
 
-The owner `更新 Tesla` verification happens in the owner setup step, after the frontend is deployed.
+The owner `更新充電樁` verification happens in the owner setup step, after the frontend is deployed.
 
 Rotate the Tesla client secret after development and deployment are complete. Update `TESLA_CLIENT_SECRET` in Script Properties, then verify one sync.
 
@@ -160,7 +160,7 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
 2. Open the owner URL on the deployed site: `https://<your-user>.github.io/ev-charge-log/?owner=1`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
-4. Run one owner `更新 Tesla` and confirm the Wall Connector site is discovered.
+4. Run one owner `更新充電樁` and confirm the Wall Connector site is discovered.
 5. Copy each family link from the owner view and send it to that car's driver.
 6. Keep the owner URL private. The owner mode has no key or login; anyone with the URL can manage.
 
@@ -220,7 +220,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
 - There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
-- `更新 Tesla` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
+- `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
 

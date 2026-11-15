@@ -179,7 +179,7 @@ export function initFamily({ apiUrl, carId }) {
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
-    meta.textContent = `Tesla session · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+    meta.textContent = `充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
@@ -190,7 +190,7 @@ export function initFamily({ apiUrl, carId }) {
     claim.textContent = busy ? '認領中…' : '認領';
     claim.setAttribute(
       'aria-label',
-      `認領 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 的 Tesla session`,
+      `認領 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 的充電樁紀錄`,
     );
     claim.addEventListener('click', () => { void onClaim(record); });
     actions.append(claim);
@@ -212,7 +212,7 @@ export function initFamily({ apiUrl, carId }) {
             : '已連接';
     setStatus(els.status, status);
     setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
-    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新 Tesla');
+    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新充電樁');
 
     const records = mergeRecords(state.server, state.pending);
     const current = monthKey(new Date().toISOString());
@@ -264,7 +264,7 @@ export function initFamily({ apiUrl, carId }) {
     els.unassigned.replaceChildren();
     appendUnassignedRows(els.unassigned, state.unassigned, makeUnassignedRow);
     els.unassignedEmpty.hidden = state.unassigned.length > 0;
-    els.unassignedEmpty.textContent = apiUrl ? '冇未配對 Tesla session。' : '未設定 Google Sheet。';
+    els.unassignedEmpty.textContent = apiUrl ? '冇未配對充電樁紀錄。' : '未設定 Google Sheet。';
   }
 
   async function retryPending() {
@@ -312,7 +312,7 @@ export function initFamily({ apiUrl, carId }) {
       }
     } catch (error) {
       state.offline = true;
-      showToast(els.toast, friendlyError(error, 'Tesla 同步失敗，請檢查網絡後重試。'));
+      showToast(els.toast, friendlyError(error, '充電樁同步失敗，請檢查網絡後重試。'));
     } finally {
       state.syncing = false;
       render();
@@ -386,7 +386,7 @@ export function initFamily({ apiUrl, carId }) {
 
   async function onDelete(record) {
     const message = record.teslaKey
-      ? '刪除呢筆紀錄？Tesla session 亦會被忽略，之後唔會再自動匯入。'
+      ? '刪除呢筆紀錄？充電樁紀錄亦會被忽略，之後唔會再自動匯入。'
       : '刪除呢筆紀錄？';
     if (!window.confirm(message)) return;
     state.deleting.add(record.id);

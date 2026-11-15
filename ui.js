@@ -58,7 +58,7 @@ export function friendlyError(error, fallback) {
     return 'CLP 費率格式已變，請在 Google Sheet 的 Rates 手動輸入並設 manualOverride=TRUE。';
   }
   if (/authorization|授權|401|403|Tesla token/i.test(raw)) {
-    return 'Tesla 授權已過期，請重新執行本機設定工具。';
+    return '充電樁授權已過期，請重新執行本機設定工具。';
   }
   if (/inactive|停用/i.test(raw)) return '此車輛已停用，請聯絡車主。';
   if (/unknown car|404|連結無效/i.test(raw)) return '車輛連結無效，請向車主索取新連結。';
