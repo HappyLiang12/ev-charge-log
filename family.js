@@ -7,6 +7,7 @@ import {
   monthKey,
   normalizeRecords,
   normalizeRates,
+  carIconFor,
   mergeRecords,
   monthsWithRecords,
   defaultMonth,
@@ -28,6 +29,7 @@ import {
   syncTesla,
   claimSession,
 } from './api.js';
+import { renderRateCards } from './rate-view.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendUnassignedRows } from './ui.js';
 
 function monthLabel(month) {
@@ -76,11 +78,13 @@ export function initFamily({ apiUrl, carId }) {
     syncBtn: byId('syncBtn'),
     status: byId('familyStatus'),
     carName: byId('familyCarName'),
+    carHero: byId('familyCarHero'),
+    carIcon: byId('familyCarIcon'),
     kwh: byId('familyKwh'),
     cost: byId('familyCost'),
     count: byId('familyCount'),
     split: byId('familySplit'),
-    rateNote: byId('familyRateNote'),
+    rates: byId('familyRates'),
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
     recentList: byId('recentList'),
@@ -200,6 +204,9 @@ export function initFamily({ apiUrl, carId }) {
 
   function render() {
     els.carName.textContent = state.car.name || carId;
+    els.carIcon.src = carIconFor(state.car);
+    els.carIcon.alt = state.car.name || '';
+    els.carHero.hidden = false;
     els.syncBtn.hidden = !apiUrl;
     const status = !apiUrl
       ? '未設定'
@@ -225,17 +232,7 @@ export function initFamily({ apiUrl, carId }) {
       : '本月未有已配對嘅充電 session。';
 
     const picked = selectRate(current, state.rates);
-    if (!picked.rate) {
-      els.rateNote.textContent = '未設定本月費率；請確認本月費率。';
-    } else {
-      const baseline = Number(picked.rate.basicOffPeak) + Number(picked.rate.fuelAdjustment);
-      const peak = Number(picked.rate.basicPeak) + Number(picked.rate.fuelAdjustment);
-      const rebate = Number(picked.rate.rebate) || 0;
-      const label = picked.fallback
-        ? `按 CLP ${picked.rate.month} 費率估算（沿用）`
-        : `按 CLP ${picked.rate.month} 費率估算`;
-      els.rateNote.textContent = `${label}；非高峰 $${((baseline - rebate) / 100).toFixed(3)}/kWh；高峰 $${((peak - rebate) / 100).toFixed(3)}/kWh；實際電費以中電賬單為準。`;
-    }
+    renderRateCards(els.rates, state.rates, picked.rate ? '本月費率未在列表中。' : '未設定本月費率；請確認本月費率。');
 
     const months = monthsWithRecords(records);
     const options = ['all', ...months];

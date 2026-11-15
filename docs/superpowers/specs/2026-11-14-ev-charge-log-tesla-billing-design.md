@@ -122,6 +122,8 @@ Components:
 | `logic.js` | Pure functions: normalization, matching helpers, split, cost, CSV |
 | `family.js` | Family view rendering and actions |
 | `owner.js` | Owner view rendering and actions |
+| `rate-view.js` | Shared owner/family rate cards and latest-month collapse |
+| `assets/cars/` | Model 3, iX3, Vigo, and generic EV SVG icons |
 | `style.css` | Existing dark theme plus owner/family additions |
 | `config.js` | Public `API_URL` only |
 | `apps-script/Code.gs` | Web app routing, validation, locking |
@@ -593,17 +595,22 @@ All writes use `LockService`; sync waits up to 30 seconds for the lock.
 
 Shown for `?car=<id>`.
 
-- Header: `EV 充電紀錄`, car name, status chip, and no Sheet link.
+- Header: `EV 充電紀錄`, car name, status chip, a model-specific SVG car
+  hero (Model 3, iX3, Vigo, or generic EV), and no Sheet link.
 - Primary action: `⚡ 開始充電`, full width. It records the current time for
   this car and shows a toast.
 - Secondary action: `更新充電樁`. It calls `sync`, shows a spinner, and
   reports `已配對 X 個 session`.
 - After the initial record load, the family view runs one sync automatically
   when online. The button allows a manual retry. There is no polling.
+- Section order: monthly summary cards, unassigned list, recent list, rate
+  and split, export.
 - Summary cards: current-month session count, total kWh, estimated cost.
   A smaller line shows the peak/off-peak kWh split and the rate month.
 - Recent list: date, weekday, time, kWh, estimated cost, delete button.
   A record without kWh shows `待配對` and `—` for cost.
+- Rate and split: the split line plus the same rate cards as the owner view;
+  the latest month is open and older months are collapsed.
 - Unassigned list: Tesla start, kWh, duration, and `認領`. Claiming a session
   assigns it to this car (or merges a nearby manual pending row) without
   entering a backdated time. This is the forgotten-start recovery path. The

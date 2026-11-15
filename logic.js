@@ -139,6 +139,14 @@ export function normalizeCar(value) {
   };
 }
 
+export function carIconFor(car) {
+  const text = `${car && car.id ? car.id : ''} ${car && car.name ? car.name : ''}`.toLowerCase();
+  if (/model[\s-]*3/.test(text)) return 'assets/cars/model3.svg';
+  if (/ix3/.test(text)) return 'assets/cars/ix3.svg';
+  if (/vigo/.test(text)) return 'assets/cars/vigo.svg';
+  return 'assets/cars/ev.svg';
+}
+
 export function normalizeCars(list) {
   return Array.isArray(list) ? list.map(normalizeCar).filter(Boolean) : [];
 }

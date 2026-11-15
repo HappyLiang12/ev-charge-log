@@ -35,19 +35,16 @@
       <span id="familyStatus" class="chip" data-state="idle">未設定</span>
     </header>
 
+    <div id="familyCarHero" class="car-hero" hidden>
+      <img id="familyCarIcon" class="car-hero-image" alt="">
+    </div>
+
     <main>
       <button id="startBtn" class="primary" type="button">⚡ 開始充電</button>
 
       <div class="actions">
         <button id="syncBtn" class="secondary" type="button">更新充電樁</button>
       </div>
-
-      <section class="panel">
-        <h2>未配對充電樁紀錄</h2>
-        <ul id="familyUnassigned" class="owner-list"></ul>
-        <p id="familyUnassignedEmpty" class="empty" hidden>冇未配對充電樁紀錄。</p>
-        <p class="hint">如果係你嘅充電，按「認領」。</p>
-      </section>
 
       <section class="stats" aria-label="本月摘要">
         <div class="stat">
@@ -65,15 +62,23 @@
       </section>
 
       <section class="panel">
-        <h2>費率與拆分</h2>
-        <p id="familySplit" class="hint">—</p>
-        <p id="familyRateNote" class="rate-note">未設定費率。</p>
+        <h2>未配對充電樁紀錄</h2>
+        <ul id="familyUnassigned" class="owner-list"></ul>
+        <p id="familyUnassignedEmpty" class="empty" hidden>冇未配對充電樁紀錄。</p>
+        <p class="hint">如果係你嘅充電，按「認領」。</p>
       </section>
 
       <section class="panel">
         <h2>最近紀錄</h2>
         <ul id="recentList" class="records"></ul>
         <p id="familyEmpty" class="empty" hidden>未有紀錄。</p>
+      </section>
+
+      <section class="panel">
+        <h2>費率與拆分</h2>
+        <p id="familySplit" class="hint">—</p>
+        <div id="familyRates" class="owner-cards"></div>
+        <p class="hint">實際電費以中電賬單為準。</p>
       </section>
 
       <section class="panel">

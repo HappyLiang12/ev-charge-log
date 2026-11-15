@@ -36,8 +36,20 @@ main {
   gap: 22px;
 }
 
-.topbar {
+.car-hero {
   display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 96px;
+}
+
+.car-hero-image {
+  width: min(232px, 76vw);
+  height: auto;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .28));
+}
+
+.topbar {  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
