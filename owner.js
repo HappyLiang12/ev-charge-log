@@ -17,7 +17,7 @@ import {
   assignSession,
   ignoreSession,
 } from './api.js';
-import { byId, showToast, setStatus, setBusy, friendlyError, appendUnassignedRows } from './ui.js';
+import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -30,7 +30,7 @@ export function initOwner({ apiUrl }) {
     busy: false,
     selectedMonth: null,
     monthTouched: false,
-    openUnassigned: new Set(),
+    openPending: new Set(),
   };
 
   const els = {
@@ -42,8 +42,6 @@ export function initOwner({ apiUrl }) {
     exportBtn: byId('ownerExportBtn'),
     carTotals: byId('ownerCarTotals'),
     legacy: byId('ownerLegacy'),
-    unassigned: byId('ownerUnassigned'),
-    unassignedEmpty: byId('ownerUnassignedEmpty'),
     pending: byId('ownerPending'),
     pendingEmpty: byId('ownerPendingEmpty'),
     rates: byId('ownerRates'),
@@ -283,19 +281,20 @@ export function initOwner({ apiUrl }) {
     const legacy = filtered.filter((record) => record.source === 'legacy' || !record.car).length;
     els.legacy.textContent = legacy > 0 ? `Legacy 紀錄 ${legacy} 筆，未計入以上月結。` : '';
 
-    const unassigned = state.records.filter((record) => record.car === 'unassigned');
-    els.unassigned.replaceChildren();
-    appendUnassignedRows(els.unassigned, unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
-    els.unassignedEmpty.hidden = unassigned.length > 0;
-    els.unassignedEmpty.textContent = activeCars.length === 0 ? '未有車輛可分配。' : '所有月份都冇未分配充電樁紀錄。';
-
     const pending = state.records.filter((record) => (
-      record.car && record.car !== 'unassigned' && record.kWh === null && record.source !== 'legacy'
+      record.car === 'unassigned'
+      || (record.car && record.car !== 'unassigned' && record.kWh === null && record.source !== 'legacy')
     ));
     els.pending.replaceChildren();
-    for (const record of pending) els.pending.append(makePendingRow(record));
+    appendPendingRows(
+      els.pending,
+      pending,
+      (record) => (record.car === 'unassigned' ? makeUnassignedRow(record) : makePendingRow(record)),
+      Date.now(),
+      state.openPending,
+    );
     els.pendingEmpty.hidden = pending.length > 0;
-    els.pendingEmpty.textContent = '所有月份都冇待配對記錄。';
+    els.pendingEmpty.textContent = '所有紀錄都已配對。';
 
     els.rates.replaceChildren();
     renderRateCards(els.rates, state.rates, '未有費率；請按「更新費率」。');

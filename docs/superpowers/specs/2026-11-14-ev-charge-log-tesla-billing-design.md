@@ -640,12 +640,13 @@ Shown for `?owner`.
 - Month selector for the per-car table; default current month.
 - Per-car monthly table: car name, sessions, kWh, non-peak kWh, peak kWh,
   estimated cost. Legacy rows are counted separately and excluded from totals.
-- Unassigned list: Tesla start and end time in 12-hour AM/PM, kWh, duration,
-  car selector, `分配`, `忽略`. The latest 24 hours stay open; older sessions
-  are grouped by Hong Kong month, then by day, and both levels are collapsed.
-  Open groups are preserved after assign/ignore.
-- Pending manual list: car, startAt in 12-hour AM/PM,
-  `手動開始咗，等待充電樁紀錄同步配對`.
+- Pending list: one `待配對` list for everything not fully matched:
+  - a manual start waiting for a charger session;
+  - a charger session without a car.
+  The latest 24 hours stay open; older sessions are grouped by Hong Kong
+  month, then by day, and both levels are collapsed. Open groups are preserved
+  after assign/ignore. Unassigned rows have a car selector, `分配`, and
+  `忽略`; manual rows show the car and wait.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
   source, fetchedAt, manual override. The latest month is shown first; older
   months are collapsed. Read-only; edit in the Sheet.
@@ -757,9 +758,9 @@ times are Asia/Hong_Kong.
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
 - Family coverage: load, start, auto-start from `start=1`, sync a mocked Tesla session, delete, and claim an unassigned session.
 - Owner UI: rate dedupe/refresh/source links, QR generation, latest-month-first rates with
-  older months collapsed, assign, ignore, CSV export, 12-hour times, preserved
-  open groups, and the initial 30-day Tesla import. Family-scoped sync without a
-  manual start returns skipped.
+  older months collapsed, one combined pending list, assign, ignore, CSV export,
+  12-hour times, preserved open groups, and the initial 30-day Tesla import.
+  Family-scoped sync without a manual start returns skipped.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
 
 ### 14.4 Browser smoke

@@ -172,14 +172,14 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
     await waitFor(() => harness.env.values('Rates').length === 12);
     await waitFor(() => ui.document.querySelectorAll('#ownerRates .owner-card').length === 11);
 
-    const firstSelect = ui.document.querySelector('#ownerUnassigned select');
+    const firstSelect = ui.document.querySelector('#ownerPending select');
     firstSelect.value = 'leaf';
-    ui.document.querySelectorAll('#ownerUnassigned li button')[0].click();
-    await waitFor(() => ui.document.querySelectorAll('#ownerUnassigned li').length === 1);
+    ui.document.querySelectorAll('#ownerPending li button')[0].click();
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 1);
     await waitFor(() => harness.env.call('readLog_').some((record) => record.car === 'leaf'));
 
-    ui.document.querySelectorAll('#ownerUnassigned li button')[1].click();
-    await waitFor(() => ui.document.querySelectorAll('#ownerUnassigned li').length === 0);
+    ui.document.querySelectorAll('#ownerPending li button')[1].click();
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 0);
     assert.equal(harness.env.call('readIgnored_').length, 1);
 
     ui.document.getElementById('ownerExportBtn').click();
@@ -187,6 +187,38 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
     const csv = await ui.blobs[0].text();
     assert.match(csv, /Leaf/);
     assert.match(csv, /日期,時間,車/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: one pending list includes manual starts and unassigned charger sessions', { timeout: 20000 }, async () => {
+  const now = Date.now();
+  const manual = {
+    id: 'manual-pending',
+    car: 'model3',
+    startAt: new Date(now - 10 * 60 * 1000).toISOString(),
+    kWh: null,
+    durationSec: null,
+    teslaStartAt: null,
+    teslaEndAt: null,
+    peakKWh: null,
+    offPeakKWh: null,
+    teslaKey: null,
+    source: 'manual',
+  };
+  const unassigned = unassignedRecord('unassigned-pending', new Date(now - 20 * 60 * 1000).toISOString(), 'din:pending');
+  const harness = await createHarness({
+    sheets: defaultSheets({ rates: [rateRow('2026-11', 47.4)], records: [manual, unassigned] }),
+  });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending > li').length === 2);
+    assert.match(ui.document.getElementById('ownerPending').textContent, /等待充電樁紀錄配對/);
+    assert.match(ui.document.getElementById('ownerPending').textContent, /充電樁紀錄/);
+    assert.equal(ui.document.querySelectorAll('#ownerPending select').length, 1);
   } finally {
     ui.close();
     await harness.close();
@@ -201,8 +233,8 @@ test('owner UI: sync without a manual record imports the last 30 days as unassig
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     ui.document.getElementById('ownerSyncBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('新增未分配 1'));
-    await waitFor(() => ui.document.querySelector('#ownerUnassigned .unassigned-day'));
-    const dayGroup = ui.document.querySelector('#ownerUnassigned .unassigned-day');
+    await waitFor(() => ui.document.querySelector('#ownerPending .unassigned-day'));
+    const dayGroup = ui.document.querySelector('#ownerPending .unassigned-day');
     assert.equal(dayGroup.querySelector('details').open, false);
     assert.equal(dayGroup.querySelectorAll('.owner-list li').length, 1);
     const log = harness.env.call('readLog_');
@@ -234,10 +266,10 @@ test('owner UI: older unassigned sessions are grouped by month and day and colla
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     assert.equal(
-      ui.document.querySelectorAll('#ownerUnassigned > li:not(.unassigned-month):not(.unassigned-day)').length,
+      ui.document.querySelectorAll('#ownerPending > li:not(.unassigned-month):not(.unassigned-day)').length,
       1,
     );
-    const months = ui.document.querySelectorAll('#ownerUnassigned .unassigned-month');
+    const months = ui.document.querySelectorAll('#ownerPending .unassigned-month');
     assert.equal(months.length, 2);
     assert.equal(months[0].querySelector('details').open, false);
     months[0].querySelector('details').open = true;
@@ -251,7 +283,7 @@ test('owner UI: older unassigned sessions are grouped by month and day and colla
     select.value = 'leaf';
     days[0].querySelectorAll('.owner-row-actions button')[0].click();
     await waitFor(() => harness.env.call('readLog_').some((record) => record.car === 'leaf'));
-    const reopenedMonth = Array.from(ui.document.querySelectorAll('#ownerUnassigned .unassigned-month'))
+    const reopenedMonth = Array.from(ui.document.querySelectorAll('#ownerPending .unassigned-month'))
       .find((month) => month.textContent.includes('2026-11'));
     assert.equal(reopenedMonth.querySelector('details').open, true);
   } finally {

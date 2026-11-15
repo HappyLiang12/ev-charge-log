@@ -1,4 +1,4 @@
-import { groupUnassignedByMonthDay } from './logic.js';
+import { groupPendingByMonthDay } from './logic.js';
 
 const toastTimers = new WeakMap();
 
@@ -6,8 +6,8 @@ export function byId(id) {
   return document.getElementById(id);
 }
 
-export function appendUnassignedRows(list, records, makeRow, now = Date.now(), openKeys = new Set()) {
-  const grouped = groupUnassignedByMonthDay(records, now);
+export function appendPendingRows(list, records, makeRow, now = Date.now(), openKeys = new Set()) {
+  const grouped = groupPendingByMonthDay(records, now);
   for (const record of grouped.recent) list.append(makeRow(record));
   for (const month of grouped.months) {
     const li = document.createElement('li');

@@ -22,7 +22,7 @@ import {
   parseFamilyPayload,
   parseOwnerPayload,
   mergeRecords,
-  groupUnassignedByMonthDay,
+  groupPendingByMonthDay,
   monthsWithRecords,
   defaultMonth,
   filterByMonth,
@@ -189,9 +189,9 @@ test('carIconFor maps the family cars and hides unknown cars', () => {
   assert.equal(carIconFor({ id: 'other', name: 'Other EV' }), '');
 });
 
-test('groupUnassignedByMonthDay keeps 24 hours open and nests older days under months', () => {
+test('groupPendingByMonthDay keeps 24 hours open and nests older days under months', () => {
   const now = Date.parse('2026-11-15T10:00:00.000Z');
-  const grouped = groupUnassignedByMonthDay([
+  const grouped = groupPendingByMonthDay([
     record({ id: 'old-a', startAt: '2026-11-13T09:00:00.000Z' }),
     record({ id: 'recent', startAt: '2026-11-15T09:00:00.000Z' }),
     record({ id: 'old-b', startAt: '2026-11-12T09:00:00.000Z' }),

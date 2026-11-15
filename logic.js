@@ -226,7 +226,7 @@ export function mergeRecords(serverRecords, pending) {
   return sortNewestFirst([...byId.values()]);
 }
 
-export function groupUnassignedByMonthDay(records, now = Date.now()) {
+export function groupPendingByMonthDay(records, now = Date.now()) {
   const cutoff = now - 24 * 60 * 60 * 1000;
   const sorted = normalizeRecords(records).sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
   const recent = [];
