@@ -31,7 +31,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
-- Recent records with kWh, estimated cost, and real delete.
+- Recent records with start and end times, kWh, estimated cost, and real delete. The end date is included when a session crosses midnight.
 - Owner month totals, one `待配對` list that combines manual starts and unassigned charger sessions, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - UI times use 12-hour AM/PM; unassigned rows show both start and end times. CSV keeps 24-hour times.
 - Month and day groups remember their open state after a claim, assign, or ignore, so several sessions can be handled without reopening the groups.

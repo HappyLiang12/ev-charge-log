@@ -637,9 +637,11 @@ Shown for `?car=<id>`.
 - Section order: monthly summary cards, unassigned list, recent list, rate
   and split, export.
 - Summary cards: current-month session count, total kWh, estimated cost.
-  A smaller line shows the peak/off-peak kWh split and the rate month.
-- Recent list: date, weekday, time in 12-hour AM/PM, kWh, estimated cost,
-  delete button. A record without kWh shows `待配對` and `—` for cost.
+  A smaller line shows the peak/off-peak kWh split and the rate month. Values
+  scale down to a 320px viewport without clipping.
+- Recent list: date, weekday, start time and end time in 12-hour AM/PM, kWh,
+  estimated cost, delete button. The end date is prefixed when the session
+  crosses midnight. A record without kWh shows `待配對` and `—` for cost.
 - Rate and split: the split line plus the same rate cards as the owner view;
   the latest month is open and older months are collapsed.
 - Unassigned list: Tesla start and end time in 12-hour AM/PM, kWh, duration,
