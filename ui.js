@@ -1,4 +1,4 @@
-import { groupUnassignedByDay } from './logic.js';
+import { groupUnassignedByMonthDay } from './logic.js';
 
 const toastTimers = new WeakMap();
 
@@ -7,18 +7,32 @@ export function byId(id) {
 }
 
 export function appendUnassignedRows(list, records, makeRow, now = Date.now()) {
-  const grouped = groupUnassignedByDay(records, now);
+  const grouped = groupUnassignedByMonthDay(records, now);
   for (const record of grouped.recent) list.append(makeRow(record));
-  for (const group of grouped.days) {
+  for (const month of grouped.months) {
     const li = document.createElement('li');
-    li.className = 'unassigned-day';
+    li.className = 'unassigned-month';
     const details = document.createElement('details');
     const summary = document.createElement('summary');
-    summary.textContent = `${group.day}（${group.records.length}）`;
-    const inner = document.createElement('ul');
-    inner.className = 'owner-list unassigned-day-list';
-    for (const record of group.records) inner.append(makeRow(record));
-    details.append(summary, inner);
+    const count = month.days.reduce((total, day) => total + day.records.length, 0);
+    const [year, monthNumber] = month.month.split('-');
+    summary.textContent = `${year} 年 ${Number(monthNumber)} 月（${count}）`;
+    const monthList = document.createElement('ul');
+    monthList.className = 'owner-list unassigned-month-list';
+    for (const day of month.days) {
+      const dayLi = document.createElement('li');
+      dayLi.className = 'unassigned-day';
+      const dayDetails = document.createElement('details');
+      const daySummary = document.createElement('summary');
+      daySummary.textContent = `${day.day}（${day.records.length}）`;
+      const dayList = document.createElement('ul');
+      dayList.className = 'owner-list unassigned-day-list';
+      for (const record of day.records) dayList.append(makeRow(record));
+      dayDetails.append(daySummary, dayList);
+      dayLi.append(dayDetails);
+      monthList.append(dayLi);
+    }
+    details.append(summary, monthList);
     li.append(details);
     list.append(li);
   }

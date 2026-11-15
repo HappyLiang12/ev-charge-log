@@ -607,8 +607,8 @@ Shown for `?car=<id>`.
 - Unassigned list: Tesla start, kWh, duration, and `認領`. Claiming a session
   assigns it to this car (or merges a nearby manual pending row) without
   entering a backdated time. This is the forgotten-start recovery path. The
-  latest 24 hours stay open; older sessions are grouped by Hong Kong day and
-  collapsed.
+  latest 24 hours stay open; older sessions are grouped by Hong Kong month,
+  then by day, and both levels are collapsed.
 - Delete confirmation for a Tesla-linked record warns that the 充電樁紀錄
   will also be ignored.
 - Month selector and `匯出 CSV`; default month follows the existing behavior.
@@ -629,8 +629,8 @@ Shown for `?owner`.
 - Per-car monthly table: car name, sessions, kWh, non-peak kWh, peak kWh,
   estimated cost. Legacy rows are counted separately and excluded from totals.
 - Unassigned list: Tesla start, kWh, duration, car selector, `分配`, `忽略`.
-  The latest 24 hours stay open; older sessions are grouped by Hong Kong day
-  and collapsed.
+  The latest 24 hours stay open; older sessions are grouped by Hong Kong
+  month, then by day, and both levels are collapsed.
 - Pending manual list: car, startAt, `等待充電樁紀錄配對`.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
   source, fetchedAt, manual override. The latest month is shown first; older

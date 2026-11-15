@@ -187,12 +187,13 @@ test('owner UI: sync without a manual record imports the last 30 days as unassig
   }
 });
 
-test('owner UI: older unassigned sessions are grouped by day and collapsed', { timeout: 20000 }, async () => {
+test('owner UI: older unassigned sessions are grouped by month and day and collapsed', { timeout: 20000 }, async () => {
   const now = Date.now();
   const records = [
     unassignedRecord('recent', new Date(now - 60 * 60 * 1000).toISOString(), 'din:recent'),
     unassignedRecord('old-a', new Date(now - 3 * 86400000).toISOString(), 'din:old-a'),
     unassignedRecord('old-b', new Date(now - 4 * 86400000).toISOString(), 'din:old-b'),
+    unassignedRecord('old-c', new Date(now - 40 * 86400000).toISOString(), 'din:old-c'),
   ];
   const harness = await createHarness({
     sheets: defaultSheets({ rates: [rateRow('2026-11', 47.4)], records }),
@@ -200,12 +201,19 @@ test('owner UI: older unassigned sessions are grouped by day and collapsed', { t
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
-    assert.equal(ui.document.querySelectorAll('#ownerUnassigned > li:not(.unassigned-day)').length, 1);
-    const groups = ui.document.querySelectorAll('#ownerUnassigned .unassigned-day');
-    assert.equal(groups.length, 2);
-    assert.equal(groups[0].querySelector('details').open, false);
-    groups[0].querySelector('details').open = true;
-    assert.equal(groups[0].querySelectorAll('.owner-list li').length, 1);
+    assert.equal(
+      ui.document.querySelectorAll('#ownerUnassigned > li:not(.unassigned-month):not(.unassigned-day)').length,
+      1,
+    );
+    const months = ui.document.querySelectorAll('#ownerUnassigned .unassigned-month');
+    assert.equal(months.length, 2);
+    assert.equal(months[0].querySelector('details').open, false);
+    months[0].querySelector('details').open = true;
+    const days = months[0].querySelectorAll('.unassigned-day');
+    assert.equal(days.length, 2);
+    assert.equal(days[0].querySelector('details').open, false);
+    days[0].querySelector('details').open = true;
+    assert.equal(days[0].querySelectorAll('.owner-list li').length, 1);
   } finally {
     ui.close();
     await harness.close();

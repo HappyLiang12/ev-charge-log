@@ -28,11 +28,11 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
 - Unmatched Tesla sessions appear as `unassigned` for the family to claim or the owner to assign/ignore.
-- The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by day and collapsed.
+- The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with kWh, estimated cost, and real delete.
-- Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older days.
+- Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.

@@ -187,7 +187,7 @@ export function mergeRecords(serverRecords, pending) {
   return sortNewestFirst([...byId.values()]);
 }
 
-export function groupUnassignedByDay(records, now = Date.now()) {
+export function groupUnassignedByMonthDay(records, now = Date.now()) {
   const cutoff = now - 24 * 60 * 60 * 1000;
   const sorted = normalizeRecords(records).sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
   const recent = [];
@@ -202,9 +202,15 @@ export function groupUnassignedByDay(records, now = Date.now()) {
     if (!days.has(day)) days.set(day, []);
     days.get(day).push(record);
   }
+  const months = new Map();
+  for (const [day, rows] of days.entries()) {
+    const month = day.slice(0, 7);
+    if (!months.has(month)) months.set(month, []);
+    months.get(month).push({ day, records: rows });
+  }
   return {
     recent,
-    days: [...days.entries()].map(([day, rows]) => ({ day, records: rows })),
+    months: [...months.entries()].map(([month, groupedDays]) => ({ month, days: groupedDays })),
   };
 }
 
