@@ -57,6 +57,19 @@
         </div>
       </section>
 
+      <section id="familyLivePanel" class="panel live-panel" hidden>
+        <div class="live-title-row">
+          <h2>充電狀態</h2>
+          <span id="familyLiveState" class="live-state">—</span>
+        </div>
+        <div class="live-metrics">
+          <div class="live-metric"><strong id="familyLivePower">—</strong><span>即時功率</span></div>
+          <div class="live-metric"><strong id="familyLiveKwh">—</strong><span>估算 kWh</span></div>
+          <div class="live-metric"><strong id="familyLiveCost">—</strong><span>估算電費</span></div>
+        </div>
+        <p class="hint">每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。</p>
+      </section>
+
       <section class="panel">
         <h2>未配對充電樁紀錄</h2>
         <ul id="familyUnassigned" class="owner-list"></ul>
@@ -105,6 +118,19 @@
         <button id="ownerRatesBtn" class="secondary" type="button">更新費率</button>
       </div>
       <p class="hint">首次使用：按「更新充電樁」會匯入最近 30 天；家人開始充電後會自動配對。</p>
+
+      <section id="ownerLivePanel" class="panel live-panel" hidden>
+        <div class="live-title-row">
+          <h2>充電狀態</h2>
+          <span id="ownerLiveState" class="live-state">—</span>
+        </div>
+        <div class="live-metrics">
+          <div class="live-metric"><strong id="ownerLivePower">—</strong><span>即時功率</span></div>
+          <div class="live-metric"><strong id="ownerLiveKwh">—</strong><span>估算 kWh</span></div>
+          <div class="live-metric"><strong id="ownerLiveCost">—</strong><span>估算電費</span></div>
+        </div>
+        <p class="hint">每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。</p>
+      </section>
       <a id="ownerSheetLink" class="sheet-link" target="_blank" rel="noreferrer" hidden>打開 Google Sheet</a>
 
       <section class="panel">

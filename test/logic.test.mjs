@@ -16,6 +16,8 @@ import {
   normalizeRates,
   sourceUrls,
   familyStartUrl,
+  parseChargerStatus,
+  costForKwh,
   normalizeCars,
   parseServerRecords,
   parseFamilyPayload,
@@ -66,6 +68,22 @@ const record = (overrides = {}) => ({
   teslaKey: 'din:1786968749',
   source: 'tesla+manual',
   ...overrides,
+});
+
+test('parseChargerStatus and costForKwh build the live charging estimate', () => {
+  const status = parseChargerStatus({
+    ok: true,
+    charging: false,
+    powerW: 7200,
+    energyWh: null,
+    available: true,
+    state: '1',
+  });
+  assert.equal(status.charging, true);
+  assert.equal(status.powerW, 7200);
+  assert.equal(status.energyWh, null);
+  assert.equal(costForKwh(10, [rate], '2026-11-14T13:00:00.000Z'), 18.49);
+  assert.equal(costForKwh(10, [rate], '2026-11-14T04:00:00.000Z'), 14.19);
 });
 
 test('formatHkTime12 and formatHkRange use Hong Kong time with AM/PM', () => {
