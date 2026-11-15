@@ -3,6 +3,8 @@ import {
   storageKeys,
   formatHkDate,
   formatHkTime,
+  formatHkTime12,
+  sessionEndIso,
   formatHkWeekday,
   monthKey,
   normalizeRecords,
@@ -69,6 +71,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     autoStarted: false,
     claiming: new Set(),
     deleting: new Set(),
+    openUnassigned: new Set(),
     offline: false,
     selectedMonth: null,
     monthTouched: false,
@@ -150,7 +153,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     right.className = 'record-right';
     const time = document.createElement('span');
     time.className = 'record-time';
-    time.textContent = formatHkTime(record.startAt);
+    time.textContent = formatHkTime12(record.startAt);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'delete-btn';
@@ -163,7 +166,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       'aria-label',
       deleting
         ? '刪除中…'
-        : `刪除 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 紀錄`,
+        : `刪除 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 紀錄`,
     );
     remove.addEventListener('click', () => onDelete(record));
     right.append(time, remove);
@@ -176,7 +179,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     const head = document.createElement('div');
     head.className = 'owner-row-head';
     const when = document.createElement('span');
-    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)}`;
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
     const kwh = document.createElement('strong');
     kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
     head.append(when, kwh);
@@ -184,7 +187,9 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
-    meta.textContent = `充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+    const end = sessionEndIso(record);
+    const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
+    meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
@@ -195,7 +200,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     claim.textContent = busy ? '認領中…' : '認領';
     claim.setAttribute(
       'aria-label',
-      `認領 ${formatHkDate(record.startAt)} ${formatHkTime(record.startAt)} 的充電樁紀錄`,
+      `認領 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的充電樁紀錄`,
     );
     claim.addEventListener('click', () => { void onClaim(record); });
     actions.append(claim);
@@ -267,7 +272,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
 
     els.unassigned.replaceChildren();
-    appendUnassignedRows(els.unassigned, state.unassigned, makeUnassignedRow);
+    appendUnassignedRows(els.unassigned, state.unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
     els.unassignedEmpty.hidden = state.unassigned.length > 0;
     els.unassignedEmpty.textContent = apiUrl ? '冇未配對充電樁紀錄。' : '未設定 Google Sheet。';
   }
@@ -411,7 +416,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   async function onDelete(record) {
     const message = record.teslaKey
-      ? '刪除呢筆紀錄？充電樁紀錄亦會被忽略，之後唔會再自動匯入。'
+      ? '刪除呢筆紀錄？充電樁紀錄亦會被忽略，之後同步唔會再自動匯入。你仍可手動開始新紀錄；要重新匯入，請喺 Sheet 嘅 Ignored 刪除對應 key。'
       : '刪除呢筆紀錄？';
     if (!window.confirm(message)) return;
     state.deleting.add(record.id);

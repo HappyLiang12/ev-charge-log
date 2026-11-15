@@ -148,6 +148,28 @@ export function familyStartUrl(href, carId) {
   return url.toString();
 }
 
+export function formatHkTime12(iso) {
+  const d = new Date(Date.parse(iso) + HK_OFFSET_MS);
+  const hour = d.getUTCHours();
+  const display = hour % 12 || 12;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  return `${display}:${pad2(d.getUTCMinutes())} ${suffix}`;
+}
+
+export function formatHkRange(startIso, endIso) {
+  const start = `${formatHkDate(startIso)} ${formatHkTime12(startIso)}`;
+  if (!endIso) return start;
+  const end = `${formatHkDate(endIso)} ${formatHkTime12(endIso)}`;
+  return `${start} – ${end}`;
+}
+
+export function sessionEndIso(record) {
+  if (record && record.teslaEndAt) return record.teslaEndAt;
+  const start = record && (record.teslaStartAt || record.startAt);
+  if (!start || !record.durationSec) return null;
+  return new Date(Date.parse(start) + Number(record.durationSec) * 1000).toISOString();
+}
+
 export function carIconFor(car) {
   const text = `${car && car.id ? car.id : ''} ${car && car.name ? car.name : ''}`.toLowerCase();
   if (/model[\s-]*3/.test(text)) return 'assets/cars/model3.svg';

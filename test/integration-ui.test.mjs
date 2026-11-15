@@ -117,6 +117,7 @@ test('family UI: claim an unassigned Tesla session', { timeout: 20000 }, async (
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
     await waitFor(() => ui.document.querySelector('#familyUnassigned button'));
+    assert.match(ui.document.querySelector('#familyUnassigned li').textContent, /結束 .* (AM|PM)/);
     ui.document.querySelector('#familyUnassigned button').click();
     await waitFor(() => ui.document.querySelectorAll('#familyUnassigned li').length === 0);
     assert.equal(ui.document.getElementById('familyCount').textContent, '1');
@@ -245,6 +246,14 @@ test('owner UI: older unassigned sessions are grouped by month and day and colla
     assert.equal(days[0].querySelector('details').open, false);
     days[0].querySelector('details').open = true;
     assert.equal(days[0].querySelectorAll('.owner-list li').length, 1);
+
+    const select = days[0].querySelector('select');
+    select.value = 'leaf';
+    days[0].querySelectorAll('.owner-row-actions button')[0].click();
+    await waitFor(() => harness.env.call('readLog_').some((record) => record.car === 'leaf'));
+    const reopenedMonth = Array.from(ui.document.querySelectorAll('#ownerUnassigned .unassigned-month'))
+      .find((month) => month.textContent.includes('2026-11'));
+    assert.equal(reopenedMonth.querySelector('details').open, true);
   } finally {
     ui.close();
     await harness.close();

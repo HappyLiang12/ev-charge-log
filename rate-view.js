@@ -1,4 +1,4 @@
-import { formatHkDate, formatHkTime, sourceUrls } from './logic.js';
+import { formatHkDate, formatHkTime12, sourceUrls } from './logic.js';
 
 function textRow(label, value) {
   const row = document.createElement('div');
@@ -13,7 +13,7 @@ function textRow(label, value) {
 
 export function formatStamp(value) {
   return value && !Number.isNaN(Date.parse(value))
-    ? `${formatHkDate(value)} ${formatHkTime(value)}`
+    ? `${formatHkDate(value)} ${formatHkTime12(value)}`
     : '未記錄';
 }
 
