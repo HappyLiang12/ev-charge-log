@@ -624,7 +624,8 @@ Shown for `?owner`.
 - Unassigned list: Tesla start, kWh, duration, car selector, `分配`, `忽略`.
 - Pending manual list: car, startAt, `等待 Tesla 配對`.
 - Rates table: month, non-peak rate, peak rate, fuel adjustment, rebate,
-  source, fetchedAt, manual override. Read-only; edit in the Sheet.
+  source, fetchedAt, manual override. The latest month is shown first; older
+  months are collapsed. Read-only; edit in the Sheet.
 - Family link per car with a copy button. Links contain only `?car=<id>`.
 - Empty states: no cars configured, no rates configured, no unassigned
   sessions.
@@ -728,7 +729,9 @@ times are Asia/Hong_Kong.
 
 - jsdom tests import the real `app.js`, `family.js`, and `owner.js` modules and run them against the Apps Script VM served over HTTP, with fake Sheet data and mocked Tesla/CLP.
 - Family coverage: load, start, sync a mocked Tesla session, delete, and claim an unassigned session.
-- Owner coverage: rate dedupe, CLP refresh with source links, assign, ignore, CSV export, and the manual-override error message.
+- Owner UI: rate dedupe/refresh/source links, latest-month-first rates with
+  older months collapsed, assign, ignore, CSV export, and the sync-skipped
+  message when no manual start or `SYNC_FROM` exists.
 - The tests use the production API/client modules; only browser APIs absent from jsdom are stubbed.
 
 ### 14.4 Browser smoke

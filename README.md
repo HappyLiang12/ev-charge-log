@@ -32,7 +32,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with kWh, estimated cost, and real delete.
-- Owner month totals, unassigned and pending lists, rate cards, and copyable family links.
+- Owner month totals, unassigned and pending lists, rate cards (latest month first; older months collapsed), and copyable family links.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
@@ -220,6 +220,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
 - There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
+- `更新 Tesla` does not fetch until there is a manual start or `SYNC_FROM`; the owner view explains this. Set `SYNC_FROM` only for an intentional backfill.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
 
@@ -229,7 +230,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 103 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Four jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 104 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, and the API envelope. Five jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

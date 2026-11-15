@@ -117,6 +117,11 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     await waitFor(() => ui.document.querySelectorAll('#ownerRates .owner-card').length === 11);
+    const details = ui.document.querySelector('#ownerRates details');
+    assert.ok(details);
+    assert.equal(details.open, false);
+    assert.equal(details.querySelectorAll('.owner-card').length, 10);
+    assert.equal(ui.document.querySelectorAll('#ownerRates > .owner-card').length, 1);
     assert.equal(
       ui.document.getElementById('ownerSheetLink').href,
       'https://docs.google.com/spreadsheets/d/fake-sheet/edit',
@@ -147,6 +152,20 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, ignore, and CSV
     const csv = await ui.blobs[0].text();
     assert.match(csv, /Leaf/);
     assert.match(csv, /日期,時間,車/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: sync without a manual record explains the skipped window', { timeout: 20000 }, async () => {
+  const harness = await createHarness();
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    ui.document.getElementById('ownerSyncBtn').click();
+    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('SYNC_FROM'));
+    assert.equal(harness.env.call('readLog_').length, 0);
   } finally {
     ui.close();
     await harness.close();
