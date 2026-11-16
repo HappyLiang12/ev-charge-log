@@ -347,7 +347,11 @@ function syncApply_(sessions, nowIso) {
   return withScriptLock_(function () {
     var records = readLog_();
     var manualRows = manualSyncRows_(records);
-    var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
+    var matchOptions = {
+      earlyMs: Number(props.getProperty('MATCH_EARLY_MINUTES') || 120) * 60 * 1000,
+      lateMs: Number(props.getProperty('MATCH_LATE_MINUTES') || 30) * 60 * 1000,
+      fallbackWindowMs: Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000,
+    };
 
     var reconciled = 0;
     var unassignedRows = records.filter(function (record) {
@@ -355,12 +359,13 @@ function syncApply_(sessions, nowIso) {
     });
     for (var u = 0; u < unassignedRows.length; u += 1) {
       var unassignedRow = unassignedRows[u];
-      var candidate = closestManualCandidate_(
-        unassignedRow.teslaStartAt || unassignedRow.startAt,
-        manualRows,
-        windowMs,
-      );
-      if (!candidate) continue;
+      var match = closestManualForSession_({
+        startAt: unassignedRow.teslaStartAt || unassignedRow.startAt,
+        endAt: unassignedRow.teslaEndAt,
+        durationSec: unassignedRow.durationSec,
+      }, manualRows, matchOptions);
+      if (match.ambiguous || !match.candidate) continue;
+      var candidate = match.candidate;
       var updated = updateLog_(candidate.id, {
         kWh: unassignedRow.kWh,
         durationSec: unassignedRow.durationSec,
@@ -408,7 +413,8 @@ function syncApply_(sessions, nowIso) {
       var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
       var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
       var split = splitPeakKwh_(session.startAt, session.durationSec, session.kWh, peakStart, peakEnd);
-      var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
+      var match = closestManualForSession_(session, manualRows, matchOptions);
+      var manual = match.ambiguous ? null : match.candidate;
       if (manual) {
         var filled = updateLog_(manual.id, {
           car: manual.car,
