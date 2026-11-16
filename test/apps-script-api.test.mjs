@@ -28,6 +28,36 @@ const row = (overrides = {}) => [
   10, 10, 'din:rec-1', 'tesla+manual',
 ].map((value, index) => (overrides[index] !== undefined ? overrides[index] : value));
 
+function manualRowAt(id, car, startAt) {
+  const hk = new Date(Date.parse(startAt) + 8 * 3600 * 1000).toISOString();
+  return row({
+    0: id, 1: startAt, 2: hk.slice(0, 10), 3: hk.slice(11, 16), 4: car,
+    5: '', 6: '', 7: '', 8: '', 9: '', 10: '', 11: '', 12: 'manual',
+  });
+}
+
+function teslaFetch(startAt, { durationSec = 7200, energyWh = 20000, din = 'din:late' } = {}) {
+  return (url) => {
+    if (url === TOKEN_URL) {
+      return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+    }
+    if (url.includes('/telemetry_history')) {
+      return response(200, JSON.stringify({
+        response: {
+          telemetry_history: [{
+            charge_start_time: { seconds: Math.floor(Date.parse(startAt) / 1000) },
+            charge_duration: { seconds: durationSec },
+            energy_added_wh: energyWh,
+            target_id: 'target-1',
+            din,
+          }],
+        },
+      }));
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+}
+
 function setup({ sheets = {}, props = {}, fetch } = {}) {
   const env = createAppsScriptEnv({
     sheets,
@@ -766,4 +796,128 @@ test('refreshRates rejects implausible tariff values without writing', () => {
   assert.equal(result.ok, false);
   assert.match(result.error, /CLP/);
   assert.equal(plain(env.call('readRates_')).length, 0);
+});
+
+test('sync matches a manual start inside the Tesla session even 86 minutes late', () => {
+  const sessionStart = '2026-11-14T05:00:00.000Z';
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, manualRowAt('manual-late', 'ix3', '2026-11-14T06:26:00.000Z')],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: teslaFetch(sessionStart),
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.matched, 1);
+  assert.equal(result.unassigned, 0);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'manual-late');
+  assert.equal(records[0].car, 'ix3');
+  assert.equal(records[0].kWh, 20);
+  assert.equal(records[0].source, 'tesla+manual');
+  assert.equal(records[0].teslaKey, `din:late:${Math.floor(Date.parse(sessionStart) / 1000)}`);
+});
+
+test('sync matches an early manual start within the early grace', () => {
+  const sessionStart = '2026-11-14T05:00:00.000Z';
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, manualRowAt('manual-early', 'model3', '2026-11-14T04:15:00.000Z')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: teslaFetch(sessionStart, { durationSec: 3600, energyWh: 12000, din: 'din:early' }),
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.matched, 1);
+  assert.equal(result.unassigned, 0);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].car, 'model3');
+  assert.equal(records[0].source, 'tesla+manual');
+});
+
+test('sync leaves a session unassigned when eligible manual rows belong to different cars', () => {
+  const sessionStart = '2026-11-14T05:00:00.000Z';
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        manualRowAt('manual-model3', 'model3', '2026-11-14T05:00:00.000Z'),
+        manualRowAt('manual-ix3', 'ix3', '2026-11-14T06:26:00.000Z'),
+      ],
+      Cars: [
+        CARS_HEADER,
+        ['model3', 'Model 3', 'TRUE', 'x'],
+        ['ix3', 'iX3', 'TRUE', 'x'],
+      ],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: teslaFetch(sessionStart),
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.matched, 0);
+  assert.equal(result.unassigned, 1);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 3);
+  assert.equal(records.filter((record) => record.car === 'unassigned').length, 1);
+  assert.equal(records.filter((record) => record.source === 'manual').length, 2);
+});
+
+test('owner assign merges a manual start inside the session even beyond the old 30-minute window', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'unassigned-late', 1: '2026-11-14T05:00:00.000Z', 2: '2026-11-14', 3: '13:00',
+          4: 'unassigned', 5: 20, 6: 7200,
+          7: '2026-11-14T05:00:00.000Z', 8: '2026-11-14T07:00:00.000Z',
+          9: 10, 10: 10, 11: 'din:late', 12: 'tesla',
+        }),
+        manualRowAt('manual-late', 'ix3', '2026-11-14T06:26:00.000Z'),
+      ],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x']],
+    },
+  });
+  const result = send(env, { action: 'assign', id: 'unassigned-late', car: 'ix3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.merged, true);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'manual-late');
+  assert.equal(records[0].car, 'ix3');
+  assert.equal(records[0].kWh, 20);
+  assert.equal(records[0].source, 'tesla+manual');
+  assert.equal(records[0].teslaKey, 'din:late');
+});
+
+test('family claim merges a manual start inside the session even beyond the old 30-minute window', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'unassigned-late', 4: 'unassigned', 5: 20, 6: 7200,
+          7: '2026-11-14T05:00:00.000Z', 8: '2026-11-14T07:00:00.000Z',
+          9: 10, 10: 10, 11: 'din:late', 12: 'tesla',
+        }),
+        manualRowAt('manual-late', 'ix3', '2026-11-14T06:26:00.000Z'),
+      ],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x']],
+    },
+  });
+  const result = send(env, { action: 'claim', car: 'ix3', id: 'unassigned-late' });
+  assert.equal(result.ok, true);
+  assert.equal(result.merged, true);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'manual-late');
+  assert.equal(records[0].car, 'ix3');
+  assert.equal(records[0].source, 'tesla+manual');
 });

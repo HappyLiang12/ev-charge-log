@@ -26,7 +26,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 - One-tap start recording with a per-car URL; no login and no car picker. While a manual start is pending, the start button is disabled and a QR auto-start does not create a second record. It re-enables after the session is matched or the pending record is deleted.
 - On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
-- Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
+- Manual starts are matched to completed Tesla sessions when the start falls inside the session, up to `MATCH_EARLY_MINUTES` (default 120) before it, or up to `MATCH_LATE_MINUTES` (default 30) after it. If eligible manual starts belong to different cars, the session stays unassigned for manual resolution.
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
@@ -117,7 +117,9 @@ In Apps Script, Project Settings -> Script Properties:
 | `TESLA_REFRESH_TOKEN` | Refresh token from the local OAuth helper |
 | `TESLA_BASE_URL` | `https://fleet-api.prd.na.vn.cloud.tesla.com` (optional; this is the default) |
 | `TESLA_SITE_ID` | Observed Wall Connector energy site ID; optional, discovered automatically when omitted |
-| `MATCH_WINDOW_MINUTES` | `30` |
+| `MATCH_EARLY_MINUTES` | `120` (manual start earlier than the Tesla session) |
+| `MATCH_LATE_MINUTES` | `30` (manual start after the Tesla session ends) |
+| `MATCH_WINDOW_MINUTES` | `30` (fallback when a session has no end time) |
 | `SYNC_FROM` | Leave unset; only set for an intentional backfill |
 | `SYNC_CURSOR` | Internal; do not set manually |
 
@@ -216,6 +218,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 
 - Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start.
 - If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
+- A manual start outside the session interval plus the early/late grace will not auto-match; use owner assign/claim or adjust `MATCH_EARLY_MINUTES` / `MATCH_LATE_MINUTES`.
 - Peak/off-peak is duration-proportional, not measured per minute.
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
@@ -231,7 +234,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 115 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 124 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

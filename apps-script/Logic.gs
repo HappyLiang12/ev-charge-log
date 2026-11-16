@@ -84,25 +84,54 @@ function splitPeakKwh_(startIso, durationSec, kwh, peakStart, peakEnd) {
   return { peakKWh: round6_(peakKWh), offPeakKWh: round6_(energy - peakKWh) };
 }
 
-function closestManualCandidate_(sessionStartIso, manualRows, windowMs) {
-  var target = Date.parse(sessionStartIso);
-  if (isNaN(target)) return null;
-  var best = null;
-  var bestDelta = Infinity;
+function manualCandidatesForSession_(session, manualRows, options) {
+  var start = Date.parse(session && (session.startAt || session.teslaStartAt));
+  if (isNaN(start)) return [];
+  var end = Date.parse(session && (session.endAt || session.teslaEndAt));
+  if (isNaN(end) && Number(session && session.durationSec) > 0) {
+    end = start + Number(session.durationSec) * 1000;
+  }
+  var hasEnd = !isNaN(end);
+  if (hasEnd && end < start) end = start;
+  var opts = options || {};
+  var earlyMs = opts.earlyMs == null ? 120 * 60 * 1000 : Math.max(0, Number(opts.earlyMs) || 0);
+  var lateMs = opts.lateMs == null ? 30 * 60 * 1000 : Math.max(0, Number(opts.lateMs) || 0);
+  var fallbackWindowMs = opts.fallbackWindowMs == null
+    ? 30 * 60 * 1000
+    : Math.max(0, Number(opts.fallbackWindowMs) || 0);
+  var candidates = [];
   for (var i = 0; i < (manualRows || []).length; i++) {
     var row = manualRows[i];
     if (!row || row.source !== 'manual' || !row.car || row.car === 'unassigned') continue;
     if (row.kWh != null || row.teslaKey) continue;
-    var start = Date.parse(row.startAt);
-    if (isNaN(start)) continue;
-    var delta = Math.abs(start - target);
-    if (delta > windowMs) continue;
-    if (delta < bestDelta || (delta === bestDelta && best && String(row.id) < String(best.id))) {
-      best = row;
-      bestDelta = delta;
+    var manualStart = Date.parse(row.startAt);
+    if (isNaN(manualStart)) continue;
+    var distance;
+    if (hasEnd) {
+      if (manualStart < start - earlyMs || manualStart > end + lateMs) continue;
+      if (manualStart < start) distance = start - manualStart;
+      else if (manualStart > end) distance = manualStart - end;
+      else distance = 0;
+    } else {
+      distance = Math.abs(manualStart - start);
+      if (distance > fallbackWindowMs) continue;
     }
+    candidates.push({ row: row, distance: distance });
   }
-  return best;
+  candidates.sort(function (a, b) {
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    return String(a.row.id) < String(b.row.id) ? -1 : (String(a.row.id) > String(b.row.id) ? 1 : 0);
+  });
+  return candidates;
+}
+
+function closestManualForSession_(session, manualRows, options) {
+  var candidates = manualCandidatesForSession_(session, manualRows, options);
+  if (!candidates.length) return { candidate: null, ambiguous: false };
+  var cars = {};
+  for (var i = 0; i < candidates.length; i += 1) cars[candidates[i].row.car] = true;
+  if (Object.keys(cars).length > 1) return { candidate: null, ambiguous: true };
+  return { candidate: candidates[0].row, ambiguous: false };
 }
 
 function normalizeClpText_(text) {

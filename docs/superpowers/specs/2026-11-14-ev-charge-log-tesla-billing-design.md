@@ -364,7 +364,10 @@ Ineligible sessions are ignored and retried on a later sync.
 Definitions:
 
 - `teslaKey = <din>:<startSeconds>`.
-- `windowMs = MATCH_WINDOW_MINUTES * 60 * 1000`.
+- `earlyMs = MATCH_EARLY_MINUTES * 60 * 1000` (default 120 minutes).
+- `lateMs = MATCH_LATE_MINUTES * 60 * 1000` (default 30 minutes).
+- `fallbackWindowMs = MATCH_WINDOW_MINUTES * 60 * 1000` (default 30 minutes,
+  used only when a session has no end time).
 - A manual candidate is a row with `source='manual'`, a non-empty `car` other
   than `unassigned`, `kWh` empty, and `teslaKey` empty.
 
@@ -378,15 +381,23 @@ Sync order, in two lock phases:
    holding the lock.
 3. Reacquire the lock, re-read `Log`, and reconcile existing
    unassigned rows with manual candidates:
-   for every `source='tesla'` row with `car='unassigned'`, find the nearest
-   manual candidate for any car whose `startAt` is within the window. If one
-   exists, copy kWh, duration, Tesla timestamps, split, and `teslaKey` into the
+   for every `source='tesla'` row with `car='unassigned'`, find manual
+   candidates for any car whose `startAt` is inside the session interval
+   `[startAt, endAt]`, or up to `earlyMs` before it, or up to `lateMs` after
+   it. If exactly one car has candidates, choose the closest candidate for that
+   car. Copy kWh, duration, Tesla timestamps, split, and `teslaKey` into the
    manual row, change its source to `tesla+manual`, and delete the unassigned
-   row. This handles a family member pressing start after an earlier sync.
+   row. If candidates span more than one car, leave the unassigned row for
+   manual resolution. This handles a family member pressing start late (inside
+   a long session) or early.
 4. For every Tesla session whose `teslaKey` already exists in `Log`, skip it.
-5. For the remaining sessions, choose the nearest manual candidate within the
-   window. If one exists, fill it and keep its id, car, and manual startAt.
-6. If no candidate exists, append an unassigned row.
+5. For the remaining sessions, apply the same interval match. If one car has
+   candidates, fill the closest manual row and keep its id, car, and manual
+   startAt. If no candidate exists, or candidates span multiple cars, append an
+   unassigned row.
+6. Owner/family assign and claim use the same interval matcher, but filter
+   manual candidates to the explicitly selected car, so the selected car
+   resolves any cross-car ambiguity.
 7. After applying without throwing, set `SYNC_CURSOR` to the fetch end time,
    never moving it backwards when concurrent syncs finish out of order. Release
    the lock.
