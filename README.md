@@ -234,7 +234,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 124 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 125 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
