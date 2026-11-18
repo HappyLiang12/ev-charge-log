@@ -192,20 +192,11 @@ function assignUnassigned_(target, car, records) {
   if (!target) throw new Error('Unknown record');
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
-  var matchOptions = {
-    earlyMs: Number(scriptProperty_('MATCH_EARLY_MINUTES') || 120) * 60 * 1000,
-    lateMs: Number(scriptProperty_('MATCH_LATE_MINUTES') || 30) * 60 * 1000,
-    fallbackWindowMs: Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000,
-  };
+  var windowMs = Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
   var manualRows = records.filter(function (record) {
     return record.source === 'manual' && record.car === car.id && record.kWh === null && !record.teslaKey;
   });
-  var match = closestManualForSession_({
-    startAt: target.teslaStartAt || target.startAt,
-    endAt: target.teslaEndAt,
-    durationSec: target.durationSec,
-  }, manualRows, matchOptions);
-  var manual = match.candidate;
+  var manual = closestManualCandidate_(target.teslaStartAt || target.startAt, manualRows, windowMs);
   if (manual) {
     var updated = updateLog_(manual.id, {
       kWh: target.kWh,

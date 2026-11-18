@@ -61,66 +61,28 @@ test('splitPeakKwh_ falls back to all off-peak without duration or energy', () =
   });
 });
 
-test('closestManualForSession_ matches a late manual start inside the session', () => {
-  const rows = [{
-    id: 'late', car: 'ix3', startAt: '2026-11-15T15:50:56.000Z',
-    source: 'manual', kWh: null, teslaKey: null,
-  }];
-  const match = call('closestManualForSession_', {
-    startAt: '2026-11-15T14:24:56.000Z',
-    endAt: '2026-11-15T18:06:48.000Z',
-  }, rows, { earlyMs: 120 * 60000, lateMs: 30 * 60000, fallbackWindowMs: 30 * 60000 });
-  assert.equal(match.ambiguous, false);
-  assert.equal(match.candidate.id, 'late');
-});
-
-test('closestManualForSession_ allows an early manual start within the early grace', () => {
-  const rows = [{
-    id: 'early', car: 'model3', startAt: '2026-11-14T04:15:00.000Z',
-    source: 'manual', kWh: null, teslaKey: null,
-  }];
-  const match = call('closestManualForSession_', {
-    startAt: '2026-11-14T05:00:00.000Z',
-    endAt: '2026-11-14T06:00:00.000Z',
-  }, rows, { earlyMs: 120 * 60000, lateMs: 30 * 60000, fallbackWindowMs: 30 * 60000 });
-  assert.equal(match.candidate.id, 'early');
-});
-
-test('closestManualForSession_ rejects a manual start after the late grace', () => {
-  const rows = [{
-    id: 'too-late', car: 'model3', startAt: '2026-11-14T06:31:00.000Z',
-    source: 'manual', kWh: null, teslaKey: null,
-  }];
-  const match = call('closestManualForSession_', {
-    startAt: '2026-11-14T05:00:00.000Z',
-    endAt: '2026-11-14T06:00:00.000Z',
-  }, rows, { earlyMs: 120 * 60000, lateMs: 30 * 60000, fallbackWindowMs: 30 * 60000 });
-  assert.equal(match.candidate, null);
-  assert.equal(match.ambiguous, false);
-});
-
-test('closestManualForSession_ reports ambiguity across cars', () => {
+test('closestManualCandidate_ matches the nearest unlinked manual row within the window', () => {
   const rows = [
-    { id: 'm1', car: 'model3', startAt: '2026-11-14T05:00:00.000Z', source: 'manual', kWh: null, teslaKey: null },
-    { id: 'm2', car: 'ix3', startAt: '2026-11-14T05:30:00.000Z', source: 'manual', kWh: null, teslaKey: null },
+    {
+      id: 'm1', car: 'model3', startAt: '2026-11-14T05:00:00.000Z', source: 'manual', kWh: null, teslaKey: null,
+    },
+    {
+      id: 'm2', car: 'model3', startAt: '2026-11-14T05:10:00.000Z', source: 'manual', kWh: null, teslaKey: null,
+    },
+    {
+      id: 'm3', car: 'model3', startAt: '2026-11-14T05:10:00.000Z', source: 'manual', kWh: 1, teslaKey: null,
+    },
+    {
+      id: 'm4', car: 'unassigned', startAt: '2026-11-14T05:10:00.000Z', source: 'manual', kWh: null, teslaKey: null,
+    },
+    {
+      id: 'm5', car: 'model3', startAt: '2026-11-14T06:00:00.000Z', source: 'manual', kWh: null, teslaKey: 'din:x',
+    },
   ];
-  const match = call('closestManualForSession_', {
-    startAt: '2026-11-14T05:00:00.000Z',
-    endAt: '2026-11-14T06:00:00.000Z',
-  }, rows, { earlyMs: 120 * 60000, lateMs: 30 * 60000, fallbackWindowMs: 30 * 60000 });
-  assert.equal(match.candidate, null);
-  assert.equal(match.ambiguous, true);
-});
-
-test('closestManualForSession_ falls back to a symmetric window without an end', () => {
-  const rows = [{
-    id: 'm1', car: 'model3', startAt: '2026-11-14T05:20:00.000Z',
-    source: 'manual', kWh: null, teslaKey: null,
-  }];
-  const match = call('closestManualForSession_', {
-    startAt: '2026-11-14T05:00:00.000Z',
-  }, rows, { earlyMs: 120 * 60000, lateMs: 30 * 60000, fallbackWindowMs: 30 * 60000 });
-  assert.equal(match.candidate.id, 'm1');
+  const match = call('closestManualCandidate_', '2026-11-14T05:12:00.000Z', rows, 30 * 60 * 1000);
+  assert.equal(match.id, 'm2');
+  assert.equal(call('closestManualCandidate_', '2026-11-14T06:30:00.000Z', rows, 30 * 60 * 1000), null);
+  assert.equal(call('closestManualCandidate_', 'not-a-date', rows, 30 * 60 * 1000), null);
 });
 
 test('parseFuelAdjustmentPage_ extracts the current month and the yearly table', () => {
