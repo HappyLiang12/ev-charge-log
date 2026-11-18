@@ -178,7 +178,15 @@ function deleteAction_(data) {
 }
 
 function syncAction_(data) {
-  return syncTesla_(!data || !data.car);
+  var result = syncTesla_(!data || !data.car);
+  if (!data || !data.car) {
+    try {
+      result.vehicleSuggestion = suggestTeslaVehicle_();
+    } catch (error) {
+      result.vehicleSuggestion = { error: 'Tesla vehicle suggestion failed' };
+    }
+  }
+  return result;
 }
 
 function findRecord_(records, id) {

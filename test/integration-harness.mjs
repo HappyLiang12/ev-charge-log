@@ -15,6 +15,7 @@ export const TOKEN_URL = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/to
 export const LOG_HEADER = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+  'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt',
 ];
 export const CARS_HEADER = ['id', 'name', 'active', 'createdAt'];
 export const RATES_HEADER = [
@@ -103,6 +104,8 @@ export function logRow(record) {
     record.teslaStartAt ?? '', record.teslaEndAt ?? '',
     record.peakKWh ?? '', record.offPeakKWh ?? '',
     record.teslaKey ?? '', record.source ?? 'manual',
+    record.suggestedCar ?? '', record.suggestionConfidence ?? '',
+    record.suggestionSource ?? '', record.suggestedAt ?? '',
   ];
 }
 

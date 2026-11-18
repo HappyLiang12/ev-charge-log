@@ -359,6 +359,41 @@ test('owner UI: CLP parse failure shows the manual-override message and keeps ra
   }
 });
 
+test('owner UI: shows a Tesla cached suggestion and adopts it without auto-assigning', { timeout: 20000 }, async () => {
+  const suggested = {
+    ...unassignedRecord('u-suggest', '2026-11-15T14:24:56.000Z', 'din:suggest'),
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.95,
+    suggestionSource: 'tesla_cached',
+    suggestedAt: '2026-11-18T10:52:43.544Z',
+  };
+  const harness = await createHarness({
+    sheets: defaultSheets({ rates: [rateRow('2026-11', 47.4)], records: [suggested] }),
+  });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    await waitFor(() => ui.document.querySelector('#ownerPending .owner-suggestion'));
+    assert.match(ui.document.querySelector('#ownerPending .owner-suggestion').textContent, /建議：Model 3（95%）/);
+    const select = ui.document.querySelector('#ownerPending select');
+    assert.equal(select.value, '');
+    const adopt = Array.from(ui.document.querySelectorAll('#ownerPending button'))
+      .find((button) => button.textContent === '採用');
+    assert.ok(adopt);
+    adopt.click();
+    assert.equal(select.value, 'model3');
+    assert.equal(harness.env.call('readLog_')[0].car, 'unassigned');
+    const assign = Array.from(ui.document.querySelectorAll('#ownerPending button'))
+      .find((button) => button.textContent === '分配');
+    assert.ok(assign);
+    assign.click();
+    await waitFor(() => harness.env.call('readLog_')[0].car === 'model3');
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('owner UI: sync reconciles a late manual start inside the Tesla session', { timeout: 20000 }, async () => {
   const unassigned = {
     ...unassignedRecord('u-ix3', '2026-11-15T14:24:56.000Z', 'din:ix3'),
