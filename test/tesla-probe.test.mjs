@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import {
   collectChargeSessions,
   findEnergySites,
+  findVehicles,
   redactSensitive,
   summarizeSessionIdentifiers,
+  summarizeVehicleCharge,
   writeRefreshTokenFile,
 } from '../tools/tesla-probe.mjs';
 
@@ -131,4 +133,50 @@ test('writeRefreshTokenFile writes a 0600 file with a trailing newline', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('findVehicles extracts vehicles from wrapped and unwrapped responses', () => {
+  const wrapped = findVehicles({
+    response: [
+      { vin: 'VIN-A', display_name: 'Model 3', state: 'online' },
+      { display_name: 'no vin' },
+    ],
+  });
+  assert.equal(wrapped.length, 1);
+  assert.equal(wrapped[0].vin, 'VIN-A');
+
+  const direct = findVehicles([{ vin: 'VIN-B', display_name: 'Second' }]);
+  assert.equal(direct.length, 1);
+  assert.equal(direct[0].vin, 'VIN-B');
+  assert.deepEqual(findVehicles({ response: {} }), []);
+});
+
+test('summarizeVehicleCharge exposes charge fields without VIN', () => {
+  const summary = summarizeVehicleCharge({
+    response: {
+      vin: 'VIN-A',
+      charge_state: {
+        charging_state: 'Charging',
+        charge_energy_added: 12.5,
+        charger_power: 7.2,
+        battery_level: 64,
+        charge_port_door_open: true,
+        timestamp: '2026-11-18T10:00:00.000Z',
+        unknown_field: 'kept-in-keys-only',
+      },
+      vehicle_config: {
+        car_type: 'model3',
+        trim: 'LR',
+        exterior_color: 'Black',
+      },
+    },
+  });
+
+  assert.equal(summary.charge.charging_state, 'Charging');
+  assert.equal(summary.charge.charge_energy_added, 12.5);
+  assert.equal(summary.charge.charger_power, 7.2);
+  assert.equal(summary.charge.timestamp, '2026-11-18T10:00:00.000Z');
+  assert.equal(summary.vehicleConfig.car_type, 'model3');
+  assert.equal(summary.vin, undefined);
+  assert.ok(summary.chargeKeys.includes('unknown_field'));
 });
