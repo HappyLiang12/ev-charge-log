@@ -508,3 +508,69 @@ test('readLog_ accepts Sheet date cells for timestamps', () => {
   assert.equal(records[0].teslaStartAt, '2026-11-14T05:00:00.000Z');
   assert.equal(records[0].teslaEndAt, '2026-11-14T07:00:00.000Z');
 });
+
+const billInput = {
+  periodStart: '2026-10-03',
+  periodEnd: '2026-11-04',
+  cutoff: '2026-11-04T14:59:27.000Z',
+  units: 886,
+  peakKWh: 77,
+  offPeakKWh: 809,
+  energyCharge: 870.39,
+  fuelCharge: 410.32,
+  others: -0.71,
+  total: 1280,
+  fileName: 'clp-bill.pdf',
+};
+
+test('upsertBill_ writes a Bills tab and updates by period instead of duplicating', () => {
+  const env = createEnv({});
+  const saved = plain(env.call('upsertBill_', env.call('normalizedBillInput_', billInput)));
+  assert.equal(saved.units, 886);
+  assert.equal(saved.total, 1280);
+  assert.equal(saved.cutoff, '2026-11-04T14:59:27.000Z');
+  assert.equal(saved.savedAt.length > 10, true);
+  assert.deepEqual(env.values('Bills')[0], [
+    'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
+    'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+  ]);
+
+  env.call('upsertBill_', env.call('normalizedBillInput_', { ...billInput, total: 1290 }));
+  const rows = plain(env.call('readBills_'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].total, 1290);
+  assert.equal(rows[0].periodStart, '2026-10-03');
+});
+
+test('normalizedBillInput_ rejects bad periods, cutoff and unit splits', () => {
+  assert.throws(() => envCall(billInput, { periodStart: '2026-11-05' }), /period/);
+  assert.throws(() => envCall(billInput, { cutoff: '2026-12-01T00:00:00.000Z' }), /Cutoff/);
+  assert.throws(() => envCall(billInput, { peakKWh: 70, offPeakKWh: 700 }), /do not add up/);
+  assert.throws(() => envCall(billInput, { units: 0 }), /units/);
+  assert.throws(() => envCall(billInput, { total: -1 }), /total/);
+});
+
+function envCall(input, overrides) {
+  const env = createEnv({});
+  return plain(env.call('normalizedBillInput_', { ...input, ...overrides }));
+}
+
+test('readBills_ reads date cells and drops invalid rows', () => {
+  const env = createEnv({
+    sheets: {
+      Bills: [
+        ['periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh', 'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt'],
+        [new Date('2026-09-02T16:00:00.000Z'), new Date('2026-10-01T16:00:00.000Z'), '2026-10-02T16:00:00.000Z', 900, '', '', '', '', '', 1300, '', ''],
+        [new Date('2026-10-02T16:00:00.000Z'), new Date('2026-11-03T16:00:00.000Z'), '2026-11-04T14:59:27.000Z', 886, 77, 809, '', '', '', 1280, 'bill.pdf', ''],
+        ['bad', '2026-11-04', '', 1, '', '', '', '', '', 1, '', ''],
+      ],
+    },
+  });
+  const rows = plain(env.call('readBills_'));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].periodEnd, '2026-11-04');
+  assert.equal(rows[0].units, 886);
+  assert.equal(rows[0].peakKWh, 77);
+  assert.equal(rows[1].periodEnd, '2026-10-02');
+  assert.equal(rows[1].peakKWh, null);
+});

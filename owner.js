@@ -15,7 +15,15 @@ import {
   syncTesla,
   refreshRates,
   assignSession,
+  saveBill,
 } from './api.js';
+import {
+  parseBillLines,
+  extractPdfLines,
+  inferCutoff,
+  allocateBill,
+  normalizeBillRows,
+} from './bill.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
 
@@ -24,6 +32,7 @@ export function initOwner({ apiUrl }) {
     cars: [],
     records: [],
     rates: [],
+    bills: [],
     sheetUrl: '',
     loading: Boolean(apiUrl),
     offline: false,
@@ -31,6 +40,9 @@ export function initOwner({ apiUrl }) {
     selectedMonth: null,
     monthTouched: false,
     openPending: new Set(),
+    billExtras: {},
+    billFileName: '',
+    billBusy: false,
   };
 
   const els = {
@@ -53,6 +65,21 @@ export function initOwner({ apiUrl }) {
     livePower: byId('ownerLivePower'),
     liveKwh: byId('ownerLiveKwh'),
     liveCost: byId('ownerLiveCost'),
+    billFile: byId('ownerBillFile'),
+    billManualBtn: byId('ownerBillManualBtn'),
+    billStatus: byId('ownerBillStatus'),
+    billForm: byId('ownerBillForm'),
+    billStart: byId('ownerBillStart'),
+    billEnd: byId('ownerBillEnd'),
+    billUnits: byId('ownerBillUnits'),
+    billTotal: byId('ownerBillTotal'),
+    billPeak: byId('ownerBillPeak'),
+    billOff: byId('ownerBillOff'),
+    billCutoff: byId('ownerBillCutoff'),
+    billExtract: byId('ownerBillExtract'),
+    billPreview: byId('ownerBillPreview'),
+    billSave: byId('ownerBillSave'),
+    bills: byId('ownerBills'),
   };
 
   function textRow(label, value) {
@@ -71,6 +98,219 @@ export function initOwner({ apiUrl }) {
     p.className = 'empty';
     p.textContent = message;
     return p;
+  }
+
+  function pctLabel(value) {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+    return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+  }
+
+  function hkLocalInput(iso) {
+    const at = Date.parse(iso);
+    if (!Number.isFinite(at)) return '';
+    return new Date(at + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  }
+
+  function isoFromLocalInput(value) {
+    const text = String(value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return '';
+    const at = Date.parse(`${text}:00+08:00`);
+    return Number.isFinite(at) ? new Date(at).toISOString() : '';
+  }
+
+  function setBillStatus(text) {
+    els.billStatus.textContent = text;
+  }
+
+  function fillBillForm(bill, fileName) {
+    els.billForm.hidden = false;
+    els.billStart.value = bill.periodStart || '';
+    els.billEnd.value = bill.periodEnd || '';
+    els.billUnits.value = bill.units === null || bill.units === undefined ? '' : bill.units;
+    els.billTotal.value = bill.total === null || bill.total === undefined ? '' : bill.total;
+    els.billPeak.value = bill.peakKWh === null || bill.peakKWh === undefined ? '' : bill.peakKWh;
+    els.billOff.value = bill.offPeakKWh === null || bill.offPeakKWh === undefined ? '' : bill.offPeakKWh;
+    els.billCutoff.value = bill.cutoff ? hkLocalInput(bill.cutoff) : '';
+    els.billExtract.textContent = fileName ? `檔案：${fileName}` : '';
+  }
+
+  function readBillForm() {
+    const periodStart = els.billStart.value;
+    const periodEnd = els.billEnd.value;
+    const units = Number(els.billUnits.value);
+    const total = Number(els.billTotal.value);
+    const peakRaw = els.billPeak.value.trim();
+    const offRaw = els.billOff.value.trim();
+    const peakKWh = peakRaw === '' ? null : Number(peakRaw);
+    const offPeakKWh = offRaw === '' ? null : Number(offRaw);
+    const cutoff = isoFromLocalInput(els.billCutoff.value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) return null;
+    if (periodStart >= periodEnd) return null;
+    if (!(units > 0) || !(total > 0) || !cutoff) return null;
+    if ((peakKWh === null) !== (offPeakKWh === null)) return null;
+    if (peakKWh !== null && Math.abs(peakKWh + offPeakKWh - units) > 1.5) return null;
+    return { periodStart, periodEnd, units, total, peakKWh, offPeakKWh, cutoff };
+  }
+
+  function makeAllocationTable(allocation, bill) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bill-allocation';
+    if (!allocation.rows.length) {
+      wrap.append(emptyLabel('此帳單期內未有已配對的充電紀錄。'));
+      return wrap;
+    }
+    const table = document.createElement('table');
+    table.className = 'bill-table';
+    const head = document.createElement('tr');
+    for (const label of ['車輛', 'kWh', '佔比', '應收']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      head.append(th);
+    }
+    table.append(head);
+    for (const row of allocation.rows) {
+      const tr = document.createElement('tr');
+      for (const value of [row.name, row.kWh.toFixed(1), `${(row.share * 100).toFixed(1)}%`, `$${row.amount.toFixed(2)}`]) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.append(td);
+      }
+      table.append(tr);
+    }
+    const foot = document.createElement('tr');
+    foot.className = 'bill-total-row';
+    for (const value of ['合計', allocation.loggedKWh.toFixed(1), '100%', `$${bill.total.toFixed(2)}`]) {
+      const td = document.createElement('td');
+      td.textContent = value;
+      foot.append(td);
+    }
+    table.append(foot);
+    wrap.append(table);
+    const drift = document.createElement('p');
+    drift.className = 'hint';
+    drift.textContent = `記錄 ${allocation.loggedKWh.toFixed(1)} 度 vs 帳單 ${bill.units} 度（${pctLabel(allocation.driftUnitsPct)}）；按記錄用量比例分攤。`;
+    wrap.append(drift);
+    if (bill.peakKWh !== null && bill.offPeakKWh !== null) {
+      const split = document.createElement('p');
+      split.className = 'hint';
+      split.textContent = `帳單高峯 ${bill.peakKWh} / 非高峯 ${bill.offPeakKWh} 度；記錄按時間比例估算 ${allocation.peakKWh.toFixed(0)} / ${allocation.offPeakKWh.toFixed(0)}（僅參考）。`;
+      wrap.append(split);
+    }
+    return wrap;
+  }
+
+  function makeBillCard(bill) {
+    const activeCars = state.cars.filter((car) => car.active);
+    const allocation = allocateBill(state.records, bill, activeCars, state.rates, bill.cutoff);
+    const card = document.createElement('div');
+    card.className = 'bill-card';
+    const head = document.createElement('div');
+    head.className = 'owner-card-head';
+    const title = document.createElement('span');
+    title.className = 'owner-card-title';
+    title.textContent = `${bill.periodStart} – ${bill.periodEnd}`;
+    const total = document.createElement('span');
+    total.className = 'owner-card-total';
+    total.textContent = `$${bill.total.toFixed(2)}`;
+    head.append(title, total);
+    card.append(head);
+    const meta = document.createElement('p');
+    meta.className = 'hint';
+    meta.textContent = `${bill.units} 度 · 高峯 ${bill.peakKWh === null ? '—' : bill.peakKWh} / 非高峯 ${bill.offPeakKWh === null ? '—' : bill.offPeakKWh} · 截止 ${formatHkDate(bill.cutoff)} ${formatHkTime12(bill.cutoff)}${bill.fileName ? ` · ${bill.fileName}` : ''}`;
+    card.append(meta);
+    card.append(makeAllocationTable(allocation, bill));
+    return card;
+  }
+
+  function renderBills() {
+    const bills = normalizeBillRows(state.bills);
+    els.bills.replaceChildren();
+    if (!bills.length) {
+      els.bills.append(emptyLabel('未有帳單。上載中電帳單 PDF 或手動輸入。'));
+      return;
+    }
+    for (const bill of bills) els.bills.append(makeBillCard(bill));
+  }
+
+  function renderBillPreview() {
+    if (els.billForm.hidden) return;
+    const bill = readBillForm();
+    els.billSave.disabled = state.billBusy || !apiUrl || !bill;
+    els.billPreview.replaceChildren();
+    if (!bill) {
+      els.billPreview.append(emptyLabel('請填寫帳單期、總度數、總額及截止時間。'));
+      return;
+    }
+    const activeCars = state.cars.filter((car) => car.active);
+    els.billPreview.append(makeAllocationTable(
+      allocateBill(state.records, bill, activeCars, state.rates, bill.cutoff),
+      bill,
+    ));
+  }
+
+  async function onBillFile() {
+    const file = els.billFile.files && els.billFile.files[0];
+    if (!file) return;
+    state.billFileName = file.name;
+    setBillStatus('解析中…');
+    try {
+      if (!window.pdfjsLib) throw new Error('PDF 解析元件未載入');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdf.worker.min.js', document.baseURI).toString();
+      const buffer = await file.arrayBuffer();
+      const lines = await extractPdfLines(buffer, window.pdfjsLib);
+      const parsed = parseBillLines(lines);
+      const inferred = inferCutoff(state.records, parsed);
+      state.billExtras = {
+        energyCharge: parsed.energyCharge,
+        fuelCharge: parsed.fuelCharge,
+        others: parsed.others,
+      };
+      fillBillForm({ ...parsed, cutoff: inferred.cutoff }, file.name);
+      setBillStatus(inferred.source === 'bill'
+        ? '已讀取帳單；截止時間按帳單分月用量推算，可手動調整。'
+        : '已讀取帳單；請確認截止時間。');
+      renderBillPreview();
+    } catch (error) {
+      els.billForm.hidden = false;
+      setBillStatus(friendlyError(error, '未能讀取 PDF；請手動輸入帳單數字。'));
+      renderBillPreview();
+    } finally {
+      els.billFile.value = '';
+    }
+  }
+
+  async function onSaveBill() {
+    const bill = readBillForm();
+    if (!bill) {
+      setBillStatus('請檢查帳單期、度數、總額、高峯/非高峯及截止時間。');
+      renderBillPreview();
+      return;
+    }
+    if (!apiUrl || state.billBusy) return;
+    state.billBusy = true;
+    renderBillPreview();
+    try {
+      await saveBill(apiUrl, {
+        ...bill,
+        energyCharge: state.billExtras.energyCharge ?? null,
+        fuelCharge: state.billExtras.fuelCharge ?? null,
+        others: state.billExtras.others ?? null,
+        fileName: state.billFileName,
+      });
+      showToast(els.toast, '帳單已記錄。');
+      setBillStatus('帳單已記錄，可按「更新充電樁」後再核對。');
+      els.billForm.hidden = true;
+      state.billExtras = {};
+      state.billFileName = '';
+      await refreshOrWarn('帳單已記錄，但未能載入最新資料，請重新載入。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '帳單記錄失敗，請檢查網絡後重試。'));
+    } finally {
+      state.billBusy = false;
+      render();
+      renderBillPreview();
+    }
   }
 
   function makeCarCard(car, rows) {
@@ -308,6 +548,7 @@ export function initOwner({ apiUrl }) {
     } else {
       for (const car of activeCars) els.links.append(makeLinkCard(car));
     }
+    renderBills();
   }
 
   async function refreshData() {
@@ -315,6 +556,7 @@ export function initOwner({ apiUrl }) {
     state.cars = data.cars;
     state.records = data.records;
     state.rates = data.rates;
+    state.bills = data.bills || [];
     state.sheetUrl = data.sheetUrl;
     state.offline = false;
   }
@@ -462,6 +704,18 @@ export function initOwner({ apiUrl }) {
   els.exportBtn.addEventListener('click', onExport);
   els.syncBtn.addEventListener('click', () => { void onSync(); });
   els.ratesBtn.addEventListener('click', () => { void onRates(); });
+  els.billFile.addEventListener('change', () => { void onBillFile(); });
+  els.billManualBtn.addEventListener('click', () => {
+    els.billForm.hidden = false;
+    renderBillPreview();
+  });
+  for (const field of [
+    els.billStart, els.billEnd, els.billUnits, els.billTotal,
+    els.billPeak, els.billOff, els.billCutoff,
+  ]) {
+    field.addEventListener('input', renderBillPreview);
+  }
+  els.billSave.addEventListener('click', () => { void onSaveBill(); });
   window.addEventListener('online', () => {
     if (apiUrl) void load();
   });

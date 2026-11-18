@@ -37,6 +37,7 @@ function doPost(e) {
       else if (action === 'assign') result = assignAction_(data);
       else if (action === 'claim') result = claimAction_(data);
       else if (action === 'refreshRates') result = ratesAction_(data);
+      else if (action === 'bill') result = billAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -101,6 +102,7 @@ function ownerPayload_() {
     cars: readCars_(),
     records: readLog_(),
     rates: readRates_(),
+    bills: readBills_(),
     sheetUrl: sheetUrl_(),
     serverTime: new Date().toISOString(),
   };
@@ -233,4 +235,9 @@ function assignAction_(data) {
 
 function ratesAction_() {
   return refreshRates_();
+}
+
+function billAction_(data) {
+  if (!data || !data.bill) throw new Error('Missing bill');
+  return { bill: upsertBill_(normalizedBillInput_(data.bill)) };
 }

@@ -39,12 +39,13 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
 - Live charging card while a manual start is pending: Wall Connector state/power from Tesla, with an estimated kWh/cost counter that updates every second from the last 5-minute power sample. The final Tesla session replaces the estimate.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
+- Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
 
 ## Data model
 
-The Google Sheet has three tabs. The script creates missing tabs and appends missing `Log` columns to the right; existing rows are never moved or deleted. An older deployment may still have an unused `Ignored` tab; it is no longer created, read, or written.
+The Google Sheet has four tabs. The script creates missing tabs and appends missing `Log` columns to the right; existing rows are never moved or deleted. An older deployment may still have an unused `Ignored` tab; it is no longer created, read, or written.
 
 ### `Log`
 
@@ -73,6 +74,14 @@ The Google Sheet has three tabs. The script creates missing tabs and appends mis
 - Google Sheets may store `month` as a date cell and `peakStart`/`peakEnd` as time cells; the API normalizes the month to `YYYY-MM` and formats times in `Asia/Hong_Kong` (not with a fixed offset, because the 1899 time-cell epoch predates modern HKT).
 - The read path also dedupes duplicate month rows, preferring `manualOverride` then the latest `fetchedAt`.
 
+### `Bills`
+
+`periodStart`, `periodEnd`, `cutoff`, `units`, `peakKWh`, `offPeakKWh`, `energyCharge`, `fuelCharge`, `others`, `total`, `fileName`, `savedAt`.
+
+- One row per CLP bill period; saving the same `periodStart`/`periodEnd` updates the row instead of appending.
+- `cutoff` is the instant that separates this bill from the next: sessions starting before it belong to this bill. The owner UI defaults to the end of `periodEnd`, and can infer an earlier cutoff when the bill shows a partial last month (for example 01-11 to 04-11).
+- The PDF itself is never uploaded or stored; only these numbers and the file name are written.
+
 ## Billing
 
 The app uses the CLP EV residential time-of-use tariff. In 2026 the peak window is 16:00–23:00 and non-peak is 23:00–16:00.
@@ -86,7 +95,16 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 - Rates and times are HK cents/kWh and Asia/Hong_Kong.
 - The split is proportional to session duration; it is an estimate.
 - The 8-cent/kWh 2026 special fuel rebate is not inferred. Enter an eligible rebate in the `Rates` tab and set that row's `manualOverride` to `TRUE` so `更新費率` does not overwrite it.
-- The actual CLP bill remains authoritative. Per-bill reconciliation is a future enhancement.
+- The actual CLP bill remains authoritative. The owner view reconciles a bill by splitting its `total` over the logged kWh in the bill period:
+
+```text
+effective rate = bill total / logged kWh in period
+car amount     = car kWh * effective rate
+```
+
+- This per-kWh split is deliberate: the bill's metered peak/off-peak split can differ materially from the duration-proportional estimate, so the estimate is shown for reference only and is never used to charge a car.
+- Uploading a bill extracts the period, units, total and (when present) peak/off-peak, energy, fuel and other charges. If the PDF is a scan or password-protected, the owner can enter the same fields manually.
+- When the bill shows a partial last month, the cutoff is inferred by matching the last month's usage against the sessions on the final billing day; the owner can override the cutoff before saving.
 
 ## One-time setup
 
@@ -94,7 +112,7 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 
 1. Open the existing Google Sheet. The Sheet is currently link-shared by the owner's choice; anyone with the link can read the log. Set General access to Restricted if you want it private. The family view never links to it.
 2. Open Extensions -> Apps Script.
-3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/).
+3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/). The owner view also creates a `Bills` tab on first use.
 4. Do not edit the code. The Sheet ID is a Script Property; add `SHEET_ID` in the next section.
 5. Save the project.
 6. Set the Script Properties in section 2, including `SHEET_ID`.
@@ -184,7 +202,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 `GET`:
 
 - `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
-- `?owner` returns `{ ok, cars, records, rates, serverTime }` for the owner.
+- `?owner` returns `{ ok, cars, records, rates, bills, serverTime }` for the owner.
 - `?status=1` returns `{ ok, charging, powerW, energyWh, state, available, sampledAt }` from the Wall Connector live status. `energyWh` may be null.
 
 `POST` with a `text/plain` JSON body:
@@ -195,6 +213,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
 - `{ action: 'refreshRates' }`
+- `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }`
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
 
@@ -205,6 +224,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - A car QR encodes the same family URL plus `start=1`; anyone who scans it can start a charge for that car. Treat the QR like the family link.
 - The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
+- Bill PDFs are parsed in the browser and never uploaded; only the extracted bill numbers and the file name are stored in the Sheet.
 - The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link. Set General access to Restricted if you want it private.
 - Family actions require a valid car ID; owner actions require only the Apps Script Web App URL.
 - `index.html` uses `<meta name="referrer" content="no-referrer">`; owner external links use `rel="noreferrer"`.
@@ -216,11 +236,11 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 
 - Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start.
 - If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
-- Peak/off-peak is duration-proportional, not measured per minute.
+- Peak/off-peak is duration-proportional, not measured per minute. A past bill can differ substantially from this estimate even when total kWh matches; charge cars from the bill total split by kWh share, not from the peak/off estimate.
 - The vehicle may report DC-side energy; the AC meter can differ.
-- CLP page scraping is fragile. The parser normalizes markup and validates the values; if a fetch or parse fails, existing `Rates` stay unchanged and the owner is prompted to enter the row manually with `manualOverride=TRUE`.
+- CLP page scraping and PDF extraction are fragile. If the PDF text cannot be parsed (for example a scan or password-protected file), enter the bill fields manually; nothing is uploaded.
 - The live charging kWh/cost is an estimate from the last Wall Connector power sample; the completed Tesla session is authoritative. The card polls every 5 minutes while the page is visible (one Tesla call per poll) and interpolates every second.
-- There is no cron, scheduled background sync, outside-charger support, CCTV integration, or bill reconciliation yet.
+- There is no cron, scheduled background sync, outside-charger support, or CCTV integration yet.
 - `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
@@ -231,7 +251,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 115 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 129 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Ten jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was smoke-tested in a real browser against a text PDF; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
