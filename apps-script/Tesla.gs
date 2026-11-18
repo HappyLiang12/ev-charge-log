@@ -1,22 +1,11 @@
 var TESLA_TOKEN_URL_ = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token';
 var DEFAULT_TESLA_BASE_URL_ = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
-var TESLA_SCOPE_BASE_ = 'openid offline_access energy_device_data';
+var TESLA_SCOPE_ = 'openid offline_access energy_device_data';
 var TESLA_MAX_LOOKBACK_DAYS_ = 90;
 var TESLA_INIT_LOOKBACK_DAYS_ = 30;
 
 function scriptProperty_(key) {
   return PropertiesService.getScriptProperties().getProperty(key);
-}
-
-function teslaVehicleFeatureEnabled_() {
-  return String(scriptProperty_('TESLA_VEHICLE_SUGGEST') || '0') === '1'
-    || String(scriptProperty_('TESLA_VEHICLE_AUTO_ASSIGN') || '0') === '1';
-}
-
-function teslaScope_() {
-  return teslaVehicleFeatureEnabled_()
-    ? TESLA_SCOPE_BASE_ + ' vehicle_device_data'
-    : TESLA_SCOPE_BASE_;
 }
 
 function teslaBaseUrl_() {
@@ -36,7 +25,7 @@ function refreshAccessToken_() {
       client_secret: props.getProperty('TESLA_CLIENT_SECRET'),
       refresh_token: props.getProperty('TESLA_REFRESH_TOKEN'),
       audience: teslaBaseUrl_(),
-      scope: teslaScope_(),
+      scope: TESLA_SCOPE_,
     },
     muteHttpExceptions: true,
   });
@@ -302,141 +291,6 @@ function chargerLiveStatus_() {
     {},
   );
   return normalizeChargerLive_(payload);
-}
-
-function vehicleTimestampIso_(value) {
-  if (typeof value === 'number' && isFinite(value)) return new Date(value).toISOString();
-  var text = String(value || '').trim();
-  if (!text) return null;
-  if (/^\d+$/.test(text)) {
-    var numeric = Number(text);
-    if (isFinite(numeric)) return new Date(numeric).toISOString();
-  }
-  return validIso_(text) ? new Date(text).toISOString() : null;
-}
-
-function fetchVehicleCachedCharge_() {
-  if (!teslaVehicleFeatureEnabled_()) {
-    return { skipped: true };
-  }
-  var vin = String(scriptProperty_('TESLA_VEHICLE_VIN') || '').trim();
-  if (!vin) {
-    var payload = teslaGet_('/api/1/vehicles', {});
-    var list = payload && payload.response !== undefined ? payload.response : payload;
-    var vehicles = (Array.isArray(list) ? list : []).filter(function (vehicle) {
-      return vehicle && vehicle.vin;
-    });
-    if (vehicles.length !== 1) {
-      throw new Error('Expected exactly one Tesla vehicle; set TESLA_VEHICLE_VIN');
-    }
-    vin = String(vehicles[0].vin);
-  }
-  var data = teslaGet_('/api/1/vehicles/' + encodeURIComponent(vin) + '/vehicle_data_cached', {});
-  var root = data && data.response !== undefined ? data.response : (data || {});
-  var charge = root && root.charge_state ? root.charge_state : {};
-  return {
-    chargingState: String(charge.charging_state || ''),
-    kWh: numberOrNull_(charge.charge_energy_added),
-    powerW: numberOrNull_(charge.charger_power),
-    batteryLevel: numberOrNull_(charge.battery_level),
-    timestamp: vehicleTimestampIso_(charge.timestamp),
-  };
-}
-
-function vehicleSessionEndMs_(record) {
-  var end = Date.parse(record.teslaEndAt || '');
-  if (!isNaN(end)) return end;
-  var start = Date.parse(record.teslaStartAt || record.startAt || '');
-  if (!isNaN(start) && Number(record.durationSec) > 0) {
-    return start + Number(record.durationSec) * 1000;
-  }
-  return NaN;
-}
-
-function vehicleSuggestionCandidate_(record, cached) {
-  if (!record || record.car !== 'unassigned' || !record.teslaKey || record.kWh === null) return null;
-  if (record.suggestedCar) return null;
-  var cachedKWh = numberOrNull_(cached && cached.kWh);
-  if (cachedKWh === null) return null;
-  var end = vehicleSessionEndMs_(record);
-  var timestamp = Date.parse(cached && cached.timestamp || '');
-  if (isNaN(end) || isNaN(timestamp)) return null;
-  var energyDiff = Math.abs(cachedKWh - Number(record.kWh));
-  var energyLimit = Math.max(1, Number(record.kWh) * 0.2);
-  if (energyDiff > energyLimit) return null;
-  var timeDiff = Math.abs(timestamp - end);
-  if (timeDiff > 6 * 60 * 60 * 1000) return null;
-  var confidence = energyDiff <= Math.max(0.5, Number(record.kWh) * 0.1) ? 0.95 : 0.8;
-  return { record: record, confidence: confidence, energyDiff: energyDiff, timeDiff: timeDiff };
-}
-
-function suggestTeslaVehicle_() {
-  if (!teslaVehicleFeatureEnabled_()) {
-    return { skipped: true };
-  }
-  var cached;
-  try {
-    cached = fetchVehicleCachedCharge_();
-  } catch (error) {
-    return { error: 'Tesla vehicle data unavailable' };
-  }
-  if (!cached || cached.skipped) return { skipped: true };
-  var carId = String(scriptProperty_('TESLA_CAR_ID') || 'model3').trim();
-  var now = new Date().toISOString();
-  return withScriptLock_(function () {
-    var car = findCar_(carId);
-    if (!car || !car.active) return { error: 'Unknown Tesla car: ' + carId };
-    var candidates = [];
-    var records = readLog_();
-    for (var i = 0; i < records.length; i += 1) {
-      var candidate = vehicleSuggestionCandidate_(records[i], cached);
-      if (candidate) candidates.push(candidate);
-    }
-    if (!candidates.length) return { suggested: 0 };
-    if (candidates.length > 1) return { suggested: 0, ambiguous: true };
-    var target = candidates[0];
-    var suggestion = {
-      suggestedCar: carId,
-      suggestionConfidence: target.confidence,
-      suggestionSource: 'tesla_cached',
-      suggestedAt: now,
-    };
-    var autoEnabled = String(scriptProperty_('TESLA_VEHICLE_AUTO_ASSIGN') || '0') === '1';
-    if (autoEnabled && target.confidence >= 0.9 && target.timeDiff <= 2 * 60 * 60 * 1000) {
-      var manualMatch = closestManualForSession_({
-        startAt: target.record.teslaStartAt || target.record.startAt,
-        endAt: target.record.teslaEndAt,
-        durationSec: target.record.durationSec,
-      }, manualSyncRows_(records), {
-        earlyMs: Number(scriptProperty_('MATCH_EARLY_MINUTES') || 120) * 60 * 1000,
-        lateMs: Number(scriptProperty_('MATCH_LATE_MINUTES') || 30) * 60 * 1000,
-        fallbackWindowMs: Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000,
-      });
-      if (!manualMatch.candidate && !manualMatch.ambiguous) {
-        try {
-          var assigned = assignUnassigned_(target.record, car, records, 'tesla_cached');
-          updateLog_(assigned.id, suggestion);
-          return {
-            suggested: 1,
-            autoAssigned: 1,
-            id: assigned.id,
-            car: carId,
-            confidence: target.confidence,
-          };
-        } catch (error) {
-          // Leave the suggestion in place if auto-assignment fails.
-        }
-      }
-    }
-    updateLog_(target.record.id, suggestion);
-    return {
-      suggested: 1,
-      autoAssigned: 0,
-      id: target.record.id,
-      car: carId,
-      confidence: target.confidence,
-    };
-  });
 }
 
 function withScriptLock_(fn) {

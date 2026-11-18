@@ -81,11 +81,6 @@ export function normalizeRecord(value) {
     offPeakKWh: numberOrNull(value.offPeakKWh),
     teslaKey: typeof value.teslaKey === 'string' && value.teslaKey ? value.teslaKey : null,
     source,
-    suggestedCar: CAR_RE.test(text(value.suggestedCar)) ? value.suggestedCar : '',
-    suggestionConfidence: numberOrNull(value.suggestionConfidence),
-    suggestionSource: text(value.suggestionSource),
-    suggestedAt: nullableDate(value.suggestedAt),
-    assignedBy: text(value.assignedBy),
   };
 }
 

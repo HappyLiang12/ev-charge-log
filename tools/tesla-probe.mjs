@@ -17,15 +17,13 @@ const AUTH_URL = process.env.TESLA_AUTH_URL || 'https://auth.tesla.com/oauth2/v3
 const TOKEN_URL = process.env.TESLA_TOKEN_URL || 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token';
 const DEFAULT_BASE_URL = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
 const DEFAULT_REDIRECT_URI = 'http://localhost:8788/callback';
-const DEFAULT_SCOPE = 'openid offline_access energy_device_data vehicle_device_data';
-const SCOPE = process.env.TESLA_PROBE_SCOPE || DEFAULT_SCOPE;
+const SCOPE = 'openid offline_access energy_device_data';
 const BASE_URL = (process.env.TESLA_FLEET_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
 const REDIRECT_URI = process.env.TESLA_REDIRECT_URI || DEFAULT_REDIRECT_URI;
 const PROBE_DAYS = clampInt(process.env.TESLA_PROBE_DAYS, 90, 1, 3650);
 const TIME_ZONE = process.env.TESLA_PROBE_TIME_ZONE || 'Asia/Hong_Kong';
 const RAW = process.env.TESLA_PROBE_RAW === '1';
 const INSPECT_IDS = process.env.TESLA_PROBE_IDS === '1';
-const LIVE_VEHICLE = process.env.TESLA_PROBE_LIVE_VEHICLE === '1';
 const DOMAIN = process.env.TESLA_DOMAIN || '';
 const DOMAIN_DISPLAY = DOMAIN || '<your-user>.github.io';
 const CLIENT_ID = process.env.TESLA_CLIENT_ID || '';
@@ -153,23 +151,22 @@ async function fetchJson(url, headers) {
   return { status: response.status, body, json: parseJson(body) };
 }
 
-async function apiGet(path, accessToken, options = {}) {
+async function apiGet(path, accessToken) {
   const url = new URL(path, BASE_URL).toString();
-  const displayUrl = options.displayUrl || url;
   const headers = {
     authorization: `Bearer ${accessToken}`,
     accept: 'application/json',
     'user-agent': 'ev-charge-log-probe/1.0',
   };
 
-  console.log(`GET ${displayUrl} (HTTP/1.1)`);
+  console.log(`GET ${url} (HTTP/1.1)`);
   let http1 = null;
   let http1Error = null;
   try {
     http1 = await fetchJson(url, headers);
     if (http1.status === 200 && http1.json) return http1.json;
     if (http1.status !== 404 && http1.status !== 405) {
-      throw new Error(`HTTP ${http1.status} ${displayUrl}: ${errorDetail(http1.json, http1.body)}`);
+      throw new Error(`HTTP ${http1.status} ${url}: ${errorDetail(http1.json, http1.body)}`);
     }
   } catch (error) {
     if (/^HTTP \d{3} /.test(error.message)) throw error;
@@ -184,7 +181,7 @@ async function apiGet(path, accessToken, options = {}) {
       || errorDetail(http1?.json, http1?.body)
       || http1Error?.message
       || '';
-    throw new Error(`HTTP ${http2Response.status}/${http1?.status || 'network'} ${displayUrl}: ${detail}`);
+    throw new Error(`HTTP ${http2Response.status}/${http1?.status || 'network'} ${url}: ${detail}`);
   }
   return http2Json;
 }
@@ -260,55 +257,13 @@ async function registerPartner() {
   console.log('Registration complete. Next: npm run probe:tesla');
 }
 
-async function safeGet(path, accessToken, label, options = {}) {
+async function safeGet(path, accessToken, label) {
   try {
-    return { ok: true, data: await apiGet(path, accessToken, options) };
+    return { ok: true, data: await apiGet(path, accessToken) };
   } catch (error) {
     console.log(`  ${label}: ${error.message}`);
     return { ok: false, error };
   }
-}
-
-async function probeVehicles(accessToken) {
-  const list = await safeGet('/api/1/vehicles', accessToken, 'vehicles');
-  if (!list.ok) return;
-  const vehicles = findVehicles(list.data);
-  console.log(`\nVehicles found: ${vehicles.length}`);
-  for (const vehicle of vehicles) {
-    const vin = String(vehicle.vin);
-    const displayName = vehicle.display_name || vehicle.vehicle_id || 'vehicle';
-    const redactedVin = redactSensitive({ vin }).vin;
-    console.log(`- ${displayName} VIN=${redactedVin} state=${vehicle.state || '?'}`);
-    const masked = `/api/1/vehicles/***${vin.slice(-4)}`;
-
-    const cached = await safeGet(
-      `/api/1/vehicles/${encodeURIComponent(vin)}/vehicle_data_cached`,
-      accessToken,
-      'vehicle_data_cached',
-      { displayUrl: `${masked}/vehicle_data_cached` },
-    );
-    if (cached.ok) {
-      const summary = summarizeVehicleCharge(cached.data);
-      console.log(`  cached charge keys: ${summary.chargeKeys.join(', ') || '(none)'}`);
-      console.log(`  cached charge: ${jsonPreview(summary.charge, 3000)}`);
-      console.log(`  cached config: ${jsonPreview(summary.vehicleConfig, 1000)}`);
-    }
-
-    if (LIVE_VEHICLE) {
-      const live = await safeGet(
-        `/api/1/vehicles/${encodeURIComponent(vin)}/vehicle_data`,
-        accessToken,
-        'vehicle_data',
-        { displayUrl: `${masked}/vehicle_data` },
-      );
-      if (live.ok) {
-        const summary = summarizeVehicleCharge(live.data);
-        console.log(`  live charge keys: ${summary.chargeKeys.join(', ') || '(none)'}`);
-        console.log(`  live charge: ${jsonPreview(summary.charge, 3000)}`);
-      }
-    }
-  }
-  if (LIVE_VEHICLE) console.log('Note: live vehicle_data wakes the vehicle; cached data does not.');
 }
 
 function collectValues(node, predicate, output = []) {
@@ -378,45 +333,6 @@ export function collectChargeSessions(payload) {
   if (!arrays.length) return [];
   arrays.sort((a, b) => b.length - a.length);
   return arrays[0];
-}
-
-export function findVehicles(payload) {
-  const root = payload && payload.response !== undefined ? payload.response : payload;
-  if (!Array.isArray(root)) return [];
-  return root.filter((vehicle) => vehicle && typeof vehicle === 'object' && vehicle.vin);
-}
-
-export function summarizeVehicleCharge(payload) {
-  const root = payload && payload.response !== undefined ? payload.response : (payload || {});
-  const charge = root.charge_state && typeof root.charge_state === 'object' ? root.charge_state : {};
-  const config = root.vehicle_config && typeof root.vehicle_config === 'object' ? root.vehicle_config : {};
-  const selected = {};
-  const fields = [
-    'charging_state',
-    'detailed_charge_state',
-    'charge_energy_added',
-    'charger_power',
-    'charge_rate',
-    'battery_level',
-    'battery_range',
-    'charge_port_door_open',
-    'charge_port_latch',
-    'charge_limit_soc',
-    'time_to_full_charge',
-    'timestamp',
-  ];
-  for (const field of fields) {
-    if (charge[field] !== undefined) selected[field] = charge[field];
-  }
-  return {
-    chargeKeys: Object.keys(charge).sort(),
-    charge: selected,
-    vehicleConfig: {
-      car_type: config.car_type,
-      trim: config.trim,
-      exterior_color: config.exterior_color,
-    },
-  };
 }
 
 function scalarText(value) {
@@ -584,7 +500,7 @@ Tesla side setup:
 3. Allowed origins: ${redirect.origin} and https://${DOMAIN_DISPLAY}
 4. Allowed redirect URI: ${REDIRECT_URI}
 5. Grant type: Authorization Code.
-6. Scopes: Energy Product Information (energy_device_data) and Vehicle Information (vehicle_device_data).
+6. Scopes: Energy Product Information (energy_device_data).
 7. Host the public key at https://${DOMAIN_DISPLAY}/.well-known/appspecific/com.tesla.3p.public-key.pem
 8. Add a payment method and a small billing limit; with no payment method the limit is 0.
 9. After approval, copy the Client ID and Client Secret.
@@ -603,9 +519,9 @@ function printUsage() {
   npm run probe:tesla
   npm run probe:tesla -- --register
 
-Read-only Fleet API probe. It lists vehicles, cached charge state, products,
-charger live status, and charge history. It never writes to the Sheet, and it
-saves tokens locally only when --save-refresh-token is given.
+Read-only Fleet API probe. It lists products, charger live status, and charge
+history. It never writes to the Sheet, and it saves tokens locally only when
+--save-refresh-token is given.
 
 --register  Register TESLA_DOMAIN with Tesla Fleet API (writes account config).
 --save-refresh-token  Save a new Tesla refresh token locally (mode 600).
@@ -616,8 +532,6 @@ Optional environment variables:
   TESLA_DOMAIN             public app origin host (required for --register; e.g. your-user.github.io)
   TESLA_PROBE_DAYS         default 90
   TESLA_PROBE_TIME_ZONE    default Asia/Hong_Kong
-  TESLA_PROBE_SCOPE        override OAuth scopes
-  TESLA_PROBE_LIVE_VEHICLE=1  also call live vehicle_data (wakes the vehicle)
   TESLA_PROBE_RAW=1        print sanitized raw JSON responses
   TESLA_PROBE_IDS=1        print unique target_id/din groups
 
@@ -885,8 +799,6 @@ async function main() {
   if (region.ok) {
     console.log(`  user region: ${JSON.stringify(redactSensitive(region.data)).slice(0, 600)}`);
   }
-
-  await probeVehicles(token.access_token);
 
   let products;
   try {
