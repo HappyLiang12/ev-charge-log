@@ -329,3 +329,138 @@ function upsertRates_(rates) {
   for (var d = 0; d < deleteRows.length; d += 1) sheet.deleteRow(deleteRows[d] + 1);
   return updated;
 }
+
+var BILLS_COLUMNS = [
+  'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
+  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+];
+
+function validDateOnly_(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  var parsed = Date.parse(value + 'T00:00:00+08:00');
+  return isFinite(parsed) && new Date(parsed + HK_OFFSET_MS_).toISOString().slice(0, 10) === value;
+}
+
+function dateOnlyValue_(value) {
+  if (isDateValue_(value)) {
+    var shifted = new Date(value.getTime() + 12 * 60 * 60 * 1000);
+    var iso = shifted.getUTCFullYear() + '-' + pad2_(shifted.getUTCMonth() + 1) + '-' + pad2_(shifted.getUTCDate());
+    return validDateOnly_(iso) ? iso : '';
+  }
+  var text = String(value === undefined || value === null ? '' : value).trim().slice(0, 10);
+  return validDateOnly_(text) ? text : '';
+}
+
+function chargeOrNull_(value) {
+  var number = numberOrNull_(value);
+  if (number === null) return null;
+  return Math.abs(number) <= 10000000 ? number : null;
+}
+
+function normalizedBillInput_(raw) {
+  var bill = raw || {};
+  var periodStart = dateOnlyValue_(bill.periodStart);
+  var periodEnd = dateOnlyValue_(bill.periodEnd);
+  if (!periodStart || !periodEnd || periodStart >= periodEnd) throw new Error('Invalid bill period');
+  var startMs = Date.parse(periodStart + 'T00:00:00+08:00');
+  var endMs = Date.parse(periodEnd + 'T00:00:00+08:00') + 86400000;
+  var cutoffIso = String(bill.cutoff || '').trim();
+  if (!validIso_(cutoffIso)) throw new Error('Invalid cutoff');
+  var cutoffMs = Date.parse(cutoffIso);
+  if (cutoffMs < startMs || cutoffMs > endMs) throw new Error('Cutoff outside bill period');
+  var units = numberOrNull_(bill.units);
+  if (units === null || units <= 0 || units > 1000000) throw new Error('Invalid bill units');
+  var peakKWh = numberOrNull_(bill.peakKWh);
+  var offPeakKWh = numberOrNull_(bill.offPeakKWh);
+  if (peakKWh !== null && offPeakKWh !== null && Math.abs(peakKWh + offPeakKWh - units) > 1.5) {
+    throw new Error('Peak and off-peak units do not add up');
+  }
+  if (peakKWh === null || offPeakKWh === null) {
+    peakKWh = null;
+    offPeakKWh = null;
+  }
+  var total = numberOrNull_(bill.total);
+  if (total === null || total <= 0 || total > 10000000) throw new Error('Invalid bill total');
+  return {
+    periodStart: periodStart,
+    periodEnd: periodEnd,
+    cutoff: new Date(cutoffMs).toISOString(),
+    units: units,
+    peakKWh: peakKWh,
+    offPeakKWh: offPeakKWh,
+    energyCharge: chargeOrNull_(bill.energyCharge),
+    fuelCharge: chargeOrNull_(bill.fuelCharge),
+    others: chargeOrNull_(bill.others),
+    total: total,
+    fileName: String(bill.fileName || '').trim().slice(0, 200),
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeStoredBill_(row) {
+  var periodStart = dateOnlyValue_(row.periodStart);
+  var periodEnd = dateOnlyValue_(row.periodEnd);
+  var units = numberOrNull_(row.units);
+  var total = numberOrNull_(row.total);
+  if (!periodStart || !periodEnd || !(units > 0) || !(total > 0)) return null;
+  var peakKWh = numberOrNull_(row.peakKWh);
+  var offPeakKWh = numberOrNull_(row.offPeakKWh);
+  if (peakKWh === null || offPeakKWh === null) {
+    peakKWh = null;
+    offPeakKWh = null;
+  }
+  var cutoff = isoValue_(row.cutoff);
+  return {
+    periodStart: periodStart,
+    periodEnd: periodEnd,
+    cutoff: cutoff || '',
+    units: units,
+    peakKWh: peakKWh,
+    offPeakKWh: offPeakKWh,
+    energyCharge: numberOrNull_(row.energyCharge),
+    fuelCharge: numberOrNull_(row.fuelCharge),
+    others: numberOrNull_(row.others),
+    total: total,
+    fileName: String(row.fileName || '').trim().slice(0, 200),
+    savedAt: isoValue_(row.savedAt) || String(row.savedAt || '').trim(),
+  };
+}
+
+function readBills_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Bills', BILLS_COLUMNS);
+  var rows = readObjects_(sheet, BILLS_COLUMNS);
+  var bills = [];
+  for (var i = 0; i < rows.length; i += 1) {
+    var bill = normalizeStoredBill_(rows[i]);
+    if (bill) bills.push(bill);
+  }
+  bills.sort(function (a, b) { return b.periodEnd.localeCompare(a.periodEnd); });
+  return bills;
+}
+
+function upsertBill_(bill) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Bills', BILLS_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  var header = values.length
+    ? values[0].map(function (value) { return String(value || '').trim(); })
+    : BILLS_COLUMNS.slice();
+  var startCol = header.indexOf('periodStart');
+  var endCol = header.indexOf('periodEnd');
+  if (startCol === -1 || endCol === -1) throw new Error('Bills header is missing dates');
+  var target = -1;
+  for (var i = 1; i < values.length; i += 1) {
+    if (dateOnlyValue_(values[i][startCol]) !== bill.periodStart) continue;
+    if (dateOnlyValue_(values[i][endCol]) !== bill.periodEnd) continue;
+    target = i;
+  }
+  var row = header.map(function (column) {
+    var value = bill[column];
+    return value === undefined || value === null ? '' : value;
+  });
+  if (target === -1) sheet.appendRow(row);
+  else sheet.getRange(target + 1, 1, 1, row.length).setValues([row]);
+  return normalizeStoredBill_(row.reduce(function (object, value, index) {
+    object[header[index]] = value;
+    return object;
+  }, {}));
+}

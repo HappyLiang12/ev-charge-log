@@ -21,6 +21,10 @@ export const RATES_HEADER = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
 ];
+export const BILLS_HEADER = [
+  'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
+  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+];
 
 export const fuelPage = `
 2026年11月1日起，燃料調整費為**每度電47.4港仙**。

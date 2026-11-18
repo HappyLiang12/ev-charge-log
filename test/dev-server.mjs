@@ -71,11 +71,13 @@ const records = [
     source: 'manual',
   },
 ];
+const bills = [];
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
 };
 
 function sendJson(res, status, payload) {
@@ -185,6 +187,7 @@ const server = http.createServer(async (req, res) => {
           cars,
           records,
           rates,
+          bills,
           sheetUrl: 'https://docs.google.com/spreadsheets/d/mock/edit',
         });
       }
@@ -269,6 +272,30 @@ const server = http.createServer(async (req, res) => {
       if (action === 'refreshRates') {
         rates[0].fetchedAt = new Date().toISOString();
         return sendJson(res, 200, { ok: true, updated: rates.length });
+      }
+      if (action === 'bill') {
+        const bill = data.bill || {};
+        if (!bill.periodStart || !bill.periodEnd || !(Number(bill.units) > 0) || !(Number(bill.total) > 0)) {
+          return fail(res, 400, 'Invalid bill');
+        }
+        const saved = {
+          periodStart: String(bill.periodStart).slice(0, 10),
+          periodEnd: String(bill.periodEnd).slice(0, 10),
+          cutoff: bill.cutoff || '',
+          units: Number(bill.units),
+          peakKWh: bill.peakKWh === null || bill.peakKWh === undefined || bill.peakKWh === '' ? null : Number(bill.peakKWh),
+          offPeakKWh: bill.offPeakKWh === null || bill.offPeakKWh === undefined || bill.offPeakKWh === '' ? null : Number(bill.offPeakKWh),
+          energyCharge: bill.energyCharge ?? null,
+          fuelCharge: bill.fuelCharge ?? null,
+          others: bill.others ?? null,
+          total: Number(bill.total),
+          fileName: String(bill.fileName || ''),
+          savedAt: new Date().toISOString(),
+        };
+        const index = bills.findIndex((row) => row.periodStart === saved.periodStart && row.periodEnd === saved.periodEnd);
+        if (index === -1) bills.push(saved);
+        else bills[index] = saved;
+        return sendJson(res, 200, { ok: true, bill: saved });
       }
       return fail(res, 400, 'Invalid action');
     }

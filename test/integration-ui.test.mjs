@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { formatHkDate, formatHkTime12 } from '../logic.js';
 import {
+  BILLS_HEADER,
   FUEL_URL,
   TARIFF_URL,
   createHarness,
@@ -353,6 +354,63 @@ test('owner UI: CLP parse failure shows the manual-override message and keeps ra
     ui.document.getElementById('ownerRatesBtn').click();
     await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('manualOverride'));
     assert.equal(harness.env.values('Rates').length, 2);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: saved bill shows per-car amounts by kWh share and manual entry saves', { timeout: 25000 }, async () => {
+  const records = [
+    {
+      id: 'bill-ix3', car: 'ix3', startAt: '2026-10-10T02:00:00.000Z', kWh: 600,
+      durationSec: 3600, teslaStartAt: '2026-10-10T02:00:00.000Z', teslaEndAt: '2026-10-10T03:00:00.000Z',
+      peakKWh: 100, offPeakKWh: 500, teslaKey: 'din:bill-ix3', source: 'tesla',
+    },
+    {
+      id: 'bill-m3', car: 'model3', startAt: '2026-10-20T02:00:00.000Z', kWh: 200,
+      durationSec: 3600, teslaStartAt: '2026-10-20T02:00:00.000Z', teslaEndAt: '2026-10-20T03:00:00.000Z',
+      peakKWh: 50, offPeakKWh: 150, teslaKey: 'din:bill-m3', source: 'tesla',
+    },
+  ];
+  const sheets = defaultSheets({
+    rates: [rateRow('2026-10', 46.2), rateRow('2026-11', 47.4)],
+    records,
+    cars: [['ix3', 'iX3', true, 'x'], ['model3', 'Model 3', true, 'x']],
+  });
+  sheets.Bills = [
+    BILLS_HEADER,
+    ['2026-10-03', '2026-11-04', '2026-11-04T14:59:27.000Z', 886, 77, 809, 870.39, 410.32, -0.71, 1280, 'bill.pdf', '2026-11-18T00:00:00.000Z'],
+  ];
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    const card = await waitFor(() => ui.document.querySelector('#ownerBills .bill-card'));
+    assert.match(card.textContent, /2026-10-03 – 2026-11-04/);
+    assert.match(card.textContent, /\$960\.00/);
+    assert.match(card.textContent, /\$320\.00/);
+    assert.match(card.textContent, /800\.0 度 vs 帳單 886 度/);
+    assert.match(card.textContent, /帳單高峯 77 \/ 非高峯 809/);
+
+    ui.document.getElementById('ownerBillManualBtn').click();
+    const set = (id, value) => {
+      const input = ui.document.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+    };
+    set('ownerBillStart', '2026-10-03');
+    set('ownerBillEnd', '2026-11-04');
+    set('ownerBillUnits', '886');
+    set('ownerBillTotal', '900');
+    set('ownerBillCutoff', '2026-11-04T22:59');
+    await waitFor(() => ui.document.querySelectorAll('#ownerBillPreview .bill-table tr').length >= 3);
+    ui.document.getElementById('ownerBillSave').click();
+    await waitFor(() => {
+      const rows = harness.env.call('readBills_');
+      return rows.length === 1 && Number(rows[0].total) === 900;
+    });
+    assert.match(ui.document.getElementById('ownerToast').textContent, /帳單已記錄/);
   } finally {
     ui.close();
     await harness.close();

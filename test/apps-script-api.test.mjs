@@ -767,3 +767,70 @@ test('refreshRates rejects implausible tariff values without writing', () => {
   assert.match(result.error, /CLP/);
   assert.equal(plain(env.call('readRates_')).length, 0);
 });
+
+test('bill action saves a bill and the owner payload returns it without duplicates', () => {
+  const env = setup();
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T14:59:27.000Z',
+    units: 886,
+    peakKWh: 77,
+    offPeakKWh: 809,
+    energyCharge: 870.39,
+    fuelCharge: 410.32,
+    others: -0.71,
+    total: 1280,
+    fileName: 'clp-bill.pdf',
+  };
+  const saved = send(env, { action: 'bill', bill });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.bill.units, 886);
+  assert.equal(saved.bill.total, 1280);
+  assert.ok(saved.bill.savedAt);
+
+  const owner = receive(env, { owner: '1' });
+  assert.equal(owner.bills.length, 1);
+  assert.equal(owner.bills[0].periodEnd, '2026-11-04');
+  assert.equal(owner.bills[0].peakKWh, 77);
+
+  send(env, { action: 'bill', bill: { ...bill, total: 1281 } });
+  const again = receive(env, { owner: '1' });
+  assert.equal(again.bills.length, 1);
+  assert.equal(again.bills[0].total, 1281);
+});
+
+test('bill action rejects missing and invalid bills', () => {
+  const env = setup();
+  const missing = send(env, { action: 'bill' });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /Missing bill/);
+
+  const badCutoff = send(env, {
+    action: 'bill',
+    bill: {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      cutoff: 'not-a-date',
+      units: 886,
+      total: 1280,
+    },
+  });
+  assert.equal(badCutoff.ok, false);
+  assert.match(badCutoff.error, /cutoff/i);
+
+  const badSplit = send(env, {
+    action: 'bill',
+    bill: {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      cutoff: '2026-11-04T14:59:27.000Z',
+      units: 886,
+      peakKWh: 70,
+      offPeakKWh: 700,
+      total: 1280,
+    },
+  });
+  assert.equal(badSplit.ok, false);
+  assert.match(badSplit.error, /do not add up/);
+});

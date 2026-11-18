@@ -87,3 +87,7 @@ export async function claimSession(apiUrl, car, id, fetchImpl = fetch) {
 export async function refreshRates(apiUrl, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'refreshRates' }, fetchImpl);
 }
+
+export async function saveBill(apiUrl, bill, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'bill', bill }, fetchImpl);
+}
