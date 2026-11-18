@@ -377,9 +377,11 @@ export function initOwner({ apiUrl }) {
       } else {
         const matched = Number(result.matched) || 0;
         const reconciled = Number(result.reconciled) || 0;
+        const autoAssigned = Number(result.vehicleSuggestion && result.vehicleSuggestion.autoAssigned) || 0;
         const unassigned = Number(result.unassigned) || 0;
         const parts = [`已配對 ${matched} 個`];
         if (reconciled) parts.push(`合併未分配 ${reconciled} 個`);
+        if (autoAssigned) parts.push(`自動分配 ${autoAssigned} 個`);
         parts.push(`新增未分配 ${unassigned} 個`);
         showToast(els.toast, `${parts.join('；')}。`);
       }

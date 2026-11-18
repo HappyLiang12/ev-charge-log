@@ -71,6 +71,7 @@ const record = (overrides = {}) => ({
   suggestionConfidence: null,
   suggestionSource: '',
   suggestedAt: null,
+  assignedBy: '',
   ...overrides,
 });
 
