@@ -1,7 +1,6 @@
 var LOG_COLUMNS = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
-  'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt', 'assignedBy',
 ];
 var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt'];
 var RATES_COLUMNS = [
@@ -129,11 +128,6 @@ function normalizeLogRow_(row) {
     offPeakKWh: numberOrNull_(row.offPeakKWh),
     teslaKey: row.teslaKey ? String(row.teslaKey) : null,
     source: source,
-    suggestedCar: String(row.suggestedCar || '').trim(),
-    suggestionConfidence: numberOrNull_(row.suggestionConfidence),
-    suggestionSource: String(row.suggestionSource || '').trim(),
-    suggestedAt: isoValue_(row.suggestedAt) || null,
-    assignedBy: String(row.assignedBy || '').trim(),
   };
 }
 

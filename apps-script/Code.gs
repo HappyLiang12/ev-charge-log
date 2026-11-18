@@ -178,15 +178,7 @@ function deleteAction_(data) {
 }
 
 function syncAction_(data) {
-  var result = syncTesla_(!data || !data.car);
-  if (!data || !data.car) {
-    try {
-      result.vehicleSuggestion = suggestTeslaVehicle_();
-    } catch (error) {
-      result.vehicleSuggestion = { error: 'Tesla vehicle suggestion failed' };
-    }
-  }
-  return result;
+  return syncTesla_(!data || !data.car);
 }
 
 function findRecord_(records, id) {
@@ -196,7 +188,7 @@ function findRecord_(records, id) {
   return null;
 }
 
-function assignUnassigned_(target, car, records, assignedBy) {
+function assignUnassigned_(target, car, records) {
   if (!target) throw new Error('Unknown record');
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
@@ -224,17 +216,12 @@ function assignUnassigned_(target, car, records, assignedBy) {
       offPeakKWh: target.offPeakKWh,
       teslaKey: target.teslaKey,
       source: 'tesla+manual',
-      assignedBy: assignedBy || '',
     });
     if (!updated) throw new Error('Failed to update manual record');
     deleteLog_(target.id);
     return { assigned: true, merged: true, id: manual.id };
   }
-  var assigned = updateLog_(target.id, {
-    car: car.id,
-    source: 'tesla',
-    assignedBy: assignedBy || '',
-  });
+  var assigned = updateLog_(target.id, { car: car.id, source: 'tesla' });
   if (!assigned) throw new Error('Failed to assign record');
   return { assigned: true, merged: false, id: target.id };
 }
