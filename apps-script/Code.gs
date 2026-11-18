@@ -196,7 +196,7 @@ function findRecord_(records, id) {
   return null;
 }
 
-function assignUnassigned_(target, car, records) {
+function assignUnassigned_(target, car, records, assignedBy) {
   if (!target) throw new Error('Unknown record');
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
@@ -224,12 +224,17 @@ function assignUnassigned_(target, car, records) {
       offPeakKWh: target.offPeakKWh,
       teslaKey: target.teslaKey,
       source: 'tesla+manual',
+      assignedBy: assignedBy || '',
     });
     if (!updated) throw new Error('Failed to update manual record');
     deleteLog_(target.id);
     return { assigned: true, merged: true, id: manual.id };
   }
-  var assigned = updateLog_(target.id, { car: car.id, source: 'tesla' });
+  var assigned = updateLog_(target.id, {
+    car: car.id,
+    source: 'tesla',
+    assignedBy: assignedBy || '',
+  });
   if (!assigned) throw new Error('Failed to assign record');
   return { assigned: true, merged: false, id: target.id };
 }

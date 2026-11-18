@@ -131,6 +131,7 @@ const record = {
   suggestionConfidence: null,
   suggestionSource: '',
   suggestedAt: null,
+  assignedBy: '',
 };
 
 test('readLog_ migrates the old header in place and marks old rows legacy', () => {
@@ -150,7 +151,7 @@ test('readLog_ migrates the old header in place and marks old rows legacy', () =
   assert.deepEqual(
     env.values('Log')[0].slice(4),
     ['car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
-      'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt'],
+      'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt', 'assignedBy'],
   );
   assert.equal(env.values('Log')[1][0], 'old-1');
 });
@@ -164,7 +165,7 @@ test('appendLog_ writes the logical fields into the mapped columns', () => {
   assert.deepEqual(sheetRows[0], [
     'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt',
     'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
-    'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt',
+    'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt', 'assignedBy',
   ]);
   assert.equal(sheetRows[1][2], '2026-11-14');
   assert.equal(sheetRows[1][3], '13:00');

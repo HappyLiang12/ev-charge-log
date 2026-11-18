@@ -85,6 +85,7 @@ export function normalizeRecord(value) {
     suggestionConfidence: numberOrNull(value.suggestionConfidence),
     suggestionSource: text(value.suggestionSource),
     suggestedAt: nullableDate(value.suggestedAt),
+    assignedBy: text(value.assignedBy),
   };
 }
 

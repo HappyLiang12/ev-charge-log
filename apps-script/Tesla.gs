@@ -8,8 +8,13 @@ function scriptProperty_(key) {
   return PropertiesService.getScriptProperties().getProperty(key);
 }
 
-function teslaScope_() {
+function teslaVehicleFeatureEnabled_() {
   return String(scriptProperty_('TESLA_VEHICLE_SUGGEST') || '0') === '1'
+    || String(scriptProperty_('TESLA_VEHICLE_AUTO_ASSIGN') || '0') === '1';
+}
+
+function teslaScope_() {
+  return teslaVehicleFeatureEnabled_()
     ? TESLA_SCOPE_BASE_ + ' vehicle_device_data'
     : TESLA_SCOPE_BASE_;
 }
@@ -311,7 +316,7 @@ function vehicleTimestampIso_(value) {
 }
 
 function fetchVehicleCachedCharge_() {
-  if (String(scriptProperty_('TESLA_VEHICLE_SUGGEST') || '0') !== '1') {
+  if (!teslaVehicleFeatureEnabled_()) {
     return { skipped: true };
   }
   var vin = String(scriptProperty_('TESLA_VEHICLE_VIN') || '').trim();
@@ -366,7 +371,7 @@ function vehicleSuggestionCandidate_(record, cached) {
 }
 
 function suggestTeslaVehicle_() {
-  if (String(scriptProperty_('TESLA_VEHICLE_SUGGEST') || '0') !== '1') {
+  if (!teslaVehicleFeatureEnabled_()) {
     return { skipped: true };
   }
   var cached;
@@ -390,13 +395,47 @@ function suggestTeslaVehicle_() {
     if (!candidates.length) return { suggested: 0 };
     if (candidates.length > 1) return { suggested: 0, ambiguous: true };
     var target = candidates[0];
-    updateLog_(target.record.id, {
+    var suggestion = {
       suggestedCar: carId,
       suggestionConfidence: target.confidence,
       suggestionSource: 'tesla_cached',
       suggestedAt: now,
-    });
-    return { suggested: 1, id: target.record.id, car: carId, confidence: target.confidence };
+    };
+    var autoEnabled = String(scriptProperty_('TESLA_VEHICLE_AUTO_ASSIGN') || '0') === '1';
+    if (autoEnabled && target.confidence >= 0.9 && target.timeDiff <= 2 * 60 * 60 * 1000) {
+      var manualMatch = closestManualForSession_({
+        startAt: target.record.teslaStartAt || target.record.startAt,
+        endAt: target.record.teslaEndAt,
+        durationSec: target.record.durationSec,
+      }, manualSyncRows_(records), {
+        earlyMs: Number(scriptProperty_('MATCH_EARLY_MINUTES') || 120) * 60 * 1000,
+        lateMs: Number(scriptProperty_('MATCH_LATE_MINUTES') || 30) * 60 * 1000,
+        fallbackWindowMs: Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000,
+      });
+      if (!manualMatch.candidate && !manualMatch.ambiguous) {
+        try {
+          var assigned = assignUnassigned_(target.record, car, records, 'tesla_cached');
+          updateLog_(assigned.id, suggestion);
+          return {
+            suggested: 1,
+            autoAssigned: 1,
+            id: assigned.id,
+            car: carId,
+            confidence: target.confidence,
+          };
+        } catch (error) {
+          // Leave the suggestion in place if auto-assignment fails.
+        }
+      }
+    }
+    updateLog_(target.record.id, suggestion);
+    return {
+      suggested: 1,
+      autoAssigned: 0,
+      id: target.record.id,
+      car: carId,
+      confidence: target.confidence,
+    };
   });
 }
 

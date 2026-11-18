@@ -60,7 +60,7 @@ const tariffPage = `
 const LOG_HEADER = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
-  'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt',
+  'suggestedCar', 'suggestionConfidence', 'suggestionSource', 'suggestedAt', 'assignedBy',
 ];
 const RATES_HEADER = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
@@ -71,7 +71,7 @@ function logRow(overrides = {}) {
   const row = {
     id: '', startAt: '', date: '', time: '', car: '', kWh: '', durationSec: '',
     teslaStartAt: '', teslaEndAt: '', peakKWh: '', offPeakKWh: '', teslaKey: '', source: 'manual',
-    suggestedCar: '', suggestionConfidence: '', suggestionSource: '', suggestedAt: '',
+    suggestedCar: '', suggestionConfidence: '', suggestionSource: '', suggestedAt: '', assignedBy: '',
     ...overrides,
   };
   return LOG_HEADER.map((column) => row[column]);
