@@ -28,6 +28,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
 - Manual starts are matched to completed Tesla sessions when the start falls inside the session, up to `MATCH_EARLY_MINUTES` (default 120) before it, or up to `MATCH_LATE_MINUTES` (default 30) after it. If eligible manual starts belong to different cars, the session stays unassigned for manual resolution.
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
+- When `TESLA_VEHICLE_SUGGEST=1` and the single Tesla vehicle is Model 3, owner sync compares the cached `charge_energy_added` and timestamp with the Wall Connector session. A close match is shown as a suggestion in the owner pending list; the owner must press `採用` and `分配`. It is never assigned automatically.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
 - Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
@@ -117,6 +118,9 @@ In Apps Script, Project Settings -> Script Properties:
 | `TESLA_REFRESH_TOKEN` | Refresh token from the local OAuth helper |
 | `TESLA_BASE_URL` | `https://fleet-api.prd.na.vn.cloud.tesla.com` (optional; this is the default) |
 | `TESLA_SITE_ID` | Observed Wall Connector energy site ID; optional, discovered automatically when omitted |
+| `TESLA_VEHICLE_SUGGEST` | Optional; `1` enables cached Model 3 charge suggestions and the `vehicle_device_data` scope |
+| `TESLA_CAR_ID` | Optional; car id used for the Tesla suggestion, default `model3` |
+| `TESLA_VEHICLE_VIN` | Optional; set only when the account has more than one Tesla vehicle |
 | `MATCH_EARLY_MINUTES` | `120` (manual start earlier than the Tesla session) |
 | `MATCH_LATE_MINUTES` | `30` (manual start after the Tesla session ends) |
 | `MATCH_WINDOW_MINUTES` | `30` (fallback when a session has no end time) |
@@ -127,7 +131,7 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 
 ### 3. Tesla OAuth
 
-Tesla API access is read-only for energy data. The app uses the official Fleet API with scopes `openid offline_access energy_device_data`.
+Tesla API access is read-only. The app always uses `openid offline_access energy_device_data`; when `TESLA_VEHICLE_SUGGEST=1` it also requests `vehicle_device_data` for the cached Model 3 charge state. Existing refresh tokens must be re-authorized with the additional scope before enabling the flag, and `TESLA_ACCESS_TOKEN` must be deleted once to force a token refresh under the new scope.
 
 1. The Tesla developer app needs both allowed origins: `https://<your-user>.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
 2. The app also needs its EC public key hosted at the app origin's `.well-known/appspecific/com.tesla.3p.public-key.pem` path, and partner registration completed. The probe's setup text in `tools/tesla-probe.mjs` lists the exact commands.
@@ -216,7 +220,8 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 
 ## Known limits
 
-- Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start.
+- Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start. The optional cached Model 3 charge state can suggest Model 3, but it never assigns automatically and does not identify iX3 or Vigo.
+- Cached vehicle data can be stale or unavailable while the car is offline; if the energy or timestamp does not match, the session stays `unassigned`.
 - If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
 - A manual start outside the session interval plus the early/late grace will not auto-match; use owner assign/claim or adjust `MATCH_EARLY_MINUTES` / `MATCH_LATE_MINUTES`.
 - Peak/off-peak is duration-proportional, not measured per minute.
@@ -234,7 +239,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 125 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 132 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, cached Model 3 suggestion matching, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
