@@ -131,7 +131,7 @@ Never put these values in `config.js`, the Sheet, git, or a family link.
 
 ### 3. Tesla OAuth
 
-Tesla API access is read-only. The app always uses `openid offline_access energy_device_data`; when `TESLA_VEHICLE_SUGGEST=1` it also requests `vehicle_device_data` for the cached Model 3 charge state. Existing refresh tokens must be re-authorized with the additional scope before enabling the flag, and `TESLA_ACCESS_TOKEN` must be deleted once to force a token refresh under the new scope.
+Tesla API access is read-only. The app always uses `openid offline_access energy_device_data`; when `TESLA_VEHICLE_SUGGEST=1` it also requests `vehicle_device_data` for the cached Model 3 charge state. Existing refresh tokens must be re-authorized with the additional scope before enabling the flag, and `TESLA_ACCESS_TOKEN` must be deleted once to force a token refresh under the new scope. `npm run probe:tesla` now also lists vehicles and prints the cached charge state without waking the car.
 
 1. The Tesla developer app needs both allowed origins: `https://<your-user>.github.io` for the deployed app and `http://localhost:8788` for the local probe. Its Allowed Redirect URI must include `http://localhost:8788/callback`.
 2. The app also needs its EC public key hosted at the app origin's `.well-known/appspecific/com.tesla.3p.public-key.pem` path, and partner registration completed. The probe's setup text in `tools/tesla-probe.mjs` lists the exact commands.
@@ -239,7 +239,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 132 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, cached Model 3 suggestion matching, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
+The suite currently has 134 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, cached Model 3 suggestion matching, CLP parsers, rate validation, duplicate-rate handling, owner actions, family claims, early/late manual-start matching, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Nine jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
