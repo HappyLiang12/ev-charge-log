@@ -354,13 +354,7 @@ export function initOwner({ apiUrl }) {
       if (result.skipped) {
         showToast(els.toast, '未有待配對的手動紀錄；請家人先按「開始充電」，或設定 SYNC_FROM 後再試。');
       } else {
-        const matched = Number(result.matched) || 0;
-        const reconciled = Number(result.reconciled) || 0;
-        const unassigned = Number(result.unassigned) || 0;
-        const parts = [`已配對 ${matched} 個`];
-        if (reconciled) parts.push(`合併未分配 ${reconciled} 個`);
-        parts.push(`新增未分配 ${unassigned} 個`);
-        showToast(els.toast, `${parts.join('；')}。`);
+        showToast(els.toast, `已配對 ${Number(result.matched) || 0} 個；新增未分配 ${Number(result.unassigned) || 0} 個。`);
       }
       await refreshOrWarn('同步完成，但未能載入最新資料，請重新載入。');
     } catch (error) {
