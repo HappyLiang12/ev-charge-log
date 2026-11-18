@@ -195,13 +195,34 @@ export function initOwner({ apiUrl }) {
       select.append(option);
     }
     select.disabled = state.busy;
+    const suggested = record.suggestedCar
+      ? state.cars.find((item) => item.id === record.suggestedCar && item.active)
+      : null;
+    let suggestionNote = null;
+    let adopt = null;
+    if (suggested) {
+      const pct = Math.round((Number(record.suggestionConfidence) || 0) * 100);
+      suggestionNote = document.createElement('div');
+      suggestionNote.className = 'owner-suggestion';
+      suggestionNote.textContent = pct > 0
+        ? `建議：${suggested.name}（${pct}%）`
+        : `建議：${suggested.name}`;
+      adopt = document.createElement('button');
+      adopt.type = 'button';
+      adopt.textContent = '採用';
+      adopt.disabled = state.busy;
+      adopt.addEventListener('click', () => { select.value = suggested.id; });
+    }
     const assign = document.createElement('button');
     assign.type = 'button';
     assign.textContent = '分配';
     assign.disabled = state.busy;
     assign.addEventListener('click', () => { void onAssign(record, select); });
     actions.append(select, assign);
-    li.append(head, meta, actions);
+    if (adopt) actions.append(adopt);
+    li.append(head, meta);
+    if (suggestionNote) li.append(suggestionNote);
+    li.append(actions);
     return li;
   }
 
@@ -356,9 +377,11 @@ export function initOwner({ apiUrl }) {
       } else {
         const matched = Number(result.matched) || 0;
         const reconciled = Number(result.reconciled) || 0;
+        const autoAssigned = Number(result.vehicleSuggestion && result.vehicleSuggestion.autoAssigned) || 0;
         const unassigned = Number(result.unassigned) || 0;
         const parts = [`已配對 ${matched} 個`];
         if (reconciled) parts.push(`合併未分配 ${reconciled} 個`);
+        if (autoAssigned) parts.push(`自動分配 ${autoAssigned} 個`);
         parts.push(`新增未分配 ${unassigned} 個`);
         showToast(els.toast, `${parts.join('；')}。`);
       }
