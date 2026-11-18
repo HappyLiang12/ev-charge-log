@@ -418,6 +418,11 @@ select, #exportBtn {
   font-variant-numeric: tabular-nums;
 }
 
+.owner-suggestion {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .owner-row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .owner-row-actions select { min-height: 40px; flex: 1; min-width: 120px; }
 

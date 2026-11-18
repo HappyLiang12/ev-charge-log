@@ -67,6 +67,11 @@ const record = (overrides = {}) => ({
   offPeakKWh: 10,
   teslaKey: 'din:1786968749',
   source: 'tesla+manual',
+  suggestedCar: '',
+  suggestionConfidence: null,
+  suggestionSource: '',
+  suggestedAt: null,
+  assignedBy: '',
   ...overrides,
 });
 
@@ -137,6 +142,19 @@ test('normalizeRecord preserves the full billing record and marks old rows legac
 
 test('normalizeRecords drops malformed entries', () => {
   assert.deepEqual(normalizeRecords([record(), { id: 'bad id', startAt: base }, null]), [record()]);
+});
+
+test('normalizeRecord keeps the Tesla cached suggestion fields', () => {
+  const normalized = normalizeRecord(record({
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.95,
+    suggestionSource: 'tesla_cached',
+    suggestedAt: '2026-11-18T10:52:43.544Z',
+  }));
+  assert.equal(normalized.suggestedCar, 'model3');
+  assert.equal(normalized.suggestionConfidence, 0.95);
+  assert.equal(normalized.suggestionSource, 'tesla_cached');
+  assert.equal(normalized.suggestedAt, '2026-11-18T10:52:43.544Z');
 });
 
 test('normalizeRates and normalizeCars validate server rows', () => {

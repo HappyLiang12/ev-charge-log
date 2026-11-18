@@ -15,6 +15,7 @@ const SESSION_START = '2026-11-14T05:05:00.000Z';
 const LOG_HEADER = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+  'assignedBy',
 ];
 const CARS_HEADER = ['id', 'name', 'active', 'createdAt'];
 const RATES_HEADER = [
@@ -920,4 +921,197 @@ test('family claim merges a manual start inside the session even beyond the old 
   assert.equal(records[0].id, 'manual-late');
   assert.equal(records[0].car, 'ix3');
   assert.equal(records[0].source, 'tesla+manual');
+});
+
+test('teslaScope_ adds vehicle data only when vehicle suggestions are enabled', () => {
+  const env = setup();
+  assert.equal(env.call('teslaScope_'), 'openid offline_access energy_device_data');
+  env.props.TESLA_VEHICLE_SUGGEST = '1';
+  assert.equal(
+    env.call('teslaScope_'),
+    'openid offline_access energy_device_data vehicle_device_data',
+  );
+});
+
+function vehicleSuggestionEnv({ charge, props = {}, records = [], cars } = {}) {
+  const sessionStart = '2026-11-14T05:00:00.000Z';
+  return setup({
+    sheets: {
+      Log: [LOG_HEADER, ...records],
+      Cars: [
+        CARS_HEADER,
+        ...(cars || [['model3', 'Model 3', 'TRUE', 'x']]),
+      ],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    props: {
+      TESLA_VEHICLE_SUGGEST: '1',
+      TESLA_CAR_ID: 'model3',
+      ...props,
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(sessionStart) / 1000) },
+              charge_duration: { seconds: 3600 },
+              energy_added_wh: 12000,
+              target_id: 'target-1',
+              din: 'din:vehicle',
+            }],
+          },
+        }));
+      }
+      if (url.endsWith('/api/1/vehicles')) {
+        return response(200, JSON.stringify({
+          response: [{ vin: 'VIN-TEST', display_name: 'Model 3', state: 'online' }],
+        }));
+      }
+      if (url.includes('/vehicle_data_cached')) {
+        return response(200, JSON.stringify({
+          response: {
+            charge_state: {
+              charging_state: 'Disconnected',
+              charge_energy_added: 11.5,
+              charger_power: 0,
+              battery_level: 50,
+              timestamp: Date.parse('2026-11-14T06:05:00.000Z'),
+              ...charge,
+            },
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+}
+
+test('owner sync suggests Model 3 from cached charge data without assigning it', () => {
+  const env = vehicleSuggestionEnv();
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.suggested, 1);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].car, 'unassigned');
+  assert.equal(records[0].suggestedCar, 'model3');
+  assert.equal(records[0].suggestionSource, 'tesla_cached');
+  assert.ok(records[0].suggestionConfidence > 0);
+  assert.ok(records[0].suggestedAt);
+});
+
+test('owner sync does not suggest Model 3 when cached energy is too different', () => {
+  const env = vehicleSuggestionEnv({ charge: { charge_energy_added: 3 } });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.suggested, 0);
+  const [record] = plain(env.call('readLog_'));
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestedCar, '');
+});
+
+test('owner sync does not suggest Model 3 when cached data is stale', () => {
+  const env = vehicleSuggestionEnv({
+    charge: { timestamp: Date.parse('2026-11-10T06:05:00.000Z') },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.suggested, 0);
+  const [record] = plain(env.call('readLog_'));
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestedCar, '');
+});
+
+test('owner sync skips vehicle suggestions when the feature flag is off', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse('2026-11-14T05:00:00.000Z') / 1000) },
+              charge_duration: { seconds: 3600 },
+              energy_added_wh: 12000,
+              target_id: 'target-1',
+              din: 'din:vehicle',
+            }],
+          },
+        }));
+      }
+      if (url.includes('/api/1/vehicles')) {
+        throw new Error('vehicle API should not be called when disabled');
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.skipped, true);
+});
+
+test('owner sync auto-assigns Model 3 when auto mode is enabled', () => {
+  const env = vehicleSuggestionEnv({
+    props: { TESLA_VEHICLE_AUTO_ASSIGN: '1' },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.autoAssigned, 1);
+  const [record] = plain(env.call('readLog_'));
+  assert.equal(record.car, 'model3');
+  assert.equal(record.assignedBy, 'tesla_cached');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.suggestionSource, 'tesla_cached');
+  assert.equal(record.source, 'tesla');
+});
+
+test('auto mode keeps a low-confidence match as a suggestion', () => {
+  const env = vehicleSuggestionEnv({
+    charge: { charge_energy_added: 10.5 },
+    props: { TESLA_VEHICLE_AUTO_ASSIGN: '1' },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.vehicleSuggestion.autoAssigned, 0);
+  const [record] = plain(env.call('readLog_'));
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.assignedBy, '');
+});
+
+test('auto mode does not override ambiguous manual starts', () => {
+  const env = vehicleSuggestionEnv({
+    props: { TESLA_VEHICLE_AUTO_ASSIGN: '1' },
+    records: [
+      row({
+        0: 'unassigned-auto', 4: 'unassigned', 5: 12, 6: 3600,
+        7: '2026-11-14T05:00:00.000Z', 8: '2026-11-14T06:00:00.000Z',
+        9: 0, 10: 12, 11: 'din:auto', 12: 'tesla',
+      }),
+      manualRowAt('manual-model3', 'model3', '2026-11-14T05:10:00.000Z'),
+      manualRowAt('manual-ix3', 'ix3', '2026-11-14T05:20:00.000Z'),
+    ],
+    cars: [
+      ['model3', 'Model 3', 'TRUE', 'x'],
+      ['ix3', 'iX3', 'TRUE', 'x'],
+    ],
+  });
+  const result = env.call('suggestTeslaVehicle_');
+  assert.equal(result.suggested, 1);
+  assert.equal(result.autoAssigned, 0);
+  const record = plain(env.call('readLog_')).find((item) => item.id === 'unassigned-auto');
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.assignedBy, '');
 });
