@@ -403,12 +403,14 @@ test('owner UI: saved bill shows per-car amounts by kWh share and manual entry s
     set('ownerBillEnd', '2026-11-04');
     set('ownerBillUnits', '886');
     set('ownerBillTotal', '900');
-    set('ownerBillCutoff', '2026-11-04T22:59');
+    set('ownerBillCutoff', '2026-11-04T22:59:27');
     await waitFor(() => ui.document.querySelectorAll('#ownerBillPreview .bill-table tr').length >= 3);
     ui.document.getElementById('ownerBillSave').click();
     await waitFor(() => {
       const rows = harness.env.call('readBills_');
-      return rows.length === 1 && Number(rows[0].total) === 900;
+      return rows.length === 1
+        && Number(rows[0].total) === 900
+        && rows[0].cutoff === '2026-11-04T14:59:27.000Z';
     });
     assert.match(ui.document.getElementById('ownerToast').textContent, /帳單已記錄/);
   } finally {
