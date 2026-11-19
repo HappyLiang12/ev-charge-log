@@ -139,3 +139,81 @@ test('normalizeBillRows sorts newest first and drops invalid rows', () => {
   assert.equal(rows[0].offPeakKWh, null);
   assert.equal(rows[1].periodEnd, '2026-10-02');
 });
+
+test('parseBillLines ignores an energy amount printed after the total label', () => {
+  const lines = [
+    '由 03-10-26 至 04-11-26',
+    '電動車住宅分時段用電',
+    '應繳總數',
+    '電力費用 $870.39',
+    '$1,280.00',
+    '燃料調整費 $410.32',
+    '其他 -$0.71',
+    '高峯時段 @137.5 77 105.88',
+    '非高峯時段 @94.5 809 764.51',
+    '小計 886 $870.39',
+  ];
+  const bill = parseBillLines(lines);
+  assert.equal(bill.total, 1280);
+  assert.equal(bill.totalSource, 'parsed');
+});
+
+test('parseBillLines derives the total from components when the total amount is missing', () => {
+  const lines = [
+    '由 03-10-26 至 04-11-26',
+    '電力費用 $870.39',
+    '燃料調整費 $410.32',
+    '其他 -$0.71',
+    '高峯時段 @137.5 77 105.88',
+    '非高峯時段 @94.5 809 764.51',
+  ];
+  const bill = parseBillLines(lines);
+  assert.equal(bill.total, 1280);
+  assert.equal(bill.totalSource, 'derived');
+});
+
+test('parseBillLines reads sub-period usage printed on the following line', () => {
+  const lines = [
+    '由 03-10-26 至 04-11-26',
+    '應繳總數 $1,280.00',
+    '高峯時段 @137.5 77 105.88',
+    '非高峯時段 @94.5 809 764.51',
+    '燃料調整費',
+    '由 03-10-26 至 31-10-26',
+    '29 804 0.462 371.45',
+    '由 01-11-26 至 04-11-26',
+    '4 82 0.474 38.87',
+  ];
+  const bill = parseBillLines(lines);
+  assert.deepEqual(bill.tail, { start: '2026-11-01', end: '2026-11-04', units: 82, amount: 38.87 });
+});
+
+test('parseBillLines handles the real CLP stream order and split-cell date rows', () => {
+  const lines = [
+    '電動車住宅分時段用電',
+    '發單日期(日-月-年) 由 03-10-26 至 04-11-26',
+    '05-11-26 共 33 日用電量 按金$2,000.00 第1/2頁',
+    '應繳總數',
+    '$870.39 $410.32 -$0.71',
+    '$1,280.00',
+    '電力費用: 其他:',
+    '用電級別 每度(￠) 度數 費用($) 上期零數撥來 $0.03',
+    '高峰時段 @137.5 77 105.88 零數撥入下次 -0.74',
+    '非高峰時段 @94.5 809 764.51',
+    '小計 -$0.71',
+    '小計 886 $870.39 20-11-26',
+    '燃料調整費:',
+    '小計(886度) $410.32',
+    '上次繳費$1,285.00',
+    '編賬號碼: 82880-28505-5 應繳總數: $1,280.00 環保訊息:',
+    '燃料調整費 03-10-26 31-10-26 29 804 0.462 371.45',
+    '01-11-26 04-11-26 4 82 0.474 38.87',
+    '886 410.32',
+  ];
+  const bill = parseBillLines(lines);
+  assert.equal(bill.energyCharge, 870.39);
+  assert.equal(bill.fuelCharge, 410.32);
+  assert.equal(bill.others, -0.71);
+  assert.equal(bill.total, 1280);
+  assert.deepEqual(bill.tail, { start: '2026-11-01', end: '2026-11-04', units: 82, amount: 38.87 });
+});
