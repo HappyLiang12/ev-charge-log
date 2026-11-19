@@ -230,12 +230,17 @@ function updateCarPeakFactor_(carId, factor) {
   var next = clampedPeakFactor_(factor);
   for (var i = 1; i < values.length; i += 1) {
     if (String(values[i][idCol] || '').trim() !== String(carId)) continue;
-    if (Number(values[i][factorCol]) !== next) {
+    if (clampedPeakFactor_(values[i][factorCol]) !== next) {
       sheet.getRange(i + 1, factorCol + 1).setValues([[next]]);
     }
     return true;
   }
   return false;
+}
+
+function cellNumberEquals_(cell, value) {
+  if (cell === '' || cell === null || cell === undefined) return false;
+  return Number(cell) === Number(value);
 }
 
 function updateLogSplits_(updates) {
@@ -255,7 +260,7 @@ function updateLogSplits_(updates) {
     var peak = update.peakKWh;
     var off = update.offPeakKWh;
     if (peak === undefined || peak === null || off === undefined || off === null) continue;
-    if (Number(values[i][peakCol]) !== Number(peak) || Number(values[i][offCol]) !== Number(off)) {
+    if (!cellNumberEquals_(values[i][peakCol], peak) || !cellNumberEquals_(values[i][offCol], off)) {
       values[i][peakCol] = peak;
       values[i][offCol] = off;
       changed += 1;

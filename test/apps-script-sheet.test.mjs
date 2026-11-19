@@ -393,6 +393,20 @@ test('readCars_ reads and clamps peakFactor', () => {
   ]);
 });
 
+test('updateCarPeakFactor_ writes zero into a blank factor cell', () => {
+  const env = createEnv({
+    sheets: {
+      Cars: [
+        ['id', 'name', 'active', 'createdAt', 'peakFactor'],
+        ['model3', 'Model 3', 'TRUE', 'x', ''],
+      ],
+    },
+  });
+  assert.equal(plain(env.call('readCars_'))[0].peakFactor, 1);
+  assert.equal(env.call('updateCarPeakFactor_', 'model3', 0), true);
+  assert.equal(plain(env.call('readCars_'))[0].peakFactor, 0);
+});
+
 test('updateCarPeakFactor_ writes and clamps the factor', () => {
   const env = createEnv({
     sheets: {
@@ -427,6 +441,23 @@ test('updateLogSplits_ rewrites only peak and off-peak cells by id', () => {
   assert.deepEqual(rows[1].slice(5, 11), [20, 7200, '', '', 0, 20]);
   assert.deepEqual(rows[2].slice(9, 11), [5, 5]);
   assert.equal(env.call('updateLogSplits_', { a: { peakKWh: 0, offPeakKWh: 20 } }), 0);
+});
+
+test('updateLogSplits_ writes zero into blank split cells', () => {
+  const env = createEnv({
+    sheets: {
+      Log: [
+        ['id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt',
+          'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source'],
+        ['a', '2026-11-14T05:00:00.000Z', '2026-11-14', '13:00', 'model3', 20, 7200,
+          '', '', '', '', 'din:a', 'tesla'],
+      ],
+    },
+  });
+  assert.equal(env.call('updateLogSplits_', { a: { peakKWh: 0, offPeakKWh: 20 } }), 1);
+  const row = env.values('Log')[1];
+  assert.equal(Number(row[9]), 0);
+  assert.equal(Number(row[10]), 20);
 });
 
 test('readCars_ accepts boolean active cells', () => {
