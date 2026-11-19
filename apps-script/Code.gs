@@ -395,8 +395,11 @@ function recomputeCarSplits_(carIds, rates) {
       rate ? rate.peakEnd : DEFAULT_PEAK_END_,
       peakFactorFor_(factors, record.car),
     );
-    if (Number(record.peakKWh) === Number(split.peakKWh)
-        && Number(record.offPeakKWh) === Number(split.offPeakKWh)) continue;
+    var samePeak = record.peakKWh !== null && record.peakKWh !== undefined
+      && Number(record.peakKWh) === Number(split.peakKWh);
+    var sameOff = record.offPeakKWh !== null && record.offPeakKWh !== undefined
+      && Number(record.offPeakKWh) === Number(split.offPeakKWh);
+    if (samePeak && sameOff) continue;
     updates[record.id] = split;
   }
   return updateLogSplits_(updates);
