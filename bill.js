@@ -26,6 +26,14 @@ function numbersIn(line) {
   return matches.map((text) => Number(text.replace(/,/g, ''))).filter(Number.isFinite);
 }
 
+function moneyTokens(line) {
+  const matches = String(line).match(/-?\$?\s*\d[\d,]*(?:\.\d{2})?/g) || [];
+  return matches
+    .filter((match) => /\.\d{2}/.test(match))
+    .map((match) => moneyOf(match))
+    .filter((value) => value !== null);
+}
+
 function isInteger(value) {
   return Number.isInteger(value);
 }
@@ -91,37 +99,114 @@ export function parseBillLines(rawLines) {
   const peak = parseUsageRow(peakLine, 137.5);
   const off = parseUsageRow(offLine, 94.5);
 
-  const subtotalLine = lineWith(lines, /小\s*計/);
-  const subtotalNumbers = subtotalLine ? numbersIn(subtotalLine) : [];
-  const subtotalUnits = subtotalNumbers.find((value) => isInteger(value) && value > 0 && value <= 1000000);
+  let subtotalUnits = null;
+  for (const line of lines) {
+    if (!/小\s*計/.test(line)) continue;
+    const found = numbersIn(line).find((value) => isInteger(value) && value > 0 && value <= 1000000);
+    if (found !== undefined) { subtotalUnits = found; break; }
+  }
 
   const units = peak && off ? peak.units + off.units : subtotalUnits;
   if (!units) throw new Error('搵唔到總用電度數');
 
-  const total = moneyNear(lines, /應\s*繳\s*總\s*數/);
+  let energyCharge = null;
+  let fuelCharge = null;
+  let others = null;
+  for (const line of lines) {
+    if (!/小\s*計/.test(line)) continue;
+    const values = moneyTokens(line);
+    const amount = values.length ? values[values.length - 1] : null;
+    if (amount === null) continue;
+    if (/度/.test(line)) {
+      if (fuelCharge === null) fuelCharge = amount;
+    } else if (Math.abs(amount) < 100) {
+      if (others === null) others = amount;
+    } else if (energyCharge === null) {
+      energyCharge = amount;
+    }
+  }
+  if (energyCharge === null || fuelCharge === null || others === null) {
+    const labelIndex = lines.findIndex((line) => /應\s*繳\s*總\s*數/.test(line));
+    if (labelIndex !== -1) {
+      for (let i = labelIndex; i < Math.min(lines.length, labelIndex + 3); i += 1) {
+        const values = moneyTokens(lines[i]);
+        if (values.length !== 3) continue;
+        if (energyCharge === null) energyCharge = values[0];
+        if (fuelCharge === null) fuelCharge = values[1];
+        if (others === null) others = values[2];
+        break;
+      }
+    }
+  }
+  if (energyCharge === null) energyCharge = moneyNear(lines, /電\s*力\s*費\s*用/);
+  if (fuelCharge === null) fuelCharge = moneyNear(lines, /燃\s*料\s*調\s*整\s*費/);
+  if (others === null) others = moneyNear(lines, /其\s*他/);
+  const componentsSum = energyCharge !== null && fuelCharge !== null
+    ? energyCharge + fuelCharge + (others || 0)
+    : null;
+
+  let total = moneyNear(lines, /應\s*繳\s*總\s*數/);
+  let totalSource = 'parsed';
+  if (componentsSum !== null) {
+    const labelIndex = lines.findIndex((line) => /應\s*繳\s*總\s*數/.test(line));
+    if (labelIndex !== -1) {
+      const candidates = [];
+      const stop = Math.min(lines.length - 1, labelIndex + 5);
+      for (let i = labelIndex; i <= stop; i += 1) {
+        const matches = lines[i].match(/-?\$?\s*\d[\d,]*(?:\.\d{2})?/g) || [];
+        for (const match of matches) {
+          if (!/\.\d{2}/.test(match)) continue;
+          const value = moneyOf(match);
+          if (value !== null && value > 0) candidates.push(value);
+        }
+      }
+      // A total cannot be smaller than its positive components; allow a small
+      // negative "others" and line rounding.
+      const plausible = candidates.filter((value) => value + 1.5 >= energyCharge + fuelCharge);
+      const pool = plausible.length ? plausible : candidates;
+      let best = null;
+      for (const value of pool) {
+        const delta = Math.abs(value - componentsSum);
+        if (!best || delta < best.delta) best = { value, delta };
+      }
+      if (best) total = best.value;
+    }
+    if (total === null || total + 1.5 < energyCharge + fuelCharge) {
+      total = componentsSum;
+      totalSource = 'derived';
+    }
+  }
   if (total === null || !(total > 0)) throw new Error('搵唔到應繳總數');
 
-  const energyCharge = moneyNear(lines, /電\s*力\s*費\s*用/);
-  const fuelCharge = moneyNear(lines, /燃\s*料\s*調\s*整\s*費/);
-  const others = moneyNear(lines, /其\s*他/);
-
   const segments = [];
-  for (const line of lines) {
-    if (!/\d{1,2}-\d{1,2}-\d{2,4}\s*至\s*\d{1,2}-\d{1,2}-\d{2,4}/.test(line)) continue;
-    const dates = line.match(/(\d{1,2})-(\d{1,2})-(\d{2,4})\s*至\s*(\d{1,2})-(\d{1,2})-(\d{2,4})/);
+  const seenSegments = new Set();
+  for (let i = 0; i < lines.length; i += 1) {
+    const dates = lines[i].match(/(\d{1,2})-(\d{1,2})-(\d{2,4})\s*(?:至\s*)?(\d{1,2})-(\d{1,2})-(\d{2,4})/);
     if (!dates) continue;
     const start = hkDateFromParts(Number(dates[1]), Number(dates[2]), Number(dates[3]));
     const end = hkDateFromParts(Number(dates[4]), Number(dates[5]), Number(dates[6]));
     if (!start || !end) continue;
-    const tail = line.slice(dates.index + dates[0].length);
-    const numbers = numbersIn(tail);
-    if (numbers.length < 3) continue;
+    let tail = lines[i].slice(dates.index + dates[0].length);
+    let numbers = numbersIn(tail);
+    const hasRate = numbers.some((value) => !isInteger(value) && value > 0 && value < 10);
+    const hasAmount = numbers.some((value) => !isInteger(value) && value >= 10);
+    if (!hasRate || !hasAmount) {
+      for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j += 1) {
+        if (/\d{1,2}-\d{1,2}-\d{2,4}\s*(?:至\s*)?\d{1,2}-\d{1,2}-\d{2,4}/.test(lines[j])) break;
+        tail += ' ' + lines[j];
+      }
+      numbers = numbersIn(tail);
+    }
     const integers = numbers.filter((value) => isInteger(value) && value > 0 && value < 1000000);
-    if (!integers.length) continue;
+    const rates = numbers.filter((value) => !isInteger(value) && value > 0 && value < 10);
+    const amounts = numbers.filter((value) => !isInteger(value) && value >= 10);
+    if (!integers.length || !rates.length || !amounts.length) continue;
     // Sub-period rows read as: billing days, units, rate, amount.
     const segmentUnits = integers.length >= 2 ? integers[1] : integers[0];
-    const amount = [...numbers].reverse().find((value) => !isInteger(value));
-    segments.push({ start, end, units: segmentUnits, amount: amount === undefined ? null : amount });
+    const key = start + '|' + end;
+    if (seenSegments.has(key)) continue;
+    seenSegments.add(key);
+    segments.push({ start, end, units: segmentUnits, amount: amounts[amounts.length - 1] });
   }
   const tail = segments.find((segment) => segment.end === periodEnd && segment.start !== periodStart) || null;
 
@@ -135,6 +220,7 @@ export function parseBillLines(rawLines) {
     fuelCharge,
     others,
     total,
+    totalSource,
     tail,
   };
 }

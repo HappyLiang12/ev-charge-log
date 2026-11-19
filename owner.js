@@ -131,7 +131,19 @@ export function initOwner({ apiUrl }) {
     els.billPeak.value = bill.peakKWh === null || bill.peakKWh === undefined ? '' : bill.peakKWh;
     els.billOff.value = bill.offPeakKWh === null || bill.offPeakKWh === undefined ? '' : bill.offPeakKWh;
     els.billCutoff.value = bill.cutoff ? hkLocalInput(bill.cutoff) : '';
-    els.billExtract.textContent = fileName ? `檔案：${fileName}` : '';
+    els.billExtract.textContent = fileName
+      ? `檔案：${fileName}${billComponentText(bill)}`
+      : '';
+  }
+
+  function billComponentText(bill) {
+    const parts = [];
+    if (bill.energyCharge !== null && bill.energyCharge !== undefined) parts.push(`電費 $${Number(bill.energyCharge).toFixed(2)}`);
+    if (bill.fuelCharge !== null && bill.fuelCharge !== undefined) parts.push(`燃料 $${Number(bill.fuelCharge).toFixed(2)}`);
+    if (bill.others !== null && bill.others !== undefined) parts.push(`其他 $${Number(bill.others).toFixed(2)}`);
+    if (parts.length < 2) return '';
+    const derived = bill.totalSource === 'derived' ? '；總額由分項核對' : '';
+    return ` · ${parts.join(' + ')}${derived}`;
   }
 
   function readBillForm() {
@@ -218,6 +230,13 @@ export function initOwner({ apiUrl }) {
     meta.className = 'hint';
     meta.textContent = `${bill.units} 度 · 高峯 ${bill.peakKWh === null ? '—' : bill.peakKWh} / 非高峯 ${bill.offPeakKWh === null ? '—' : bill.offPeakKWh} · 截止 ${formatHkDate(bill.cutoff)} ${formatHkTime12(bill.cutoff)}${bill.fileName ? ` · ${bill.fileName}` : ''}`;
     card.append(meta);
+    const components = billComponentText(bill);
+    if (components) {
+      const breakdown = document.createElement('p');
+      breakdown.className = 'hint';
+      breakdown.textContent = components.replace(/^ · /, '');
+      card.append(breakdown);
+    }
     card.append(makeAllocationTable(allocation, bill));
     return card;
   }
