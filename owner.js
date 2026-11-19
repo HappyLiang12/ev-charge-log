@@ -108,13 +108,13 @@ export function initOwner({ apiUrl }) {
   function hkLocalInput(iso) {
     const at = Date.parse(iso);
     if (!Number.isFinite(at)) return '';
-    return new Date(at + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+    return new Date(at + 8 * 60 * 60 * 1000).toISOString().slice(0, 19);
   }
 
   function isoFromLocalInput(value) {
     const text = String(value || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return '';
-    const at = Date.parse(`${text}:00+08:00`);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(text)) return '';
+    const at = Date.parse(`${text.length === 16 ? `${text}:00` : text}+08:00`);
     return Number.isFinite(at) ? new Date(at).toISOString() : '';
   }
 
