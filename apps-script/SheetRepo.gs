@@ -2,7 +2,7 @@ var LOG_COLUMNS = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
 ];
-var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt'];
+var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor'];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
@@ -204,6 +204,7 @@ function normalizeCarRow_(row) {
     id: id,
     name: name,
     active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
+    peakFactor: clampedPeakFactor_(row.peakFactor),
   };
 }
 
@@ -216,6 +217,61 @@ function readCars_() {
     if (car) cars.push(car);
   }
   return cars;
+}
+
+function updateCarPeakFactor_(carId, factor) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Cars', CARS_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return false;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var idCol = header.indexOf('id');
+  var factorCol = header.indexOf('peakFactor');
+  if (idCol === -1 || factorCol === -1) return false;
+  var next = clampedPeakFactor_(factor);
+  for (var i = 1; i < values.length; i += 1) {
+    if (String(values[i][idCol] || '').trim() !== String(carId)) continue;
+    if (Number(values[i][factorCol]) !== next) {
+      sheet.getRange(i + 1, factorCol + 1).setValues([[next]]);
+    }
+    return true;
+  }
+  return false;
+}
+
+function updateLogSplits_(updates) {
+  if (!updates) return 0;
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Log', LOG_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var idCol = header.indexOf('id');
+  var peakCol = header.indexOf('peakKWh');
+  var offCol = header.indexOf('offPeakKWh');
+  if (idCol === -1 || peakCol === -1 || offCol === -1) return 0;
+  var changed = 0;
+  for (var i = 1; i < values.length; i += 1) {
+    var update = updates[String(values[i][idCol] || '').trim()];
+    if (!update) continue;
+    var peak = update.peakKWh;
+    var off = update.offPeakKWh;
+    if (peak === undefined || peak === null || off === undefined || off === null) continue;
+    if (Number(values[i][peakCol]) !== Number(peak) || Number(values[i][offCol]) !== Number(off)) {
+      values[i][peakCol] = peak;
+      values[i][offCol] = off;
+      changed += 1;
+    }
+  }
+  if (changed) {
+    var peakValues = [];
+    var offValues = [];
+    for (var r = 1; r < values.length; r += 1) {
+      peakValues.push([values[r][peakCol] === undefined || values[r][peakCol] === null ? '' : values[r][peakCol]]);
+      offValues.push([values[r][offCol] === undefined || values[r][offCol] === null ? '' : values[r][offCol]]);
+    }
+    sheet.getRange(2, peakCol + 1, peakValues.length, 1).setValues(peakValues);
+    sheet.getRange(2, offCol + 1, offValues.length, 1).setValues(offValues);
+  }
+  return changed;
 }
 
 function normalizeRateRow_(row) {

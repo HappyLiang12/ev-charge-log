@@ -39,7 +39,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
 - Live charging card while a manual start is pending: Wall Connector state/power from Tesla, with an estimated kWh/cost counter that updates every second from the last 5-minute power sample. The final Tesla session replaces the estimate.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
-- Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share.
+- Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share. Saving a bill with peak/off-peak also learns a per-car `peakFactor` from all usable bills, so later peak/off-peak estimates track the meter's actual split.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
 
@@ -58,11 +58,12 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 ### `Cars`
 
-`id`, `name`, `active`, `createdAt`.
+`id`, `name`, `active`, `createdAt`, `peakFactor`.
 
 - `id` matches `[a-z0-9-]{1,32}`.
 - `unassigned` is reserved.
 - Family URLs use this `id`.
+- `peakFactor` is 0–1 and defaults to 1 (no shift). Bill calibration updates it; leave it blank or 1 for a car that charges immediately.
 
 ### `Rates`
 
@@ -93,7 +94,7 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 ```
 
 - Rates and times are HK cents/kWh and Asia/Hong_Kong.
-- The split is proportional to session duration; it is an estimate.
+- The split is proportional to session duration, then shifted by the car's learned `peakFactor`; it is an estimate.
 - The 8-cent/kWh 2026 special fuel rebate is not inferred. Enter an eligible rebate in the `Rates` tab and set that row's `manualOverride` to `TRUE` so `更新費率` does not overwrite it.
 - The actual CLP bill remains authoritative. The owner view reconciles a bill by splitting its `total` over the logged kWh in the bill period:
 
@@ -102,7 +103,8 @@ effective rate = bill total / logged kWh in period
 car amount     = car kWh * effective rate
 ```
 
-- This per-kWh split is deliberate: the bill's metered peak/off-peak split can differ materially from the duration-proportional estimate, so the estimate is shown for reference only and is never used to charge a car.
+- The per-kWh split is deliberate: the bill's metered peak/off-peak registers reflect actual grid flow, while a session's recorded start can be the plug-in time rather than the start of charging. The owner view shows both the bill split and the session-based estimate, and never uses the estimate to charge a car.
+- Saving a bill with peak/off-peak also calibrates a per-car `peakFactor` from all usable bills. A bill is usable when assigned car labels cover at least 90% of the period's session kWh and the sessions cover at least 80% of the bill units. The fit starts from the current factors, only applies a materially better fit, and prefers 0 or 1 but can settle on 0.25/0.5/0.75 for a mixed pattern. The new factor is applied retroactively to that car's records, and the owner toast reports every change.
 - Uploading a bill extracts the period, units, total and (when present) peak/off-peak, energy, fuel and other charges. If the PDF is a scan or password-protected, the owner can enter the same fields manually.
 - When the bill shows a partial last month, the cutoff is inferred by matching the last month's usage against the sessions on the final billing day; the owner can override the cutoff before saving.
 
@@ -174,7 +176,7 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 
 ### 5. Cars, rates, and the owner URL
 
-1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active.
+1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active. Leave `peakFactor` blank (defaults to 1); bill calibration fills it.
 2. Open the owner URL on the deployed site: `https://<your-user>.github.io/ev-charge-log/?owner=1`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
 4. Run one owner `更新充電樁` and confirm the Wall Connector site is discovered.
@@ -202,7 +204,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 `GET`:
 
 - `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
-- `?owner` returns `{ ok, cars, records, rates, bills, serverTime }` for the owner.
+- `?owner` returns `{ ok, cars, records, rates, bills, serverTime }` for the owner; each car includes `peakFactor`.
 - `?status=1` returns `{ ok, charging, powerW, energyWh, state, available, sampledAt }` from the Wall Connector live status. `energyWh` may be null.
 
 `POST` with a `text/plain` JSON body:
@@ -213,7 +215,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
 - `{ action: 'refreshRates' }`
-- `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }`
+- `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }` returns `{ ok, bill, calibration }`; saving a bill with peak/off-peak refits per-car factors and reports `{ applied, billsUsed, updatedCars, recomputed, periods }`.
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
 
@@ -236,7 +238,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 
 - Tesla cannot identify which car used the Wall Connector. Attribution is the per-car URL plus manual start.
 - If a driver forgets to press start, the session becomes `unassigned`; the family can claim it or the owner can assign it.
-- Peak/off-peak is duration-proportional, not measured per minute. A past bill can differ substantially from this estimate even when total kWh matches; charge cars from the bill total split by kWh share, not from the peak/off estimate.
+- Peak/off-peak is estimated from session start and duration, then shifted by the car's learned `peakFactor`. It is still not measured per minute, so an irregular schedule can differ from the bill; charge cars from the bill total split by kWh share, not from the peak/off estimate.
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping and PDF extraction are fragile. If the PDF text cannot be parsed (for example a scan or password-protected file), enter the bill fields manually; nothing is uploaded.
 - The live charging kWh/cost is an estimate from the last Wall Connector power sample; the completed Tesla session is authoritative. The card polls every 5 minutes while the page is visible (one Tesla call per poll) and interpolates every second.
@@ -251,7 +253,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 133 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Ten jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
+The suite currently has 145 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Eleven jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

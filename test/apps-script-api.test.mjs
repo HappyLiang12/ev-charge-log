@@ -800,6 +800,119 @@ test('bill action saves a bill and the owner payload returns it without duplicat
   assert.equal(again.bills[0].total, 1281);
 });
 
+test('saving a bill calibrates per-car peak factors and recomputes splits', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        ['ix3-oct', '2026-10-10T10:00:00.000Z', '2026-10-10', '18:00', 'ix3', 100, 7200,
+          '2026-10-10T10:00:00.000Z', '2026-10-10T12:00:00.000Z', 100, 0, 'din:ix3-oct', 'tesla'],
+        ['m3-oct', '2026-10-20T10:00:00.000Z', '2026-10-20', '18:00', 'model3', 80, 7200,
+          '2026-10-20T10:00:00.000Z', '2026-10-20T12:00:00.000Z', 80, 0, 'din:m3-oct', 'tesla'],
+      ],
+      Cars: [
+        [...CARS_HEADER, 'peakFactor'],
+        ['ix3', 'iX3', 'TRUE', 'x', 1],
+        ['model3', 'Model 3', 'TRUE', 'x', 1],
+      ],
+      Rates: [
+        RATES_HEADER,
+        ['2026-10', 94.5, 137.5, 46.2, 0, '16:00', '23:00', 'clp', '2026-10-01T00:00:00.000Z', 'FALSE'],
+      ],
+    },
+  });
+  const saved = send(env, {
+    action: 'bill',
+    bill: {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      cutoff: '2026-11-04T14:59:27.000Z',
+      units: 180,
+      peakKWh: 98,
+      offPeakKWh: 82,
+      total: 500,
+    },
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.calibration.applied, true);
+  assert.equal(saved.calibration.billsUsed, 1);
+  assert.deepEqual(
+    saved.calibration.updatedCars.map((car) => [car.id, car.from, car.to]),
+    [['model3', 1, 0]],
+  );
+  assert.deepEqual(
+    plain(env.call('readCars_')).map((car) => [car.id, car.peakFactor]),
+    [['ix3', 1], ['model3', 0]],
+  );
+  const log = plain(env.call('readLog_'));
+  const model3 = log.find((record) => record.id === 'm3-oct');
+  assert.equal(model3.peakKWh, 0);
+  assert.equal(model3.offPeakKWh, 80);
+  const ix3 = log.find((record) => record.id === 'ix3-oct');
+  assert.equal(ix3.peakKWh, 100);
+  assert.equal(ix3.offPeakKWh, 0);
+});
+
+test('claiming an unassigned session applies the car peak factor', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        ['u-1', '2026-11-14T10:00:00.000Z', '2026-11-14', '18:00', 'unassigned', 12, 3600,
+          '2026-11-14T10:00:00.000Z', '2026-11-14T11:00:00.000Z', 12, 0, 'din:u-1', 'tesla'],
+      ],
+      Cars: [
+        [...CARS_HEADER, 'peakFactor'],
+        ['model3', 'Model 3', 'TRUE', 'x', 0],
+      ],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const claimed = send(env, { action: 'claim', car: 'model3', id: 'u-1' });
+  assert.equal(claimed.ok, true);
+  assert.equal(claimed.assigned, true);
+  const record = plain(env.call('readLog_')).find((item) => item.id === 'u-1');
+  assert.equal(record.car, 'model3');
+  assert.equal(record.peakKWh, 0);
+  assert.equal(record.offPeakKWh, 12);
+});
+
+test('bill calibration skips periods without assigned car labels', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        ['u-1', '2026-10-10T10:00:00.000Z', '2026-10-10', '18:00', 'unassigned', 100, 7200,
+          '2026-10-10T10:00:00.000Z', '2026-10-10T12:00:00.000Z', 100, 0, 'din:u-1', 'tesla'],
+      ],
+      Cars: [...CARS_HEADER],
+      Rates: [
+        RATES_HEADER,
+        ['2026-10', 94.5, 137.5, 46.2, 0, '16:00', '23:00', 'clp', '2026-10-01T00:00:00.000Z', 'FALSE'],
+      ],
+    },
+  });
+  const saved = send(env, {
+    action: 'bill',
+    bill: {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      cutoff: '2026-11-04T14:59:27.000Z',
+      units: 100,
+      peakKWh: 60,
+      offPeakKWh: 40,
+      total: 300,
+    },
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.calibration.applied, false);
+  assert.equal(saved.calibration.reason, 'insufficient labeled data');
+  assert.deepEqual(
+    saved.calibration.skipped.map((item) => [item.label, item.reason]),
+    [['2026-11-04', 'unlabeled sessions']],
+  );
+});
+
 test('bill action rejects missing and invalid bills', () => {
   const env = setup();
   const missing = send(env, { action: 'bill' });

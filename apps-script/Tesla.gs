@@ -347,6 +347,8 @@ function syncApply_(sessions, nowIso) {
   return withScriptLock_(function () {
     var records = readLog_();
     var manualRows = manualSyncRows_(records);
+    var carFactors = carPeakFactorMap_(readCars_());
+    var rates = readRates_();
     var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
 
     var reconciled = 0;
@@ -361,13 +363,22 @@ function syncApply_(sessions, nowIso) {
         windowMs,
       );
       if (!candidate) continue;
+      var reconcileRate = selectRateRow_(hkMonth_(unassignedRow.teslaStartAt || unassignedRow.startAt), rates);
+      var reconcileSplit = splitPeakKwh_(
+        unassignedRow.teslaStartAt || unassignedRow.startAt,
+        unassignedRow.durationSec,
+        unassignedRow.kWh,
+        reconcileRate ? reconcileRate.peakStart : DEFAULT_PEAK_START_,
+        reconcileRate ? reconcileRate.peakEnd : DEFAULT_PEAK_END_,
+        peakFactorFor_(carFactors, candidate.car),
+      );
       var updated = updateLog_(candidate.id, {
         kWh: unassignedRow.kWh,
         durationSec: unassignedRow.durationSec,
         teslaStartAt: unassignedRow.teslaStartAt,
         teslaEndAt: unassignedRow.teslaEndAt,
-        peakKWh: unassignedRow.peakKWh,
-        offPeakKWh: unassignedRow.offPeakKWh,
+        peakKWh: reconcileSplit.peakKWh,
+        offPeakKWh: reconcileSplit.offPeakKWh,
         teslaKey: unassignedRow.teslaKey,
         source: 'tesla+manual',
       });
@@ -393,7 +404,6 @@ function syncApply_(sessions, nowIso) {
       if (records[k].teslaKey) knownKeys[records[k].teslaKey] = true;
     }
 
-    var rates = readRates_();
     var matched = 0;
     var unassigned = 0;
     var skippedExisting = 0;
@@ -407,9 +417,16 @@ function syncApply_(sessions, nowIso) {
       var rate = selectRateRow_(hkMonth_(session.startAt), rates);
       var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
       var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
-      var split = splitPeakKwh_(session.startAt, session.durationSec, session.kWh, peakStart, peakEnd);
       var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
       if (manual) {
+        var manualSplit = splitPeakKwh_(
+          session.startAt,
+          session.durationSec,
+          session.kWh,
+          peakStart,
+          peakEnd,
+          peakFactorFor_(carFactors, manual.car),
+        );
         var filled = updateLog_(manual.id, {
           car: manual.car,
           startAt: manual.startAt,
@@ -419,8 +436,8 @@ function syncApply_(sessions, nowIso) {
           durationSec: session.durationSec,
           teslaStartAt: session.startAt,
           teslaEndAt: session.endAt,
-          peakKWh: split.peakKWh,
-          offPeakKWh: split.offPeakKWh,
+          peakKWh: manualSplit.peakKWh,
+          offPeakKWh: manualSplit.offPeakKWh,
           teslaKey: session.teslaKey,
           source: 'tesla+manual',
         });
@@ -432,6 +449,13 @@ function syncApply_(sessions, nowIso) {
           continue;
         }
       }
+      var unassignedSplit = splitPeakKwh_(
+        session.startAt,
+        session.durationSec,
+        session.kWh,
+        peakStart,
+        peakEnd,
+      );
       appendLog_({
         id: teslaRecordId_(session),
         car: 'unassigned',
@@ -442,8 +466,8 @@ function syncApply_(sessions, nowIso) {
         durationSec: session.durationSec,
         teslaStartAt: session.startAt,
         teslaEndAt: session.endAt,
-        peakKWh: split.peakKWh,
-        offPeakKWh: split.offPeakKWh,
+        peakKWh: unassignedSplit.peakKWh,
+        offPeakKWh: unassignedSplit.offPeakKWh,
         teslaKey: session.teslaKey,
         source: 'tesla',
       });

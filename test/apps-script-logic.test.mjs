@@ -50,6 +50,60 @@ test('splitPeakKwh_ splits at the 16:00 and 23:00 Hong Kong boundaries', () => {
   assert.equal(Number((rounded.peakKWh + rounded.offPeakKWh).toFixed(6)), 5.4);
 });
 
+test('splitPeakKwh_ scales peak energy by a learned car factor', () => {
+  assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T08:00:00.000Z', 3600, 7.2, '16:00', '23:00', 0)), {
+    peakKWh: 0,
+    offPeakKWh: 7.2,
+  });
+  assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T08:00:00.000Z', 3600, 7.2, '16:00', '23:00', 0.25)), {
+    peakKWh: 1.8,
+    offPeakKWh: 5.4,
+  });
+  assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T08:00:00.000Z', 3600, 7.2, '16:00', '23:00', 'bad')), {
+    peakKWh: 7.2,
+    offPeakKWh: 0,
+  });
+});
+
+test('carPeakFactorMap_ clamps factors and defaults missing values', () => {
+  assert.deepEqual(plain(call('carPeakFactorMap_', [
+    { id: 'model3', peakFactor: 0 },
+    { id: 'ix3' },
+    { id: 'leaf', peakFactor: 1.4 },
+    { id: 'spare', peakFactor: -0.2 },
+    { id: 'blank', peakFactor: '' },
+  ])), { model3: 0, ix3: 1, leaf: 1, spare: 0, blank: 1 });
+});
+
+test('fitPeakFactors_ attributes a peak shortfall to the scheduled car', () => {
+  const fit = plain(call('fitPeakFactors_', [
+    { label: '2026-11-04', actualPeakKWh: 77, byCar: { ix3: 77.78, model3: 80.21 } },
+  ], { ix3: 1, model3: 1 }));
+  assert.equal(fit.applied, true);
+  assert.equal(fit.factors.ix3, 1);
+  assert.equal(fit.factors.model3, 0);
+  assert.equal(fit.billsUsed, 1);
+  assert.equal(fit.periods[0].actualPeakKWh, 77);
+  assert.ok(fit.periods[0].predictedPeakKWh < 78);
+});
+
+test('fitPeakFactors_ keeps factors when the current estimate already fits', () => {
+  const fit = plain(call('fitPeakFactors_', [
+    { label: '2026-11-04', actualPeakKWh: 98, byCar: { ix3: 100 } },
+  ], { ix3: 1 }));
+  assert.equal(fit.applied, false);
+  assert.equal(fit.factors.ix3, 1);
+  assert.equal(fit.currentRmse, 2);
+});
+
+test('fitPeakFactors_ can learn a fractional factor for a mixed car', () => {
+  const fit = plain(call('fitPeakFactors_', [
+    { label: '2026-11-04', actualPeakKWh: 50, byCar: { mixed: 100 } },
+  ], { mixed: 1 }));
+  assert.equal(fit.applied, true);
+  assert.equal(fit.factors.mixed, 0.5);
+});
+
 test('splitPeakKwh_ falls back to all off-peak without duration or energy', () => {
   assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T05:00:00.000Z', 0, 0, '16:00', '23:00')), {
     peakKWh: 0,

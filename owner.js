@@ -105,6 +105,39 @@ export function initOwner({ apiUrl }) {
     return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
   }
 
+  function billCalibrationMessage(calibration, periodEnd) {
+    let message;
+    if (!calibration) {
+      message = '帳單已記錄。';
+    } else if (!calibration.applied) {
+      message = calibration.reason === 'insufficient labeled data'
+        ? '帳單已記錄；已分配車輛嘅紀錄不足，未校準高峯係數。'
+        : '帳單已記錄；未校準高峯係數。';
+    } else {
+      const changes = Array.isArray(calibration.updatedCars) ? calibration.updatedCars : [];
+      const parts = changes.map((car) => (
+        `${car.name || car.id} ${Number(car.from).toFixed(2)} → ${Number(car.to).toFixed(2)}`
+      ));
+      message = changes.length
+        ? `帳單已記錄；已按 ${calibration.billsUsed} 張帳單校準：${parts.join('、')}。`
+        : '帳單已記錄；估算已貼合帳單，高峯係數不變。';
+    }
+    const skipped = Array.isArray(calibration && calibration.skipped)
+      ? calibration.skipped.find((item) => item.label === periodEnd)
+      : null;
+    if (skipped) {
+      const reasons = {
+        'unlabeled sessions': '此帳單有未分配 session',
+        'missing sessions': '此帳單嘅 session 覆蓋不足',
+        'no peak/off-peak': '此帳單冇高峯/非高峯度數',
+        'no sessions': '此帳單期內冇 session',
+        'invalid period': '此帳單期無效',
+      };
+      message += ` ${reasons[skipped.reason] || '此帳單'}，未納入校準。`;
+    }
+    return message;
+  }
+
   function hkLocalInput(iso) {
     const at = Date.parse(iso);
     if (!Number.isFinite(at)) return '';
@@ -205,7 +238,7 @@ export function initOwner({ apiUrl }) {
     if (bill.peakKWh !== null && bill.offPeakKWh !== null) {
       const split = document.createElement('p');
       split.className = 'hint';
-      split.textContent = `帳單高峯 ${bill.peakKWh} / 非高峯 ${bill.offPeakKWh} 度；記錄按時間比例估算 ${allocation.peakKWh.toFixed(0)} / ${allocation.offPeakKWh.toFixed(0)}（僅參考）。`;
+      split.textContent = `帳單高峯 ${bill.peakKWh} / 非高峯 ${bill.offPeakKWh} 度；記錄按時段及車輛習慣估算 ${allocation.peakKWh.toFixed(0)} / ${allocation.offPeakKWh.toFixed(0)}（僅參考）。`;
       wrap.append(split);
     }
     return wrap;
@@ -309,15 +342,16 @@ export function initOwner({ apiUrl }) {
     state.billBusy = true;
     renderBillPreview();
     try {
-      await saveBill(apiUrl, {
+      const saved = await saveBill(apiUrl, {
         ...bill,
         energyCharge: state.billExtras.energyCharge ?? null,
         fuelCharge: state.billExtras.fuelCharge ?? null,
         others: state.billExtras.others ?? null,
         fileName: state.billFileName,
       });
-      showToast(els.toast, '帳單已記錄。');
-      setBillStatus('帳單已記錄，可按「更新充電樁」後再核對。');
+      const message = billCalibrationMessage(saved.calibration, bill.periodEnd);
+      showToast(els.toast, message);
+      setBillStatus(`${message} 可按「更新充電樁」後再核對。`);
       els.billForm.hidden = true;
       state.billExtras = {};
       state.billFileName = '';
@@ -349,6 +383,10 @@ export function initOwner({ apiUrl }) {
     card.append(textRow('次數 / 已配對', `${summary.count} / ${summary.matched}`));
     card.append(textRow('kWh', summary.kWh.toFixed(1)));
     card.append(textRow('非高峰 / 高峰', `${summary.offPeakKWh.toFixed(1)} / ${summary.peakKWh.toFixed(1)} kWh`));
+    const peakFactor = Number(car.peakFactor);
+    if (Number.isFinite(peakFactor) && peakFactor < 0.995) {
+      card.append(textRow('高峯係數', `${peakFactor.toFixed(2)}（按帳單校準）`));
+    }
     if (summary.pending > 0) card.append(textRow('待配對', String(summary.pending)));
     if (summary.missingRate > 0) card.append(textRow('缺少費率', `${summary.missingRate} 筆`));
     return card;

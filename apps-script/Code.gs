@@ -195,6 +195,8 @@ function assignUnassigned_(target, car, records) {
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
   var windowMs = Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
+  var rates = readRates_();
+  var split = splitRecordForCar_(target, car, rates);
   var manualRows = records.filter(function (record) {
     return record.source === 'manual' && record.car === car.id && record.kWh === null && !record.teslaKey;
   });
@@ -205,8 +207,8 @@ function assignUnassigned_(target, car, records) {
       durationSec: target.durationSec,
       teslaStartAt: target.teslaStartAt,
       teslaEndAt: target.teslaEndAt,
-      peakKWh: target.peakKWh,
-      offPeakKWh: target.offPeakKWh,
+      peakKWh: split ? split.peakKWh : target.peakKWh,
+      offPeakKWh: split ? split.offPeakKWh : target.offPeakKWh,
       teslaKey: target.teslaKey,
       source: 'tesla+manual',
     });
@@ -214,9 +216,30 @@ function assignUnassigned_(target, car, records) {
     deleteLog_(target.id);
     return { assigned: true, merged: true, id: manual.id };
   }
-  var assigned = updateLog_(target.id, { car: car.id, source: 'tesla' });
+  var patch = { car: car.id, source: 'tesla' };
+  if (split) {
+    patch.peakKWh = split.peakKWh;
+    patch.offPeakKWh = split.offPeakKWh;
+  }
+  var assigned = updateLog_(target.id, patch);
   if (!assigned) throw new Error('Failed to assign record');
   return { assigned: true, merged: false, id: target.id };
+}
+
+function splitRecordForCar_(record, car, rates) {
+  if (!record || record.kWh === null || record.kWh === undefined) return null;
+  if (!record.durationSec || !isFinite(Number(record.durationSec))) return null;
+  var at = record.teslaStartAt || record.startAt;
+  if (!validIso_(at)) return null;
+  var rate = selectRateRow_(hkMonth_(at), rates);
+  return splitPeakKwh_(
+    at,
+    record.durationSec,
+    record.kWh,
+    rate ? rate.peakStart : DEFAULT_PEAK_START_,
+    rate ? rate.peakEnd : DEFAULT_PEAK_END_,
+    car.peakFactor,
+  );
 }
 
 function claimAction_(data) {
@@ -239,5 +262,142 @@ function ratesAction_() {
 
 function billAction_(data) {
   if (!data || !data.bill) throw new Error('Missing bill');
-  return { bill: upsertBill_(normalizedBillInput_(data.bill)) };
+  var bill = upsertBill_(normalizedBillInput_(data.bill));
+  var calibration;
+  try {
+    calibration = recalibratePeakFactors_();
+  } catch (error) {
+    console.error('Calibration failed: ' + (error && error.message ? error.message : error));
+    calibration = { applied: false, reason: 'calibration failed', error: String(error.message || error) };
+  }
+  return { bill: bill, calibration: calibration };
+}
+
+function recalibratePeakFactors_() {
+  var bills = readBills_();
+  var records = readLog_();
+  var rates = readRates_();
+  var cars = readCars_();
+  var current = carPeakFactorMap_(cars);
+  var knownCars = {};
+  for (var k = 0; k < cars.length; k += 1) knownCars[cars[k].id] = true;
+  var periods = [];
+  var skipped = [];
+  for (var b = 0; b < bills.length; b += 1) {
+    var bill = bills[b];
+    if (bill.peakKWh === null || bill.offPeakKWh === null) {
+      skipped.push({ label: bill.periodEnd, reason: 'no peak/off-peak' });
+      continue;
+    }
+    var startMs = Date.parse(bill.periodStart + 'T00:00:00+08:00');
+    var cutoffMs = Date.parse(bill.cutoff);
+    if (!isFinite(startMs) || !isFinite(cutoffMs)) {
+      skipped.push({ label: bill.periodEnd, reason: 'invalid period' });
+      continue;
+    }
+    var byCar = {};
+    var assignedKWh = 0;
+    var totalKWh = 0;
+    for (var r = 0; r < records.length; r += 1) {
+      var record = records[r];
+      if (record.kWh === null || record.kWh === undefined) continue;
+      if (!record.durationSec || !isFinite(Number(record.durationSec))) continue;
+      var at = Date.parse(record.teslaStartAt || record.startAt);
+      if (!isFinite(at) || at < startMs || at >= cutoffMs) continue;
+      totalKWh += record.kWh;
+      if (!record.car || record.car === 'unassigned' || !knownCars[record.car]) continue;
+      var rate = selectRateRow_(hkMonth_(record.teslaStartAt || record.startAt), rates);
+      var split = splitPeakKwh_(
+        record.teslaStartAt || record.startAt,
+        record.durationSec,
+        record.kWh,
+        rate ? rate.peakStart : DEFAULT_PEAK_START_,
+        rate ? rate.peakEnd : DEFAULT_PEAK_END_,
+      );
+      if (!Object.prototype.hasOwnProperty.call(byCar, record.car)) byCar[record.car] = 0;
+      byCar[record.car] += split.peakKWh;
+      assignedKWh += record.kWh;
+    }
+    if (totalKWh <= 0 || bill.units <= 0) {
+      skipped.push({ label: bill.periodEnd, reason: 'no sessions' });
+      continue;
+    }
+    if (assignedKWh / totalKWh < 0.9) {
+      skipped.push({ label: bill.periodEnd, reason: 'unlabeled sessions' });
+      continue;
+    }
+    if (totalKWh / bill.units < 0.8) {
+      skipped.push({ label: bill.periodEnd, reason: 'missing sessions' });
+      continue;
+    }
+    periods.push({
+      label: bill.periodEnd,
+      actualPeakKWh: bill.peakKWh,
+      byCar: byCar,
+    });
+  }
+
+  var fit = fitPeakFactors_(periods, current);
+  var updatedCars = [];
+  if (fit.applied) {
+    for (var c = 0; c < cars.length; c += 1) {
+      var car = cars[c];
+      var next = fit.factors[car.id];
+      if (next === undefined) continue;
+      var previous = peakFactorFor_(current, car.id);
+      if (Math.abs(Number(next) - previous) < 0.005) continue;
+      if (!updateCarPeakFactor_(car.id, next)) continue;
+      updatedCars.push({
+        id: car.id,
+        name: car.name,
+        from: round6_(previous),
+        to: round6_(Number(next)),
+      });
+    }
+  }
+  var recomputed = 0;
+  if (updatedCars.length) {
+    recomputed = recomputeCarSplits_(updatedCars.map(function (car) { return car.id; }), rates);
+  }
+  return {
+    applied: fit.applied,
+    billsUsed: fit.billsUsed,
+    updatedCars: updatedCars,
+    recomputed: recomputed,
+    currentRmse: fit.currentRmse,
+    bestRmse: fit.bestRmse,
+    periods: fit.periods,
+    skipped: skipped,
+    reason: fit.billsUsed ? '' : 'insufficient labeled data',
+  };
+}
+
+function recomputeCarSplits_(carIds, rates) {
+  if (!carIds || !carIds.length) return 0;
+  var wanted = {};
+  for (var i = 0; i < carIds.length; i += 1) wanted[carIds[i]] = true;
+  var factors = carPeakFactorMap_(readCars_());
+  var records = readLog_();
+  var updates = {};
+  for (var r = 0; r < records.length; r += 1) {
+    var record = records[r];
+    if (!wanted[record.car]) continue;
+    if (record.kWh === null || record.kWh === undefined) continue;
+    if (!record.durationSec || !isFinite(Number(record.durationSec))) continue;
+    var at = record.teslaStartAt || record.startAt;
+    if (!validIso_(at)) continue;
+    var rate = selectRateRow_(hkMonth_(at), rates);
+    var split = splitPeakKwh_(
+      at,
+      record.durationSec,
+      record.kWh,
+      rate ? rate.peakStart : DEFAULT_PEAK_START_,
+      rate ? rate.peakEnd : DEFAULT_PEAK_END_,
+      peakFactorFor_(factors, record.car),
+    );
+    if (Number(record.peakKWh) === Number(split.peakKWh)
+        && Number(record.offPeakKWh) === Number(split.offPeakKWh)) continue;
+    updates[record.id] = split;
+  }
+  return updateLogSplits_(updates);
 }

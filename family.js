@@ -255,7 +255,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.cost.textContent = summary.cost === null ? '—' : `$${summary.cost.toFixed(2)}`;
     els.count.textContent = String(summary.count);
     els.split.textContent = summary.matched > 0
-      ? `非高峰 ${summary.offPeakKWh.toFixed(1)} kWh · 高峰 ${summary.peakKWh.toFixed(1)} kWh（按時段比例估算）`
+      ? `非高峰 ${summary.offPeakKWh.toFixed(1)} kWh · 高峰 ${summary.peakKWh.toFixed(1)} kWh（按時段及車輛習慣估算）`
       : '本月未有已配對嘅充電 session。';
 
     const picked = selectRate(current, state.rates);

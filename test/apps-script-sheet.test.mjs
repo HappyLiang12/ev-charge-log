@@ -195,8 +195,8 @@ test('readCars_ filters invalid ids, reserved unassigned, and active flags', () 
     },
   });
   assert.deepEqual(plain(env.call('readCars_')), [
-    { id: 'model3', name: 'Model 3', active: true },
-    { id: 'leaf', name: 'Leaf', active: false },
+    { id: 'model3', name: 'Model 3', active: true, peakFactor: 1 },
+    { id: 'leaf', name: 'Leaf', active: false, peakFactor: 1 },
   ]);
 });
 
@@ -373,6 +373,60 @@ test('readRates_ accepts Sheet date cells for month and dedupes', () => {
   assert.equal(rates[0].peakEnd, '23:00');
   assert.equal(rates[0].fetchedAt, '2026-11-16T00:00:00.000Z');
   assert.equal(rates[0].manualOverride, true);
+});
+
+test('readCars_ reads and clamps peakFactor', () => {
+  const env = createEnv({
+    sheets: {
+      Cars: [
+        ['id', 'name', 'active', 'createdAt', 'peakFactor'],
+        ['model3', 'Model 3', 'TRUE', 'x', 0],
+        ['ix3', 'iX3', 'TRUE', 'x', '0.4'],
+        ['leaf', 'Leaf', 'TRUE', 'x', 'bad'],
+      ],
+    },
+  });
+  assert.deepEqual(plain(env.call('readCars_')).map((car) => [car.id, car.peakFactor]), [
+    ['model3', 0],
+    ['ix3', 0.4],
+    ['leaf', 1],
+  ]);
+});
+
+test('updateCarPeakFactor_ writes and clamps the factor', () => {
+  const env = createEnv({
+    sheets: {
+      Cars: [
+        ['id', 'name', 'active', 'createdAt', 'peakFactor'],
+        ['model3', 'Model 3', 'TRUE', 'x', 1],
+      ],
+    },
+  });
+  assert.equal(env.call('updateCarPeakFactor_', 'model3', 0.25), true);
+  assert.equal(plain(env.call('readCars_'))[0].peakFactor, 0.25);
+  assert.equal(env.call('updateCarPeakFactor_', 'model3', 2), true);
+  assert.equal(plain(env.call('readCars_'))[0].peakFactor, 1);
+  assert.equal(env.call('updateCarPeakFactor_', 'missing', 0.5), false);
+});
+
+test('updateLogSplits_ rewrites only peak and off-peak cells by id', () => {
+  const env = createEnv({
+    sheets: {
+      Log: [
+        ['id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt',
+          'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source'],
+        ['a', '2026-11-14T05:00:00.000Z', '2026-11-14', '13:00', 'model3', 20, 7200,
+          '', '', 10, 10, 'din:a', 'tesla'],
+        ['b', '2026-11-14T06:00:00.000Z', '2026-11-14', '14:00', 'ix3', 10, 3600,
+          '', '', 5, 5, 'din:b', 'tesla'],
+      ],
+    },
+  });
+  assert.equal(env.call('updateLogSplits_', { a: { peakKWh: 0, offPeakKWh: 20 } }), 1);
+  const rows = env.values('Log');
+  assert.deepEqual(rows[1].slice(5, 11), [20, 7200, '', '', 0, 20]);
+  assert.deepEqual(rows[2].slice(9, 11), [5, 5]);
+  assert.equal(env.call('updateLogSplits_', { a: { peakKWh: 0, offPeakKWh: 20 } }), 0);
 });
 
 test('readCars_ accepts boolean active cells', () => {
