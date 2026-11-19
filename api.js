@@ -91,3 +91,7 @@ export async function refreshRates(apiUrl, fetchImpl = fetch) {
 export async function saveBill(apiUrl, bill, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'bill', bill }, fetchImpl);
 }
+
+export async function publishBill(apiUrl, periodStart, periodEnd, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'publishBill', periodStart, periodEnd }, fetchImpl);
+}

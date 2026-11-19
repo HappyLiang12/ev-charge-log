@@ -42,10 +42,13 @@
         <button id="syncBtn" class="secondary" type="button">更新充電樁</button>
       </div>
 
-      <section class="stats" aria-label="本月摘要">
+      <section class="stats" aria-label="期間摘要">
+        <div class="period-row">
+          <select id="monthSelect" aria-label="計費期"></select>
+        </div>
         <div class="stat">
           <div id="familyKwh" class="stat-value">—</div>
-          <div class="stat-label">本月 kWh</div>
+          <div class="stat-label">期間 kWh</div>
         </div>
         <div class="stat">
           <div id="familyCost" class="stat-value">—</div>
@@ -53,7 +56,7 @@
         </div>
         <div class="stat">
           <div id="familyCount" class="stat-value">—</div>
-          <div class="stat-label">本月次數</div>
+          <div class="stat-label">期間次數</div>
         </div>
       </section>
 
@@ -68,6 +71,12 @@
           <div class="live-metric"><strong id="familyLiveCost">—</strong><span>估算電費</span></div>
         </div>
         <p class="hint">每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。</p>
+      </section>
+
+      <section id="familyBillsPanel" class="panel" hidden>
+        <h2>帳單</h2>
+        <div id="familyBills" class="bill-list"></div>
+        <p class="hint">按同期各車記錄用量比例分攤整張帳單；實際電費以中電賬單為準。</p>
       </section>
 
       <section class="panel">
@@ -93,10 +102,9 @@
       <section class="panel">
         <h2>匯出</h2>
         <div class="export-row">
-          <select id="monthSelect" aria-label="匯出月份"></select>
           <button id="exportBtn" type="button">匯出 CSV</button>
         </div>
-        <p id="exportHint" class="hint">匯出所選月份。</p>
+        <p id="exportHint" class="hint">匯出所選期間。</p>
       </section>
     </main>
 
@@ -169,6 +177,7 @@
           <button id="ownerBillSave" type="button">記錄帳單</button>
         </div>
 
+        <p class="hint">分配完此帳單期所有 charging session 後，按「發布分攤」；未發布前家人連結不會顯示應付金額。</p>
         <div id="ownerBills" class="bill-list"></div>
       </section>
 

@@ -103,7 +103,7 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await waitFor(() => ui.document.querySelectorAll('#familyRates .owner-card').length === 1);
     assert.deepEqual(
       Array.from(ui.document.querySelectorAll('#familyView main > section h2')).map((h) => h.textContent),
-      ['充電狀態', '未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
+      ['充電狀態', '帳單', '未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
     );
     assert.equal(ui.document.querySelectorAll('#familyRates .owner-card a').length, 2);
 
@@ -467,6 +467,130 @@ test('owner UI: saving a bill learns per-car peak factors', { timeout: 25000 }, 
     const model3 = harness.env.call('readLog_').find((record) => record.id === 'm3-oct');
     assert.equal(model3.peakKWh, 0);
     assert.equal(model3.offPeakKWh, 80);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: bill period is the default summary and publishing is blocked by unassigned sessions', { timeout: 30000 }, async () => {
+  const records = [
+    {
+      id: 'ix3-oct', car: 'ix3', startAt: '2026-10-10T10:00:00.000Z', kWh: 600,
+      durationSec: 7200, teslaStartAt: '2026-10-10T10:00:00.000Z', teslaEndAt: '2026-10-10T12:00:00.000Z',
+      peakKWh: 600, offPeakKWh: 0, teslaKey: 'din:ix3-oct', source: 'tesla',
+    },
+    {
+      id: 'm3-oct', car: 'model3', startAt: '2026-10-20T10:00:00.000Z', kWh: 200,
+      durationSec: 7200, teslaStartAt: '2026-10-20T10:00:00.000Z', teslaEndAt: '2026-10-20T12:00:00.000Z',
+      peakKWh: 200, offPeakKWh: 0, teslaKey: 'din:m3-oct', source: 'tesla',
+    },
+    unassignedRecord('u-1', '2026-10-12T10:00:00.000Z', 'din:u1'),
+  ];
+  const sheets = defaultSheets({
+    rates: [rateRow('2026-10', 46.2), rateRow('2026-11', 47.4)],
+    records,
+    cars: [['ix3', 'iX3', true, 'x'], ['model3', 'Model 3', true, 'x']],
+  });
+  const harness = await createHarness({ sheets });
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T22:59:27+08:00',
+    units: 880,
+    peakKWh: 800,
+    offPeakKWh: 80,
+    total: 1280,
+  };
+  const saved = JSON.parse(harness.env.call('doPost', {
+    postData: { contents: JSON.stringify({ action: 'bill', bill }) },
+  }).getContent());
+  assert.equal(saved.ok, true);
+  assert.equal(saved.bill.publishedAt, '');
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    const month = ui.document.getElementById('ownerMonth');
+    assert.equal(month.value, 'bill:2026-10-03:2026-11-04');
+    assert.match(month.selectedOptions[0].textContent, /帳單 2026-10-03 – 2026-11-04/);
+    await waitFor(() => ui.document.querySelectorAll('#ownerBills .bill-card').length === 1);
+    const publishButton = ui.document.querySelector('#ownerBills .bill-publish button');
+    assert.equal(publishButton.textContent, '發布分攤');
+    assert.equal(publishButton.disabled, true);
+    assert.match(ui.document.getElementById('ownerBills').textContent, /仍有 1 筆未分配/);
+    assert.match(ui.document.getElementById('ownerCarTotals').textContent, /600\.0/);
+
+    const select = ui.document.querySelector('#ownerPending select');
+    select.value = 'ix3';
+    ui.document.querySelector('#ownerPending li button').click();
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending li').length === 0);
+    await waitFor(() => !ui.document.querySelector('#ownerBills .bill-publish button').disabled);
+    ui.document.querySelector('#ownerBills .bill-publish button').click();
+    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('已發布分攤'));
+    await waitFor(() => ui.document.getElementById('ownerBills').textContent.includes('已發布'));
+    assert.ok(harness.env.call('readBills_')[0].publishedAt);
+
+    const family = JSON.parse(harness.env.call('doGet', { parameter: { car: 'ix3' } }).getContent());
+    assert.equal(family.ok, true);
+    assert.equal(family.bills.length, 1);
+    assert.equal(family.bills[0].myKWh, 612);
+    assert.equal(Math.round(family.bills[0].myShare * 10000) / 10000, 0.7537);
+    assert.equal(Math.round(family.bills[0].myAmount * 100) / 100, 964.73);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family UI: published bill period drives the summary and shows the payable share', { timeout: 30000 }, async () => {
+  const records = [
+    {
+      id: 'ix3-oct', car: 'ix3', startAt: '2026-10-10T10:00:00.000Z', kWh: 600,
+      durationSec: 7200, teslaStartAt: '2026-10-10T10:00:00.000Z', teslaEndAt: '2026-10-10T12:00:00.000Z',
+      peakKWh: 600, offPeakKWh: 0, teslaKey: 'din:ix3-oct', source: 'tesla',
+    },
+    {
+      id: 'm3-oct', car: 'model3', startAt: '2026-10-20T10:00:00.000Z', kWh: 200,
+      durationSec: 7200, teslaStartAt: '2026-10-20T10:00:00.000Z', teslaEndAt: '2026-10-20T12:00:00.000Z',
+      peakKWh: 200, offPeakKWh: 0, teslaKey: 'din:m3-oct', source: 'tesla',
+    },
+  ];
+  const sheets = defaultSheets({
+    rates: [rateRow('2026-10', 46.2), rateRow('2026-11', 47.4)],
+    records,
+    cars: [['ix3', 'iX3', true, 'x'], ['model3', 'Model 3', true, 'x']],
+  });
+  const harness = await createHarness({ sheets });
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T22:59:27+08:00',
+    units: 880,
+    peakKWh: 800,
+    offPeakKWh: 80,
+    total: 1280,
+  };
+  const saved = JSON.parse(harness.env.call('doPost', {
+    postData: { contents: JSON.stringify({ action: 'bill', bill }) },
+  }).getContent());
+  assert.equal(saved.ok, true);
+  const published = JSON.parse(harness.env.call('doPost', {
+    postData: { contents: JSON.stringify({ action: 'publishBill', periodStart: '2026-10-03', periodEnd: '2026-11-04' }) },
+  }).getContent());
+  assert.equal(published.ok, true);
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.getElementById('familyStatus').textContent === '已連接');
+    await waitFor(() => !ui.document.getElementById('familyBillsPanel').hidden);
+    const month = ui.document.getElementById('monthSelect');
+    assert.equal(month.value, 'bill:2026-10-03:2026-11-04');
+    assert.equal(ui.document.getElementById('familyKwh').textContent, '200.0');
+    assert.equal(ui.document.getElementById('familyCount').textContent, '1');
+    assert.equal(ui.document.getElementById('familyCost').textContent, '$367.40');
+    const text = ui.document.getElementById('familyBills').textContent;
+    assert.match(text, /應付 \$320\.00/);
+    assert.match(text, /你 200\.0 度 · 佔 25\.0%/);
+    assert.match(text, /帳單 \$1280\.00/);
   } finally {
     ui.close();
     await harness.close();

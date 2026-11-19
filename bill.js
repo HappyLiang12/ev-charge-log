@@ -323,12 +323,19 @@ export function allocateBill(records, bill, cars, rates, cutoffIso) {
   let peakKWh = 0;
   let offPeakKWh = 0;
   let estimate = 0;
+  let unassignedCount = 0;
+  let unassignedKWh = 0;
   const ratesByMonth = new Map((rates || []).map((rate) => [rate.month, rate]));
   for (const record of records || []) {
-    if (record.kWh === null || record.kWh === undefined) continue;
-    if (!record.car || record.car === 'unassigned') continue;
     const at = Date.parse(record.startAt);
     if (!Number.isFinite(at) || at < startMs || at >= cutoffMs) continue;
+    if (record.car === 'unassigned') {
+      unassignedCount += 1;
+      unassignedKWh += Number(record.kWh || 0);
+      continue;
+    }
+    if (record.kWh === null || record.kWh === undefined) continue;
+    if (!record.car) continue;
     const entry = totals.get(record.car) || { id: record.car, kWh: 0, sessions: 0 };
     entry.kWh += record.kWh;
     entry.sessions += 1;
@@ -357,6 +364,8 @@ export function allocateBill(records, bill, cars, rates, cutoffIso) {
     peakKWh,
     offPeakKWh,
     estimate,
+    unassignedCount,
+    unassignedKWh,
     rows,
     driftUnitsPct: bill.units > 0 ? (loggedKWh / bill.units - 1) * 100 : null,
     driftEstimatePct: bill.total > 0 && estimate > 0 ? (estimate / bill.total - 1) * 100 : null,
@@ -378,6 +387,7 @@ export function normalizeBillRow(row) {
   const units = Number(row.units);
   if (!(total > 0) || !(units > 0)) return null;
   const cutoff = String(row.cutoff || '').trim();
+  const published = String(row.publishedAt || '').trim();
   return {
     periodStart,
     periodEnd,
@@ -391,12 +401,31 @@ export function normalizeBillRow(row) {
     total,
     fileName: String(row.fileName || '').trim(),
     savedAt: String(row.savedAt || '').trim(),
+    publishedAt: Number.isFinite(Date.parse(published)) ? new Date(Date.parse(published)).toISOString() : '',
   };
 }
 
 export function normalizeBillRows(rows) {
   return (Array.isArray(rows) ? rows : [])
     .map(normalizeBillRow)
+    .filter(Boolean)
+    .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+}
+
+export function normalizeBillShares(rows) {
+  const numberOrZero = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const bill = normalizeBillRow(row);
+      if (!bill) return null;
+      return {
+        ...bill,
+        loggedKWh: Math.max(0, numberOrZero(row.loggedKWh)),
+        myKWh: Math.max(0, numberOrZero(row.myKWh)),
+        myShare: Math.max(0, Math.min(1, numberOrZero(row.myShare))),
+        myAmount: Math.max(0, numberOrZero(row.myAmount)),
+      };
+    })
     .filter(Boolean)
     .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
 }

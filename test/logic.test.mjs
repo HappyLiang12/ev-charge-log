@@ -27,6 +27,8 @@ import {
   monthsWithRecords,
   defaultMonth,
   filterByMonth,
+  billPeriodValue,
+  filterByPeriod,
   selectRate,
   computeCost,
   summarizeRecords,
@@ -269,6 +271,61 @@ test('summarizeRecords totals kWh, split, cost, and missing-rate state', () => {
   });
   assert.equal(summarizeRecords([record()], [], '2026-11').cost, null);
   assert.equal(summarizeRecords([record()], [], '2026-11').missingRate, 1);
+});
+
+const billFixture = {
+  periodStart: '2026-10-03',
+  periodEnd: '2026-11-04',
+  cutoff: '2026-11-04T14:59:00.000Z',
+};
+
+test('billPeriodValue and filterByPeriod select by month, all, and bill cutoff', () => {
+  const rows = [
+    record({ id: 'before', startAt: '2026-10-02T15:59:00.000Z' }),
+    record({ id: 'start', startAt: '2026-10-02T16:00:00.000Z' }),
+    record({ id: 'inside', startAt: '2026-11-04T14:58:00.000Z' }),
+    record({ id: 'cutoff', startAt: '2026-11-04T14:59:00.000Z' }),
+  ];
+  assert.equal(billPeriodValue(billFixture), 'bill:2026-10-03:2026-11-04');
+  assert.deepEqual(filterByPeriod(rows, '2026-10', [billFixture]).map((row) => row.id), ['before', 'start']);
+  assert.deepEqual(
+    filterByPeriod(rows, 'all', [billFixture]).map((row) => row.id).sort(),
+    ['before', 'cutoff', 'inside', 'start'],
+  );
+  assert.deepEqual(
+    filterByPeriod(rows, billPeriodValue(billFixture), [billFixture]).map((row) => row.id),
+    ['start', 'inside'],
+  );
+  assert.deepEqual(filterByPeriod(rows, 'bill:2026-01-01:2026-01-02', [billFixture]), []);
+});
+
+test('parseFamilyPayload keeps published bill shares', () => {
+  const bill = {
+    ...billFixture,
+    units: 886,
+    total: 1280,
+    loggedKWh: 856,
+    myKWh: 684.675,
+    myShare: 0.8,
+    myAmount: 1023.87,
+    publishedAt: '2026-11-19T15:40:00.000Z',
+  };
+  const parsed = parseFamilyPayload({
+    ok: true,
+    car: { id: 'ix3', name: 'iX3', active: true },
+    records: [],
+    unassigned: [],
+    rates: [rate],
+    bills: [bill],
+  });
+  assert.deepEqual(parsed.bills, [bill]);
+  assert.deepEqual(parseFamilyPayload({
+    ok: true,
+    car: { id: 'ix3', name: 'iX3', active: true },
+    records: [],
+    unassigned: [],
+    rates: [],
+  }).bills, []);
 });
 
 test('toCsv emits the billing header, Hong Kong time, split, cost, and source', () => {

@@ -103,6 +103,9 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 
 .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
+.period-row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+.period-row select { flex: 1; }
+
 .stat {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -207,7 +210,7 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 .rate-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .panel code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
-.export-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+.export-row { display: flex; gap: 10px; }
 
 select, #exportBtn {
   min-height: 48px;
@@ -609,3 +612,15 @@ select, #exportBtn {
   background: var(--surface-2);
   padding: 12px;
 }
+
+.bill-publish {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.bill-publish button { flex: none; }
