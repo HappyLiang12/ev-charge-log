@@ -1,6 +1,10 @@
 var HK_OFFSET_MS_ = 8 * 60 * 60 * 1000;
 var DEFAULT_PEAK_START_ = '16:00';
 var DEFAULT_PEAK_END_ = '23:00';
+var PEAK_FACTOR_STEPS_ = [0, 0.25, 0.5, 0.75, 1];
+var PEAK_FACTOR_NON_BINARY_COST_ = 16;
+var PEAK_FIT_MIN_RMSE_ = 4;
+var PEAK_FIT_IMPROVEMENT_RATIO_ = 0.5;
 
 function pad2_(value) {
   return ('0' + value).slice(-2);
@@ -56,7 +60,14 @@ function overlapPeakSeconds_(startSec, endSec, peakStartSec, peakEndSec) {
     + Math.max(0, Math.min(endSec, peakEndSec) - Math.max(startSec, 0));
 }
 
-function splitPeakKwh_(startIso, durationSec, kwh, peakStart, peakEnd) {
+function clampedPeakFactor_(value) {
+  if (value === null || value === undefined || value === '') return 1;
+  var factor = Number(value);
+  if (!isFinite(factor)) return 1;
+  return Math.max(0, Math.min(1, factor));
+}
+
+function splitPeakKwh_(startIso, durationSec, kwh, peakStart, peakEnd, factor) {
   var duration = Math.max(0, Math.floor(Number(durationSec) || 0));
   var energy = Math.max(0, Number(kwh) || 0);
   if (!energy) return { peakKWh: 0, offPeakKWh: 0 };
@@ -80,8 +91,177 @@ function splitPeakKwh_(startIso, durationSec, kwh, peakStart, peakEnd) {
     peakSeconds += overlapPeakSeconds_(sodStart, sodEnd, peakStartSec, peakEndSec);
     cursor = segmentEnd;
   }
-  var peakKWh = energy * (peakSeconds / duration);
+  var peakKWh = energy * (peakSeconds / duration) * clampedPeakFactor_(factor);
   return { peakKWh: round6_(peakKWh), offPeakKWh: round6_(energy - peakKWh) };
+}
+
+function carPeakFactorMap_(cars) {
+  var map = {};
+  for (var i = 0; i < (cars || []).length; i += 1) {
+    var car = cars[i];
+    if (!car || !car.id) continue;
+    map[car.id] = clampedPeakFactor_(car.peakFactor);
+  }
+  return map;
+}
+
+function peakFactorFor_(factors, carId) {
+  if (!factors || !Object.prototype.hasOwnProperty.call(factors, carId)) return 1;
+  return clampedPeakFactor_(factors[carId]);
+}
+
+function predictedPeakKWh_(byCar, factors) {
+  var total = 0;
+  for (var carId in byCar) {
+    if (Object.prototype.hasOwnProperty.call(byCar, carId)) {
+      total += byCar[carId] * peakFactorFor_(factors, carId);
+    }
+  }
+  return total;
+}
+
+function peakFitLoss_(periods, factors) {
+  var sse = 0;
+  var nonBinary = 0;
+  for (var i = 0; i < periods.length; i += 1) {
+    var diff = predictedPeakKWh_(periods[i].byCar, factors) - periods[i].actualPeakKWh;
+    sse += diff * diff;
+  }
+  for (var carId in factors) {
+    if (Object.prototype.hasOwnProperty.call(factors, carId)) {
+      var factor = factors[carId];
+      if (factor > 0 && factor < 1) nonBinary += 1;
+    }
+  }
+  return {
+    sse: sse,
+    rmse: Math.sqrt(sse / Math.max(1, periods.length)),
+    score: sse + nonBinary * PEAK_FACTOR_NON_BINARY_COST_,
+  };
+}
+
+function fitPeakFactors_(periods, currentFactors) {
+  var usable = (periods || []).filter(function (period) {
+    return period && isFinite(Number(period.actualPeakKWh)) && period.byCar;
+  });
+  var carIds = [];
+  var seen = {};
+  for (var i = 0; i < usable.length; i += 1) {
+    for (var carId in usable[i].byCar) {
+      if (!Object.prototype.hasOwnProperty.call(usable[i].byCar, carId)) continue;
+      if (!(Number(usable[i].byCar[carId]) > 0) || seen[carId]) continue;
+      seen[carId] = true;
+      carIds.push(carId);
+    }
+  }
+  carIds.sort();
+  var current = {};
+  for (var c = 0; c < carIds.length; c += 1) {
+    current[carIds[c]] = peakFactorFor_(currentFactors, carIds[c]);
+  }
+  var currentLoss = peakFitLoss_(usable, current);
+  if (!usable.length || !carIds.length) {
+    return {
+      applied: false,
+      factors: current,
+      currentRmse: round6_(currentLoss.rmse),
+      bestRmse: round6_(currentLoss.rmse),
+      billsUsed: usable.length,
+      periods: [],
+    };
+  }
+
+  var best = null;
+  function consider(factors) {
+    var loss = peakFitLoss_(usable, factors);
+    if (!best) {
+      best = { factors: factors, loss: loss };
+      return;
+    }
+    if (loss.score < best.loss.score - 1e-9) {
+      best = { factors: factors, loss: loss };
+      return;
+    }
+    if (loss.score > best.loss.score + 1e-9) return;
+    if (loss.sse < best.loss.sse - 1e-9) {
+      best = { factors: factors, loss: loss };
+      return;
+    }
+    if (loss.sse > best.loss.sse + 1e-9) return;
+    var changed = 0;
+    var bestChanged = 0;
+    for (var k = 0; k < carIds.length; k += 1) {
+      if (factors[carIds[k]] !== current[carIds[k]]) changed += 1;
+      if (best.factors[carIds[k]] !== current[carIds[k]]) bestChanged += 1;
+    }
+    if (changed < bestChanged) best = { factors: factors, loss: loss };
+  }
+
+  if (carIds.length <= 4) {
+    var combo = {};
+    var walk = function (index) {
+      if (index === carIds.length) {
+        var copy = {};
+        for (var k = 0; k < carIds.length; k += 1) copy[carIds[k]] = combo[carIds[k]];
+        consider(copy);
+        return;
+      }
+      for (var v = 0; v < PEAK_FACTOR_STEPS_.length; v += 1) {
+        combo[carIds[index]] = PEAK_FACTOR_STEPS_[v];
+        walk(index + 1);
+      }
+    };
+    walk(0);
+  } else {
+    var factors = {};
+    for (var f = 0; f < carIds.length; f += 1) factors[carIds[f]] = current[carIds[f]];
+    var rounds = 0;
+    var improved = true;
+    while (improved && rounds < 3) {
+      improved = false;
+      rounds += 1;
+      for (var g = 0; g < carIds.length; g += 1) {
+        var carId = carIds[g];
+        var bestValue = factors[carId];
+        var bestLoss = peakFitLoss_(usable, factors);
+        for (var s = 0; s < PEAK_FACTOR_STEPS_.length; s += 1) {
+          var trial = {};
+          for (var t = 0; t < carIds.length; t += 1) trial[carIds[t]] = factors[carIds[t]];
+          trial[carId] = PEAK_FACTOR_STEPS_[s];
+          var trialLoss = peakFitLoss_(usable, trial);
+          if (trialLoss.score < bestLoss.score - 1e-9) {
+            bestValue = trial[carId];
+            bestLoss = trialLoss;
+          }
+        }
+        if (bestValue !== factors[carId]) {
+          factors[carId] = bestValue;
+          improved = true;
+        }
+      }
+    }
+    best = { factors: factors, loss: peakFitLoss_(usable, factors) };
+  }
+
+  var apply = currentLoss.rmse >= PEAK_FIT_MIN_RMSE_
+    && best.loss.rmse <= currentLoss.rmse * PEAK_FIT_IMPROVEMENT_RATIO_;
+  var applied = apply ? best.factors : current;
+  var output = [];
+  for (var p = 0; p < usable.length; p += 1) {
+    output.push({
+      label: usable[p].label || '',
+      actualPeakKWh: Number(usable[p].actualPeakKWh),
+      predictedPeakKWh: round6_(predictedPeakKWh_(usable[p].byCar, applied)),
+    });
+  }
+  return {
+    applied: apply,
+    factors: applied,
+    currentRmse: round6_(currentLoss.rmse),
+    bestRmse: round6_(best.loss.rmse),
+    billsUsed: usable.length,
+    periods: output,
+  };
 }
 
 function closestManualCandidate_(sessionStartIso, manualRows, windowMs) {

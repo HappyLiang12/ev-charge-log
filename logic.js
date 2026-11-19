@@ -132,10 +132,12 @@ export function normalizeRates(list) {
 
 export function normalizeCar(value) {
   if (!value || !CAR_RE.test(text(value.id)) || !text(value.name).trim()) return null;
+  const peakFactor = Number(value.peakFactor);
   return {
     id: value.id,
     name: text(value.name).trim(),
     active: value.active !== false && String(value.active).toUpperCase() !== 'FALSE',
+    peakFactor: Number.isFinite(peakFactor) ? Math.max(0, Math.min(1, peakFactor)) : 1,
   };
 }
 

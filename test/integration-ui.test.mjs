@@ -418,3 +418,57 @@ test('owner UI: saved bill shows per-car amounts by kWh share and manual entry s
     await harness.close();
   }
 });
+
+test('owner UI: saving a bill learns per-car peak factors', { timeout: 25000 }, async () => {
+  const records = [
+    {
+      id: 'ix3-oct', car: 'ix3', startAt: '2026-10-10T10:00:00.000Z', kWh: 100,
+      durationSec: 7200, teslaStartAt: '2026-10-10T10:00:00.000Z', teslaEndAt: '2026-10-10T12:00:00.000Z',
+      peakKWh: 100, offPeakKWh: 0, teslaKey: 'din:ix3-oct', source: 'tesla',
+    },
+    {
+      id: 'm3-oct', car: 'model3', startAt: '2026-10-20T10:00:00.000Z', kWh: 80,
+      durationSec: 7200, teslaStartAt: '2026-10-20T10:00:00.000Z', teslaEndAt: '2026-10-20T12:00:00.000Z',
+      peakKWh: 80, offPeakKWh: 0, teslaKey: 'din:m3-oct', source: 'tesla',
+    },
+  ];
+  const sheets = defaultSheets({
+    rates: [rateRow('2026-10', 46.2), rateRow('2026-11', 47.4)],
+    records,
+    cars: [['ix3', 'iX3', true, 'x'], ['model3', 'Model 3', true, 'x']],
+  });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
+    ui.document.getElementById('ownerBillManualBtn').click();
+    const set = (id, value) => {
+      const input = ui.document.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+    };
+    set('ownerBillStart', '2026-10-03');
+    set('ownerBillEnd', '2026-11-04');
+    set('ownerBillUnits', '180');
+    set('ownerBillTotal', '500');
+    set('ownerBillPeak', '98');
+    set('ownerBillOff', '82');
+    set('ownerBillCutoff', '2026-11-04T22:59:27');
+    await waitFor(() => ui.document.querySelectorAll('#ownerBillPreview .bill-table tr').length >= 3);
+    ui.document.getElementById('ownerBillSave').click();
+    await waitFor(() => ui.document.getElementById('ownerToast').textContent.includes('已按 1 張帳單校準'));
+    await waitFor(() => harness.env.call('readCars_')
+      .some((car) => car.id === 'model3' && car.peakFactor === 0));
+    const model3Card = Array.from(ui.document.querySelectorAll('#ownerCarTotals .owner-card'))
+      .find((card) => card.textContent.includes('Model 3'));
+    assert.ok(model3Card);
+    assert.ok(model3Card.textContent.includes('高峯係數'));
+    assert.ok(model3Card.textContent.includes('0.00（按帳單校準）'));
+    const model3 = harness.env.call('readLog_').find((record) => record.id === 'm3-oct');
+    assert.equal(model3.peakKWh, 0);
+    assert.equal(model3.offPeakKWh, 80);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});

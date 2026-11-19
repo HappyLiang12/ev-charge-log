@@ -143,7 +143,10 @@ test('normalizeRates and normalizeCars validate server rows', () => {
   assert.deepEqual(normalizeRates([{ ...rate, manualOverride: 'TRUE' }]), [{ ...rate, manualOverride: true }]);
   assert.deepEqual(normalizeRates([{ ...rate, basicPeak: null }]), []);
   assert.deepEqual(normalizeCars([{ id: 'model3', name: 'Model 3', active: 'FALSE' }]), [
-    { id: 'model3', name: 'Model 3', active: false },
+    { id: 'model3', name: 'Model 3', active: false, peakFactor: 1 },
+  ]);
+  assert.deepEqual(normalizeCars([{ id: 'model3', name: 'Model 3', active: true, peakFactor: '0.25' }]), [
+    { id: 'model3', name: 'Model 3', active: true, peakFactor: 0.25 },
   ]);
   const fallback = normalizeRates([{ ...rate, peakStart: 'bad', peakEnd: '25:00' }]);
   assert.equal(fallback.length, 1);
