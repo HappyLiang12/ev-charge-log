@@ -7,6 +7,7 @@ import {
   inferCutoff,
   allocateBill,
   normalizeBillRows,
+  normalizeBillShares,
 } from '../bill.js';
 
 const billLines = [
@@ -138,6 +139,77 @@ test('normalizeBillRows sorts newest first and drops invalid rows', () => {
   assert.equal(rows[0].peakKWh, 77);
   assert.equal(rows[0].offPeakKWh, null);
   assert.equal(rows[1].periodEnd, '2026-10-02');
+});
+
+test('allocateBill reports unassigned sessions inside the cutoff', () => {
+  const records = [
+    { startAt: '2026-10-10T10:00:00.000Z', car: 'ix3', kWh: 100, peakKWh: 0, offPeakKWh: 100 },
+    { startAt: '2026-10-11T10:00:00.000Z', car: 'unassigned', kWh: 30, peakKWh: 30, offPeakKWh: 0 },
+    { startAt: '2026-10-12T10:00:00.000Z', car: 'unassigned', kWh: null },
+    { startAt: '2026-11-04T15:00:00.000Z', car: 'unassigned', kWh: 40, peakKWh: 40, offPeakKWh: 0 },
+  ];
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T14:59:00.000Z',
+    units: 900,
+    total: 1200,
+  };
+  const result = allocateBill(records, bill, [], []);
+  assert.equal(result.loggedKWh, 100);
+  assert.equal(result.unassignedCount, 2);
+  assert.equal(result.unassignedKWh, 30);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].amount, 1200);
+});
+
+test('normalizeBillRows keeps publishedAt and defaults it to empty', () => {
+  const rows = normalizeBillRows([
+    {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      units: 886,
+      total: 1280,
+      publishedAt: '2026-11-19T15:40:00.000Z',
+    },
+    { periodStart: '2026-09-03', periodEnd: '2026-10-02', units: 900, total: 1300 },
+  ]);
+  assert.equal(rows[0].publishedAt, '2026-11-19T15:40:00.000Z');
+  assert.equal(rows[1].publishedAt, '');
+});
+
+test('normalizeBillShares keeps valid published shares newest first', () => {
+  const shares = normalizeBillShares([
+    {
+      periodStart: '2026-10-03',
+      periodEnd: '2026-11-04',
+      cutoff: '2026-11-04T14:59:00.000Z',
+      units: 886,
+      total: 1280,
+      loggedKWh: 856,
+      myKWh: 684.675,
+      myShare: 0.8,
+      myAmount: 1023.87,
+      publishedAt: '2026-11-19T15:40:00.000Z',
+    },
+    { periodStart: 'bad', periodEnd: '2026-11-04', units: 1, total: 1 },
+    {
+      periodStart: '2026-09-03',
+      periodEnd: '2026-10-02',
+      units: 900,
+      total: 1300,
+      loggedKWh: 0,
+      myKWh: 0,
+      myShare: 0,
+      myAmount: 0,
+    },
+  ]);
+  assert.equal(shares.length, 2);
+  assert.equal(shares[0].periodEnd, '2026-11-04');
+  assert.equal(shares[0].myShare, 0.8);
+  assert.equal(shares[0].myAmount, 1023.87);
+  assert.equal(shares[0].publishedAt, '2026-11-19T15:40:00.000Z');
+  assert.equal(shares[1].periodEnd, '2026-10-02');
 });
 
 test('parseBillLines ignores an energy amount printed after the total label', () => {

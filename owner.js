@@ -2,7 +2,8 @@ import {
   formatHkDate,
   formatHkTime12,
   sessionEndIso,
-  filterByMonth,
+  billPeriodValue,
+  filterByPeriod,
   monthKey,
   monthsWithRecords,
   familyStartUrl,
@@ -16,6 +17,7 @@ import {
   refreshRates,
   assignSession,
   saveBill,
+  publishBill,
 } from './api.js';
 import {
   parseBillLines,
@@ -43,6 +45,7 @@ export function initOwner({ apiUrl }) {
     billExtras: {},
     billFileName: '',
     billBusy: false,
+    publishing: new Set(),
   };
 
   const els = {
@@ -271,6 +274,33 @@ export function initOwner({ apiUrl }) {
       card.append(breakdown);
     }
     card.append(makeAllocationTable(allocation, bill));
+    const publish = document.createElement('div');
+    publish.className = 'bill-publish';
+    const publishInfo = document.createElement('span');
+    const publishBtn = document.createElement('button');
+    publishBtn.type = 'button';
+    publishBtn.className = 'secondary';
+    const busy = state.publishing.has(bill.periodEnd);
+    const blocked = allocation.unassignedCount > 0;
+    const empty = !(allocation.loggedKWh > 0);
+    if (bill.publishedAt) {
+      publishInfo.textContent = blocked
+        ? `已發布，但此期有 ${allocation.unassignedCount} 筆未分配，已暫停家人顯示`
+        : `已發布 ${formatStamp(bill.publishedAt)}`;
+      publishBtn.textContent = busy ? '更新中…' : '更新分攤';
+    } else {
+      publishInfo.textContent = blocked
+        ? `仍有 ${allocation.unassignedCount} 筆未分配（${allocation.unassignedKWh.toFixed(1)} kWh），請先分配`
+        : empty
+          ? '此期未有已分配紀錄，未能發布'
+          : '未發布；家人連結未顯示應付金額';
+      publishBtn.textContent = busy ? '發布中…' : '發布分攤';
+    }
+    publishBtn.disabled = !apiUrl || busy || blocked || empty;
+    publishBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    publishBtn.addEventListener('click', () => { void onPublishBill(bill); });
+    publish.append(publishInfo, publishBtn);
+    card.append(publish);
     return card;
   }
 
@@ -363,6 +393,29 @@ export function initOwner({ apiUrl }) {
       state.billBusy = false;
       render();
       renderBillPreview();
+    }
+  }
+
+  async function onPublishBill(bill) {
+    if (!apiUrl || state.publishing.has(bill.periodEnd)) return;
+    state.publishing.add(bill.periodEnd);
+    render();
+    try {
+      await publishBill(apiUrl, bill.periodStart, bill.periodEnd);
+      await refreshData();
+      showToast(els.toast, '已發布分攤；家人連結會見到應付金額。');
+    } catch (error) {
+      const message = String(error && error.message ? error.message : '');
+      const validationError = /unassigned|no assigned sessions/i.test(message);
+      if (!validationError) state.offline = true;
+      showToast(els.toast, /unassigned/i.test(message)
+        ? '此期仍有未分配紀錄，請先分配再發布。'
+        : /no assigned sessions/i.test(message)
+          ? '此期未有已分配紀錄，未能發布。'
+          : friendlyError(error, '發布失敗，請檢查網絡後重試。'));
+    } finally {
+      state.publishing.delete(bill.periodEnd);
+      render();
     }
   }
 
@@ -540,25 +593,32 @@ export function initOwner({ apiUrl }) {
     const records = state.records;
     const months = monthsWithRecords(records);
     const currentMonth = monthKey(new Date().toISOString());
+    const bills = normalizeBillRows(state.bills);
+    const billOptions = bills.map((bill) => ({
+      value: billPeriodValue(bill),
+      label: `帳單 ${bill.periodStart} – ${bill.periodEnd}`,
+    }));
     const monthOptions = [...new Set([...months, currentMonth])].sort().reverse();
-    const selected = state.monthTouched
-      && (state.selectedMonth === 'all' || monthOptions.includes(state.selectedMonth))
+    const optionValues = ['all', ...billOptions.map((option) => option.value), ...monthOptions];
+    const selected = state.monthTouched && optionValues.includes(state.selectedMonth)
       ? state.selectedMonth
-      : currentMonth;
-    const options = ['all', ...monthOptions];
+      : billOptions.length > 0
+        ? billOptions[0].value
+        : currentMonth;
+    const labels = new Map(billOptions.map((option) => [option.value, option.label]));
     els.month.replaceChildren();
-    for (const month of options) {
+    for (const value of optionValues) {
       const option = document.createElement('option');
-      option.value = month;
-      option.textContent = month === 'all'
+      option.value = value;
+      option.textContent = value === 'all'
         ? '全部月份'
-        : `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`;
+        : labels.get(value) || `${value.slice(0, 4)} 年 ${Number(value.slice(5))} 月`;
       els.month.append(option);
     }
-    els.month.value = options.includes(selected) ? selected : 'all';
+    els.month.value = optionValues.includes(selected) ? selected : 'all';
     els.month.disabled = state.loading || state.busy;
     state.selectedMonth = els.month.value;
-    const filtered = filterByMonth(records, els.month.value);
+    const filtered = filterByPeriod(records, els.month.value, bills);
     const billable = filtered.filter((record) => (
       record.car && record.car !== 'unassigned' && record.source !== 'legacy'
     ));
@@ -741,15 +801,19 @@ export function initOwner({ apiUrl }) {
   }
 
   function onExport() {
-    const month = els.month.value || 'all';
-    const billable = filterByMonth(state.records, month).filter((record) => (
+    const value = els.month.value || 'all';
+    const billable = filterByPeriod(state.records, value, normalizeBillRows(state.bills)).filter((record) => (
       record.car && record.car !== 'unassigned' && record.source !== 'legacy'
     ));
     if (billable.length === 0) return;
     const carNames = {};
     for (const car of state.cars) carNames[car.id] = car.name;
-    const filename = month === 'all' ? 'ev-charge-all.csv' : `ev-charge-all-${month}.csv`;
-    downloadCsv(toCsv(billable, { carNames, rates: state.rates }), filename);
+    const suffix = value === 'all'
+      ? ''
+      : value.startsWith('bill:')
+        ? `-bill-${value.slice(5).replace(':', '_')}`
+        : `-${value}`;
+    downloadCsv(toCsv(billable, { carNames, rates: state.rates }), `ev-charge-all${suffix}.csv`);
     showToast(els.toast, 'CSV 已下載。');
   }
 

@@ -12,7 +12,8 @@ import {
   mergeRecords,
   monthsWithRecords,
   defaultMonth,
-  filterByMonth,
+  billPeriodValue,
+  filterByPeriod,
   selectRate,
   computeCost,
   summarizeRecords,
@@ -31,13 +32,18 @@ import {
   claimSession,
 } from './api.js';
 import { renderRateCards } from './rate-view.js';
+import { normalizeBillShares } from './bill.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
 
-function monthLabel(month) {
-  if (month === 'all') return '全部月份';
-  const [year, value] = month.split('-');
-  return `${year} 年 ${Number(value)} 月`;
+function periodLabel(value, bills) {
+  if (value === 'all') return '全部月份';
+  if (String(value).startsWith('bill:')) {
+    const bill = (bills || []).find((item) => billPeriodValue(item) === value);
+    return bill ? `帳單 ${bill.periodStart} – ${bill.periodEnd}` : '帳單期';
+  }
+  const [year, month] = value.split('-');
+  return `${year} 年 ${Number(month)} 月`;
 }
 
 export function initFamily({ apiUrl, carId, autoStart = false }) {
@@ -63,6 +69,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     server: normalizeRecords(cached.value),
     pending: normalizeRecords(queued.value),
     rates: normalizeRates(cachedRates.value),
+    bills: [],
     unassigned: [],
     syncedOnce: false,
     connecting: Boolean(apiUrl),
@@ -94,6 +101,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     liveCost: byId('familyLiveCost'),
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
+    bills: byId('familyBills'),
+    billsPanel: byId('familyBillsPanel'),
     recentList: byId('recentList'),
     empty: byId('familyEmpty'),
     monthSelect: byId('monthSelect'),
@@ -227,6 +236,27 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     return li;
   }
 
+  function makeBillShareCard(bill) {
+    const card = document.createElement('div');
+    card.className = 'bill-card';
+    const head = document.createElement('div');
+    head.className = 'owner-card-head';
+    const title = document.createElement('span');
+    title.className = 'owner-card-title';
+    title.textContent = `${bill.periodStart} – ${bill.periodEnd}`;
+    const amount = document.createElement('span');
+    amount.className = 'owner-card-total';
+    amount.textContent = bill.myKWh > 0 ? `應付 $${bill.myAmount.toFixed(2)}` : '此期未有紀錄';
+    head.append(title, amount);
+    const meta = document.createElement('p');
+    meta.className = 'hint';
+    meta.textContent = bill.myKWh > 0
+      ? `帳單 $${bill.total.toFixed(2)} · 你 ${bill.myKWh.toFixed(1)} 度 · 佔 ${(bill.myShare * 100).toFixed(1)}%`
+      : `帳單 $${bill.total.toFixed(2)} · 此帳單期未有你嘅紀錄`;
+    card.append(head, meta);
+    return card;
+  }
+
   function render() {
     els.carName.textContent = state.car.name || carId;
     els.syncBtn.hidden = !apiUrl;
@@ -249,36 +279,45 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     }
     setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新充電樁');
 
-    const current = monthKey(new Date().toISOString());
-    const summary = summarizeRecords(records, state.rates, current);
+    const bills = state.bills;
+    const months = monthsWithRecords(records);
+    const billOptions = bills.map((bill) => billPeriodValue(bill));
+    const options = ['all', ...billOptions, ...months];
+    const fallback = billOptions.length > 0 ? billOptions[0] : defaultMonth(records, new Date());
+    const selected = state.monthTouched && options.includes(state.selectedMonth)
+      ? state.selectedMonth
+      : fallback;
+    els.monthSelect.replaceChildren();
+    for (const value of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = periodLabel(value, bills);
+      els.monthSelect.append(option);
+    }
+    els.monthSelect.value = options.includes(selected) ? selected : 'all';
+    state.selectedMonth = els.monthSelect.value;
+    const selectedValue = els.monthSelect.value;
+    const periodRecords = filterByPeriod(records, selectedValue, bills);
+    const summary = summarizeRecords(periodRecords, state.rates, 'all');
     els.kwh.textContent = summary.matched > 0 ? summary.kWh.toFixed(1) : '0';
     els.cost.textContent = summary.cost === null ? '—' : `$${summary.cost.toFixed(2)}`;
     els.count.textContent = String(summary.count);
     els.split.textContent = summary.matched > 0
       ? `非高峰 ${summary.offPeakKWh.toFixed(1)} kWh · 高峰 ${summary.peakKWh.toFixed(1)} kWh（按時段及車輛習慣估算）`
-      : '本月未有已配對嘅充電 session。';
+      : '所選期間未有已配對嘅充電 session。';
 
+    const current = monthKey(new Date().toISOString());
     const picked = selectRate(current, state.rates);
     renderRateCards(els.rates, state.rates, picked.rate ? '本月費率未在列表中。' : '未設定本月費率；請確認本月費率。');
 
-    const months = monthsWithRecords(records);
-    const options = ['all', ...months];
-    const selected = state.monthTouched && options.includes(state.selectedMonth)
-      ? state.selectedMonth
-      : defaultMonth(records, new Date());
-    els.monthSelect.replaceChildren();
-    for (const month of options) {
-      const option = document.createElement('option');
-      option.value = month;
-      option.textContent = monthLabel(month);
-      els.monthSelect.append(option);
-    }
-    els.monthSelect.value = options.includes(selected) ? selected : 'all';
-    const selectedRecords = filterByMonth(records, els.monthSelect.value);
-    els.exportBtn.disabled = selectedRecords.length === 0;
-    els.exportHint.textContent = selectedRecords.length > 0
-      ? `${selectedRecords.length} 筆紀錄；Excel 可直接開啟。`
-      : '所選月份未有紀錄。';
+    els.exportBtn.disabled = periodRecords.length === 0;
+    els.exportHint.textContent = periodRecords.length > 0
+      ? `${periodRecords.length} 筆紀錄；Excel 可直接開啟。`
+      : '所選期間未有紀錄。';
+
+    els.bills.replaceChildren();
+    els.billsPanel.hidden = bills.length === 0;
+    for (const bill of bills) els.bills.append(makeBillShareCard(bill));
 
     els.recentList.replaceChildren();
     for (const record of records.slice(0, 5)) els.recentList.append(makeRow(record));
@@ -314,6 +353,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.server = data.records.filter((record) => !state.deleting.has(record.id));
     state.car = data.car;
     state.rates = data.rates;
+    state.bills = normalizeBillShares(data.bills);
     state.unassigned = mergeRecords(data.unassigned, []);
     state.pending = dropSyncedPending(state.pending, state.server);
     state.offline = false;
@@ -524,15 +564,20 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   function onExport() {
     const records = mergeRecords(state.server, state.pending);
-    const month = els.monthSelect.value || 'all';
-    const selected = filterByMonth(records, month);
+    const value = els.monthSelect.value || 'all';
+    const selected = filterByPeriod(records, value, state.bills);
     if (selected.length === 0) return;
+    const suffix = value === 'all'
+      ? '-all'
+      : value.startsWith('bill:')
+        ? `-bill-${value.slice(5).replace(':', '_')}`
+        : `-${value}`;
     downloadCsv(
       toCsv(selected, {
         carNames: { [carId]: state.car.name || carId },
         rates: state.rates,
       }),
-      `ev-charge-${carId}-${month}.csv`,
+      `ev-charge-${carId}${suffix}.csv`,
     );
     showToast(els.toast, 'CSV 已下載。');
   }

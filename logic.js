@@ -230,6 +230,7 @@ export function parseFamilyPayload(payload) {
     records: normalizeRecords(payload.records),
     unassigned: normalizeRecords(payload.unassigned),
     rates: normalizeRates(payload.rates),
+    bills: Array.isArray(payload.bills) ? payload.bills : [],
   };
 }
 
@@ -301,6 +302,30 @@ export function filterByMonth(records, month) {
   const normalized = normalizeRecords(records);
   if (month === 'all') return normalized;
   return normalized.filter((record) => monthKey(record.startAt) === month);
+}
+
+export function billPeriodValue(bill) {
+  return `bill:${bill.periodStart}:${bill.periodEnd}`;
+}
+
+export function filterByPeriod(records, value, bills = []) {
+  const normalized = normalizeRecords(records);
+  if (value === 'all') return normalized;
+  if (String(value || '').startsWith('bill:')) {
+    const bill = (bills || []).find((row) => billPeriodValue(row) === value);
+    if (!bill) return [];
+    const startMs = Date.parse(`${bill.periodStart}T00:00:00+08:00`);
+    const cutoffMs = Date.parse(bill.cutoff);
+    const endMs = Number.isFinite(cutoffMs)
+      ? cutoffMs
+      : Date.parse(`${bill.periodEnd}T00:00:00+08:00`) + 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+    return normalized.filter((record) => {
+      const at = Date.parse(record.startAt);
+      return Number.isFinite(at) && at >= startMs && at < endMs;
+    });
+  }
+  return normalized.filter((record) => monthKey(record.startAt) === value);
 }
 
 export function csvEscape(value) {

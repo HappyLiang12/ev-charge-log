@@ -393,7 +393,7 @@ function upsertRates_(rates) {
 
 var BILLS_COLUMNS = [
   'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
-  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt', 'publishedAt',
 ];
 
 function validDateOnly_(value) {
@@ -484,6 +484,7 @@ function normalizeStoredBill_(row) {
     total: total,
     fileName: String(row.fileName || '').trim().slice(0, 200),
     savedAt: isoValue_(row.savedAt) || String(row.savedAt || '').trim(),
+    publishedAt: isoValue_(row.publishedAt),
   };
 }
 
@@ -524,4 +525,30 @@ function upsertBill_(bill) {
     object[header[index]] = value;
     return object;
   }, {}));
+}
+
+function updateBillPublished_(periodStart, periodEnd, publishedAt) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Bills', BILLS_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  var header = values.length
+    ? values[0].map(function (value) { return String(value || '').trim(); })
+    : BILLS_COLUMNS.slice();
+  var startCol = header.indexOf('periodStart');
+  var endCol = header.indexOf('periodEnd');
+  var publishedCol = header.indexOf('publishedAt');
+  if (startCol === -1 || endCol === -1 || publishedCol === -1) {
+    throw new Error('Bills header is missing columns');
+  }
+  for (var i = 1; i < values.length; i += 1) {
+    if (dateOnlyValue_(values[i][startCol]) !== periodStart) continue;
+    if (dateOnlyValue_(values[i][endCol]) !== periodEnd) continue;
+    var rowValues = values[i].slice();
+    while (rowValues.length < header.length) rowValues.push('');
+    rowValues[publishedCol] = publishedAt || '';
+    sheet.getRange(i + 1, 1, 1, header.length).setValues([rowValues]);
+    var object = {};
+    for (var k = 0; k < header.length; k += 1) object[header[k]] = rowValues[k];
+    return normalizeStoredBill_(object);
+  }
+  throw new Error('Unknown bill period');
 }

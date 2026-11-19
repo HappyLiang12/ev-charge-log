@@ -30,16 +30,17 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
 - Peak/off-peak split is estimated by session duration; Tesla does not expose a per-minute power curve.
-- Monthly kWh and estimated cost per car; peak/off-peak split; CLP rate month and fallback warning.
 - Recent records with start and end times, kWh, estimated cost, and real delete. Deleting a Tesla-linked record releases it back to `unassigned` for another car to claim. The end date is included when a session crosses midnight.
-- Owner month totals, one `待配對` list that combines manual starts and unassigned charger sessions, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
+- kWh and estimated cost per car for a selectable period; peak/off-peak split; CLP rate month and fallback warning. The period selector includes `全部月份`, calendar months, and every saved bill period. With at least one bill, the latest bill period is selected by default so the summary lines up with the bill.
+- Owner period totals, one `待配對` list that combines manual starts and unassigned charger sessions, rate cards (latest month first; older months collapsed), and copyable family links. Unassigned sessions keep the latest 24 hours open and collapse older months and days.
 - UI times use 12-hour AM/PM; unassigned rows show both start and end times. CSV keeps 24-hour times.
 - Month and day groups remember their open state after a claim or assign, so several sessions can be handled without reopening the groups.
-- The family view shows the monthly summary first, then unassigned sessions, recent records, the same rate cards as the owner view, and export.
+- The family view shows the period summary first, published bill shares, unassigned sessions, recent records, the same rate cards as the owner view, and export. Only published bills are visible; the family summary defaults to the latest published bill period.
 - Owner QR code per car: scanning it opens `?car=<id>&start=1` and records the start automatically, so no start button press is needed. The owner can download the QR and stick it next to the charger or car.
 - Live charging card while a manual start is pending: Wall Connector state/power from Tesla, with an estimated kWh/cost counter that updates every second from the last 5-minute power sample. The final Tesla session replaces the estimate.
 - CSV export for family and owner, with UTF-8 BOM, CRLF, and RFC 4180 escaping.
 - Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share. Saving a bill with peak/off-peak also learns a per-car `peakFactor` from all usable bills, so later peak/off-peak estimates track the meter's actual split.
+- Bill shares are gated: a bill stays unpublished (and invisible to family links) until the owner presses `發布分攤`. Publishing is blocked while any `unassigned` session starts inside the bill period, and the server re-checks the same rule. Saving or changing a bill clears `publishedAt`, so it must be published again. If a new unassigned session later lands in a published period, family links hide that bill again until it is resolved and republished.
 - Offline-friendly family queue; pending starts retry automatically.
 - Mobile-first layout for a 390x844 viewport.
 
@@ -77,9 +78,10 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 
 ### `Bills`
 
-`periodStart`, `periodEnd`, `cutoff`, `units`, `peakKWh`, `offPeakKWh`, `energyCharge`, `fuelCharge`, `others`, `total`, `fileName`, `savedAt`.
+`periodStart`, `periodEnd`, `cutoff`, `units`, `peakKWh`, `offPeakKWh`, `energyCharge`, `fuelCharge`, `others`, `total`, `fileName`, `savedAt`, `publishedAt`.
 
 - One row per CLP bill period; saving the same `periodStart`/`periodEnd` updates the row instead of appending.
+- `publishedAt` is set by `publishBill`; saving a bill clears it. Family payloads only include published bills that currently have no unassigned sessions in the period.
 - `cutoff` is the instant that separates this bill from the next: sessions starting before it belong to this bill. The owner UI defaults to the end of `periodEnd`, and can infer an earlier cutoff when the bill shows a partial last month (for example 01-11 to 04-11).
 - The PDF itself is never uploaded or stored; only these numbers and the file name are written.
 
@@ -102,6 +104,8 @@ cost        = offPeakKWh * offPeakRate / 100 + peakKWh * peakRate / 100
 effective rate = bill total / logged kWh in period
 car amount     = car kWh * effective rate
 ```
+
+- A bill's shares become visible to family links only after the owner publishes them. Publishing is blocked while the bill period contains any `unassigned` session; assign or claim every session first. The same rule is enforced by the server and re-checked when family data is read, so a bill with new unassigned sessions disappears from family links until the period is clean and republished.
 
 - The per-kWh split is deliberate: the bill's metered peak/off-peak registers reflect actual grid flow, while a session's recorded start can be the plug-in time rather than the start of charging. The owner view shows both the bill split and the session-based estimate, and never uses the estimate to charge a car.
 - Saving a bill with peak/off-peak also calibrates a per-car `peakFactor` from all usable bills. A bill is usable when assigned car labels cover at least 90% of the period's session kWh and the sessions cover at least 80% of the bill units. The fit starts from the current factors, only applies a materially better fit, and prefers 0 or 1 but can settle on 0.25/0.5/0.75 for a mixed pattern. The new factor is applied retroactively to that car's records, and the owner toast reports every change.
@@ -203,7 +207,7 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 
 `GET`:
 
-- `?car=<id>` returns `{ ok, car, records, unassigned, rates, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions.
+- `?car=<id>` returns `{ ok, car, records, unassigned, rates, bills, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions. `bills` contains published bill shares only: `{ periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, total, loggedKWh, myKWh, myShare, myAmount, publishedAt }`.
 - `?owner` returns `{ ok, cars, records, rates, bills, serverTime }` for the owner; each car includes `peakFactor`.
 - `?status=1` returns `{ ok, charging, powerW, energyWh, state, available, sampledAt }` from the Wall Connector live status. `energyWh` may be null.
 
@@ -215,7 +219,8 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
 - `{ action: 'refreshRates' }`
-- `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }` returns `{ ok, bill, calibration }`; saving a bill with peak/off-peak refits per-car factors and reports `{ applied, billsUsed, updatedCars, recomputed, periods }`.
+- `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }` returns `{ ok, bill, calibration }`; saving a bill with peak/off-peak refits per-car factors and reports `{ applied, billsUsed, updatedCars, recomputed, periods }`. Saving clears `publishedAt`.
+- `{ action: 'publishBill', periodStart, periodEnd }` returns `{ ok, bill, allocation }` and sets `publishedAt`. It is rejected if the period still contains any `unassigned` session or has no assigned kWh.
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
 
@@ -253,7 +258,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 147 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Eleven jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
+The suite currently has 157 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, bill-period filtering, publish gating, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Thirteen jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

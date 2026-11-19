@@ -617,7 +617,7 @@ test('upsertBill_ writes a Bills tab and updates by period instead of duplicatin
   assert.equal(saved.savedAt.length > 10, true);
   assert.deepEqual(env.values('Bills')[0], [
     'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
-    'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+    'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt', 'publishedAt',
   ]);
 
   env.call('upsertBill_', env.call('normalizedBillInput_', { ...billInput, total: 1290 }));
@@ -627,8 +627,19 @@ test('upsertBill_ writes a Bills tab and updates by period instead of duplicatin
   assert.equal(rows[0].periodStart, '2026-10-03');
 });
 
-test('normalizedBillInput_ rejects bad periods, cutoff and unit splits', () => {
-  assert.throws(() => envCall(billInput, { periodStart: '2026-11-05' }), /period/);
+test('updateBillPublished_ stores publishedAt and saving the bill clears it', () => {
+  const env = createEnv({});
+  env.call('upsertBill_', env.call('normalizedBillInput_', billInput));
+  assert.equal(plain(env.call('readBills_'))[0].publishedAt, '');
+  const published = plain(env.call('updateBillPublished_', '2026-10-03', '2026-11-04', '2026-11-19T15:40:00.000Z'));
+  assert.equal(published.publishedAt, '2026-11-19T15:40:00.000Z');
+  assert.equal(plain(env.call('readBills_'))[0].publishedAt, '2026-11-19T15:40:00.000Z');
+  const resaved = plain(env.call('upsertBill_', env.call('normalizedBillInput_', { ...billInput, total: 1290 })));
+  assert.equal(resaved.publishedAt, '');
+  assert.equal(plain(env.call('readBills_'))[0].publishedAt, '');
+});
+
+test('normalizedBillInput_ rejects bad periods, cutoff and unit splits', () => {  assert.throws(() => envCall(billInput, { periodStart: '2026-11-05' }), /period/);
   assert.throws(() => envCall(billInput, { cutoff: '2026-12-01T00:00:00.000Z' }), /Cutoff/);
   assert.throws(() => envCall(billInput, { peakKWh: 70, offPeakKWh: 700 }), /do not add up/);
   assert.throws(() => envCall(billInput, { units: 0 }), /units/);

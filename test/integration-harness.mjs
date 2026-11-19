@@ -23,7 +23,7 @@ export const RATES_HEADER = [
 ];
 export const BILLS_HEADER = [
   'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
-  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt',
+  'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt', 'publishedAt',
 ];
 
 export const fuelPage = `

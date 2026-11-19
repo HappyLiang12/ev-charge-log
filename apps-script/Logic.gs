@@ -394,3 +394,55 @@ function validateParsedRates_(fuel, tariff) {
   if (!hasCurrent) throw new Error('CLP fuel table is missing the current month');
   return true;
 }
+
+function billAllocation_(bill, records, cars) {
+  var startMs = Date.parse(bill.periodStart + 'T00:00:00+08:00');
+  var cutoffMs = Date.parse(bill.cutoff);
+  if (!isFinite(startMs) || !isFinite(cutoffMs)) throw new Error('Invalid bill period');
+  var names = {};
+  for (var i = 0; i < (cars || []).length; i += 1) {
+    var car = cars[i];
+    if (car && car.id) names[car.id] = car.name || car.id;
+  }
+  var totals = {};
+  var loggedKWh = 0;
+  var unassignedCount = 0;
+  var unassignedKWh = 0;
+  for (var r = 0; r < (records || []).length; r += 1) {
+    var record = records[r];
+    var at = Date.parse(record.startAt);
+    if (!isFinite(at) || at < startMs || at >= cutoffMs) continue;
+    if (record.car === 'unassigned') {
+      unassignedCount += 1;
+      unassignedKWh += Math.max(0, Number(record.kWh) || 0);
+      continue;
+    }
+    if (record.kWh === null || record.kWh === undefined) continue;
+    if (!record.car) continue;
+    var energy = Math.max(0, Number(record.kWh) || 0);
+    if (!totals[record.car]) totals[record.car] = { id: record.car, kWh: 0, sessions: 0 };
+    totals[record.car].kWh += energy;
+    totals[record.car].sessions += 1;
+    loggedKWh += energy;
+  }
+  var rows = [];
+  for (var carId in totals) {
+    if (!Object.prototype.hasOwnProperty.call(totals, carId)) continue;
+    var entry = totals[carId];
+    rows.push({
+      id: entry.id,
+      name: names[entry.id] || entry.id,
+      kWh: round6_(entry.kWh),
+      sessions: entry.sessions,
+      share: loggedKWh > 0 ? round6_(entry.kWh / loggedKWh) : 0,
+      amount: loggedKWh > 0 ? round6_(entry.kWh / loggedKWh * Number(bill.total || 0)) : 0,
+    });
+  }
+  rows.sort(function (a, b) { return b.kWh - a.kWh; });
+  return {
+    loggedKWh: round6_(loggedKWh),
+    unassignedCount: unassignedCount,
+    unassignedKWh: round6_(unassignedKWh),
+    rows: rows,
+  };
+}

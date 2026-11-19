@@ -38,6 +38,7 @@ function doPost(e) {
       else if (action === 'claim') result = claimAction_(data);
       else if (action === 'refreshRates') result = ratesAction_(data);
       else if (action === 'bill') result = billAction_(data);
+      else if (action === 'publishBill') result = publishBillAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -92,8 +93,48 @@ function familyPayload_(carId) {
     records: records.filter(function (record) { return record.car === car.id; }),
     unassigned: records.filter(function (record) { return record.car === 'unassigned'; }),
     rates: readRates_(),
+    bills: familyBillShares_(car.id),
     serverTime: new Date().toISOString(),
   };
+}
+
+function familyBillShares_(carId) {
+  var bills = readBills_();
+  var records = readLog_();
+  var cars = readCars_();
+  var output = [];
+  for (var i = 0; i < bills.length; i += 1) {
+    var bill = bills[i];
+    if (!bill.publishedAt) continue;
+    var allocation;
+    try {
+      allocation = billAllocation_(bill, records, cars);
+    } catch (error) {
+      continue;
+    }
+    // Any unassigned session in the period blocks the published share.
+    if (allocation.unassignedCount > 0) continue;
+    if (!(allocation.loggedKWh > 0)) continue;
+    var row = null;
+    for (var j = 0; j < allocation.rows.length; j += 1) {
+      if (allocation.rows[j].id === carId) { row = allocation.rows[j]; break; }
+    }
+    output.push({
+      periodStart: bill.periodStart,
+      periodEnd: bill.periodEnd,
+      cutoff: bill.cutoff,
+      units: bill.units,
+      peakKWh: bill.peakKWh,
+      offPeakKWh: bill.offPeakKWh,
+      total: bill.total,
+      loggedKWh: allocation.loggedKWh,
+      myKWh: row ? row.kWh : 0,
+      myShare: row ? row.share : 0,
+      myAmount: row ? row.amount : 0,
+      publishedAt: bill.publishedAt,
+    });
+  }
+  return output;
 }
 
 function ownerPayload_() {
@@ -271,6 +312,31 @@ function billAction_(data) {
     calibration = { applied: false, reason: 'calibration failed', error: String(error.message || error) };
   }
   return { bill: bill, calibration: calibration };
+}
+
+function publishBillAction_(data) {
+  var periodStart = dateOnlyValue_(data && data.periodStart);
+  var periodEnd = dateOnlyValue_(data && data.periodEnd);
+  if (!periodStart || !periodEnd) throw new Error('Invalid bill period reference');
+  var bills = readBills_();
+  var bill = null;
+  for (var i = 0; i < bills.length; i += 1) {
+    if (bills[i].periodStart === periodStart && bills[i].periodEnd === periodEnd) {
+      bill = bills[i];
+      break;
+    }
+  }
+  if (!bill) throw new Error('Unknown bill period');
+  var allocation = billAllocation_(bill, readLog_(), readCars_());
+  if (allocation.unassignedCount > 0) {
+    throw new Error('Cannot publish: ' + allocation.unassignedCount + ' unassigned session(s) in this bill period');
+  }
+  if (!(allocation.loggedKWh > 0)) throw new Error('Cannot publish: no assigned sessions in this bill period');
+  var publishedAt = new Date().toISOString();
+  return {
+    bill: updateBillPublished_(periodStart, periodEnd, publishedAt),
+    allocation: { loggedKWh: allocation.loggedKWh, unassignedCount: 0 },
+  };
 }
 
 function recalibratePeakFactors_() {

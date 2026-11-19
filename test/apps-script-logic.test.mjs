@@ -50,8 +50,7 @@ test('splitPeakKwh_ splits at the 16:00 and 23:00 Hong Kong boundaries', () => {
   assert.equal(Number((rounded.peakKWh + rounded.offPeakKWh).toFixed(6)), 5.4);
 });
 
-test('splitPeakKwh_ scales peak energy by a learned car factor', () => {
-  assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T08:00:00.000Z', 3600, 7.2, '16:00', '23:00', 0)), {
+test('splitPeakKwh_ scales peak energy by a learned car factor', () => {  assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T08:00:00.000Z', 3600, 7.2, '16:00', '23:00', 0)), {
     peakKWh: 0,
     offPeakKWh: 7.2,
   });
@@ -308,4 +307,29 @@ test('validateParsedRates_ rejects implausible or incomplete rates', () => {
     basicPeak: 80.5,
   }), /CLP/);
   assert.throws(() => call('validateParsedRates_', { current: null, rows: [] }, tariff), /CLP/);
+});
+
+test('billAllocation_ splits the bill by logged kWh and reports unassigned sessions', () => {
+  const records = [
+    { car: 'ix3', startAt: '2026-10-10T10:00:00.000Z', kWh: 600 },
+    { car: 'model3', startAt: '2026-10-20T10:00:00.000Z', kWh: 200 },
+    { car: 'unassigned', startAt: '2026-10-21T10:00:00.000Z', kWh: 40 },
+    { car: 'unassigned', startAt: '2026-10-22T10:00:00.000Z', kWh: null },
+    { car: 'ix3', startAt: '2026-11-04T15:00:00.000Z', kWh: 999 },
+  ];
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T14:59:00.000Z',
+    total: 1280,
+  };
+  const cars = [{ id: 'ix3', name: 'iX3' }, { id: 'model3', name: 'Model 3' }];
+  const result = plain(call('billAllocation_', bill, records, cars));
+  assert.equal(result.loggedKWh, 800);
+  assert.equal(result.unassignedCount, 2);
+  assert.equal(result.unassignedKWh, 40);
+  assert.deepEqual(
+    result.rows.map((row) => [row.id, row.name, row.kWh, row.share, row.amount]),
+    [['ix3', 'iX3', 600, 0.75, 960], ['model3', 'Model 3', 200, 0.25, 320]],
+  );
 });

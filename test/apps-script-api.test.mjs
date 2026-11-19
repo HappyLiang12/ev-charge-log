@@ -947,3 +947,70 @@ test('bill action rejects missing and invalid bills', () => {
   assert.equal(badSplit.ok, false);
   assert.match(badSplit.error, /do not add up/);
 });
+
+test('publishBill blocks unassigned sessions and family sees only published shares', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        ['ix3-1', '2026-10-10T10:00:00.000Z', '2026-10-10', '18:00', 'ix3', 100, 7200,
+          '2026-10-10T10:00:00.000Z', '2026-10-10T12:00:00.000Z', 100, 0, 'din:ix3-1', 'tesla'],
+        ['u-1', '2026-10-12T10:00:00.000Z', '2026-10-12', '18:00', 'unassigned', 20, 3600,
+          '2026-10-12T10:00:00.000Z', '2026-10-12T11:00:00.000Z', 20, 0, 'din:u-1', 'tesla'],
+      ],
+      Cars: [
+        [...CARS_HEADER, 'peakFactor'],
+        ['ix3', 'iX3', 'TRUE', 'x', 1],
+        ['model3', 'Model 3', 'TRUE', 'x', 1],
+      ],
+      Rates: [
+        RATES_HEADER,
+        ['2026-10', 94.5, 137.5, 46.2, 0, '16:00', '23:00', 'clp', '2026-10-01T00:00:00.000Z', 'FALSE'],
+      ],
+    },
+  });
+  const bill = {
+    periodStart: '2026-10-03',
+    periodEnd: '2026-11-04',
+    cutoff: '2026-11-04T14:59:27.000Z',
+    units: 120,
+    peakKWh: 120,
+    offPeakKWh: 0,
+    total: 300,
+  };
+  const saved = send(env, { action: 'bill', bill });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.bill.publishedAt, '');
+  assert.deepEqual(receive(env, { car: 'ix3' }).bills, []);
+
+  const blocked = send(env, { action: 'publishBill', periodStart: '2026-10-03', periodEnd: '2026-11-04' });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /unassigned/);
+
+  const claimed = send(env, { action: 'claim', car: 'ix3', id: 'u-1' });
+  assert.equal(claimed.ok, true);
+  const published = send(env, { action: 'publishBill', periodStart: '2026-10-03', periodEnd: '2026-11-04' });
+  assert.equal(published.ok, true);
+  assert.ok(published.bill.publishedAt);
+  assert.equal(receive(env, { owner: '1' }).bills[0].publishedAt, published.bill.publishedAt);
+
+  const family = receive(env, { car: 'ix3' });
+  assert.equal(family.bills.length, 1);
+  assert.equal(family.bills[0].periodEnd, '2026-11-04');
+  assert.equal(family.bills[0].myKWh, 120);
+  assert.equal(family.bills[0].myShare, 1);
+  assert.equal(family.bills[0].myAmount, 300);
+  assert.equal(receive(env, { car: 'model3' }).bills[0].myAmount, 0);
+
+  env.spreadsheet.getSheetByName('Log').appendRow([
+    'u-2', '2026-10-15T10:00:00.000Z', '2026-10-15', '18:00', 'unassigned', 10, 3600,
+    '2026-10-15T10:00:00.000Z', '2026-10-15T11:00:00.000Z', 10, 0, 'din:u-2', 'tesla',
+  ]);
+  assert.deepEqual(receive(env, { car: 'ix3' }).bills, []);
+  const republish = send(env, { action: 'publishBill', periodStart: '2026-10-03', periodEnd: '2026-11-04' });
+  assert.equal(republish.ok, false);
+  assert.match(republish.error, /unassigned/);
+
+  send(env, { action: 'bill', bill: { ...bill, total: 310 } });
+  assert.equal(receive(env, { owner: '1' }).bills[0].publishedAt, '');
+});
