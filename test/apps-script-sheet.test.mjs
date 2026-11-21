@@ -127,6 +127,12 @@ const record = {
   offPeakKWh: 10,
   teslaKey: 'din:1786968749',
   source: 'tesla+manual',
+  evidenceUrl: '',
+  suggestedCar: '',
+  suggestionConfidence: null,
+  suggestionPlate: '',
+  suggestionStatus: '',
+  identifiedAt: null,
 };
 
 test('readLog_ migrates the old header in place and marks old rows legacy', () => {
@@ -145,7 +151,7 @@ test('readLog_ migrates the old header in place and marks old rows legacy', () =
   assert.equal(rows[0].date, '2026-11-01');
   assert.deepEqual(
     env.values('Log')[0].slice(4),
-    ['car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source'],
+    ['car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt'],
   );
   assert.equal(env.values('Log')[1][0], 'old-1');
 });
@@ -158,7 +164,8 @@ test('appendLog_ writes the logical fields into the mapped columns', () => {
   const sheetRows = env.values('Log');
   assert.deepEqual(sheetRows[0], [
     'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt',
-    'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+    'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl',
+    'suggestedCar', 'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt',
   ]);
   assert.equal(sheetRows[1][2], '2026-11-14');
   assert.equal(sheetRows[1][3], '13:00');
@@ -669,4 +676,36 @@ test('readBills_ reads date cells and drops invalid rows', () => {
   assert.equal(rows[0].peakKWh, 77);
   assert.equal(rows[1].periodEnd, '2026-10-02');
   assert.equal(rows[1].peakKWh, null);
+});
+
+test('snapshots and plates repositories normalize rows', () => {
+  const env = createEnv({
+    sheets: {
+      Plates: [
+        ['plate', 'car', 'active', 'createdAt'],
+        [' ab-12 34 ', 'model3', 'TRUE', ''],
+        ['XYZ', 'BAD CAR', 'TRUE', ''],
+        ['OLD', 'model3', 'FALSE', ''],
+      ],
+    },
+  });
+  const plates = plain(env.call('readPlates_'));
+  assert.deepEqual(plates, [{ plate: 'AB1234', car: 'model3', active: true }]);
+
+  env.call('appendSnapshot_', {
+    id: 'snap-1763000000',
+    capturedAt: '2026-11-15T04:00:00.000Z',
+    driveFileId: 'file-1',
+    driveUrl: 'https://drive.google.com/file/d/file-1/view',
+    width: 1280,
+    height: 720,
+    bytes: 100,
+    source: 'pi',
+    createdAt: '2026-11-15T04:00:01.000Z',
+  });
+  const snaps = plain(env.call('readSnapshots_'));
+  assert.equal(snaps.length, 1);
+  assert.equal(snaps[0].id, 'snap-1763000000');
+  assert.equal(snaps[0].width, 1280);
+  assert.equal(snaps[0].driveUrl, 'https://drive.google.com/file/d/file-1/view');
 });

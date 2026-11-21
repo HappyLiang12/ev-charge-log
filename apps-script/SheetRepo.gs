@@ -1,7 +1,14 @@
 var LOG_COLUMNS = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+  'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate',
+  'suggestionStatus', 'identifiedAt',
 ];
+var SNAPSHOTS_COLUMNS = [
+  'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
+  'bytes', 'source', 'createdAt',
+];
+var PLATES_COLUMNS = ['plate', 'car', 'active', 'createdAt'];
 var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor'];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
@@ -128,6 +135,12 @@ function normalizeLogRow_(row) {
     offPeakKWh: numberOrNull_(row.offPeakKWh),
     teslaKey: row.teslaKey ? String(row.teslaKey) : null,
     source: source,
+    evidenceUrl: String(row.evidenceUrl || '').trim(),
+    suggestedCar: String(row.suggestedCar || '').trim(),
+    suggestionConfidence: numberOrNull_(row.suggestionConfidence),
+    suggestionPlate: String(row.suggestionPlate || '').trim(),
+    suggestionStatus: String(row.suggestionStatus || '').trim(),
+    identifiedAt: isoValue_(row.identifiedAt) || null,
   };
 }
 
@@ -551,4 +564,41 @@ function updateBillPublished_(periodStart, periodEnd, publishedAt) {
     return normalizeStoredBill_(object);
   }
   throw new Error('Unknown bill period');
+}
+
+function readSnapshots_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
+  return readObjects_(sheet, SNAPSHOTS_COLUMNS).map(function (row) {
+    return {
+      id: String(row.id || '').trim(),
+      capturedAt: isoValue_(row.capturedAt) || String(row.capturedAt || '').trim(),
+      driveFileId: String(row.driveFileId || '').trim(),
+      driveUrl: String(row.driveUrl || '').trim(),
+      width: numberOrNull_(row.width),
+      height: numberOrNull_(row.height),
+      bytes: numberOrNull_(row.bytes),
+      source: String(row.source || '').trim(),
+      createdAt: isoValue_(row.createdAt) || String(row.createdAt || '').trim(),
+    };
+  }).filter(function (row) { return row.id && validIso_(row.capturedAt); });
+}
+
+function appendSnapshot_(snapshot) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
+  var row = headerRow_(sheet).map(function (column) {
+    var value = snapshot[column];
+    return value === undefined || value === null ? '' : value;
+  });
+  sheet.appendRow(row);
+}
+
+function readPlates_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Plates', PLATES_COLUMNS);
+  return readObjects_(sheet, PLATES_COLUMNS).map(function (row) {
+    return {
+      plate: normalizePlate_(row.plate),
+      car: String(row.car || '').trim(),
+      active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
+    };
+  }).filter(function (row) { return row.plate && validCarId_(row.car) && row.active; });
 }

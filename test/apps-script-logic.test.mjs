@@ -333,3 +333,20 @@ test('billAllocation_ splits the bill by logged kWh and reports unassigned sessi
     [['ix3', 'iX3', 600, 0.75, 960], ['model3', 'Model 3', 200, 0.25, 320]],
   );
 });
+
+test('nearestSnapshot_ picks the closest snapshot inside the window', () => {
+  const start = '2026-11-15T04:00:00.000Z';
+  const rows = [
+    { id: 'too-old', capturedAt: '2026-11-15T03:40:00.000Z' },
+    { id: 'before', capturedAt: '2026-11-15T03:58:00.000Z' },
+    { id: 'after', capturedAt: '2026-11-15T04:01:00.000Z' },
+    { id: 'too-new', capturedAt: '2026-11-15T04:12:00.000Z' },
+  ];
+  assert.equal(call('nearestSnapshot_', start, rows, 10 * 60 * 1000).id, 'after');
+  assert.equal(call('nearestSnapshot_', start, [], 10 * 60 * 1000), null);
+});
+
+test('normalizePlate_ strips spaces and hyphens and uppercases', () => {
+  assert.equal(call('normalizePlate_', ' ab-12 34 '), 'AB1234');
+  assert.equal(call('normalizePlate_', '!!!'), '');
+});
