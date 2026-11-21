@@ -31,7 +31,11 @@ import {
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
 
-const ENGINE_LABELS = { plate: '車牌', vlm: '視覺' };
+// Null prototype: a tampered engine string must never resolve to an
+// Object.prototype member and render function source.
+const ENGINE_LABELS = Object.create(null);
+ENGINE_LABELS.plate = '車牌';
+ENGINE_LABELS.vlm = '視覺';
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -934,6 +938,9 @@ export function initOwner({ apiUrl }) {
 
   async function onIgnore(record) {
     if (!apiUrl || state.busy) return;
+    // Ignore deletes the Log row and persists the ignored key; recovery needs a
+    // manual Sheet edit, so require an explicit confirmation.
+    if (!window.confirm('忽略此非家中車輛紀錄？紀錄會從帳單移除，且無法復原。')) return;
     state.busy = true;
     render();
     try {

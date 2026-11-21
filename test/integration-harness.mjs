@@ -220,7 +220,7 @@ export async function createHarness({ sheets, teslaSessions = [], fuel = fuelPag
 
 let scene = 0;
 
-export async function loadUi({ apiUrl, query }) {
+export async function loadUi({ apiUrl, query, confirm = () => true }) {
   const dom = new JSDOM(indexHtml, {
     url: `http://127.0.0.1/${query}`,
     pretendToBeVisual: true,
@@ -233,7 +233,7 @@ export async function loadUi({ apiUrl, query }) {
   Object.defineProperty(globalThis, 'navigator', { value: window.navigator, configurable: true });
   Object.defineProperty(globalThis, 'URL', { value: window.URL, configurable: true });
   window.APP_CONFIG = { API_URL: apiUrl };
-  window.confirm = () => true;
+  window.confirm = confirm;
   window.alert = () => {};
 
   const clipboard = { text: '' };
