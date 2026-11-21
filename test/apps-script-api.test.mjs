@@ -1156,6 +1156,38 @@ test('relayConfig returns defaults, applies overrides, and clamps values', () =>
   assert.equal(result.config['vision.engine'], undefined);
 });
 
+test('relayConfig uses the default for blank numeric cells and still clamps low values', () => {
+  const blank = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [
+        CONFIG_HEADER,
+        ['relay.intervalSeconds', '', '', ''],
+        ['relay.imageWidth', '   ', '', ''],
+        ['relay.crop', '', '', ''],
+      ],
+    },
+  });
+  const blankResult = send(blank, relayConfigBody());
+  assert.equal(blankResult.ok, true);
+  assert.equal(blankResult.config['relay.intervalSeconds'], 300);
+  assert.equal(blankResult.config['relay.imageWidth'], 1920);
+  assert.equal(blankResult.config['relay.crop'], '');
+
+  const low = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [
+        CONFIG_HEADER,
+        ['relay.intervalSeconds', '30', '', ''],
+      ],
+    },
+  });
+  const lowResult = send(low, relayConfigBody());
+  assert.equal(lowResult.ok, true);
+  assert.equal(lowResult.config['relay.intervalSeconds'], 60);
+});
+
 test('relayConfig rejects a bad signature and an old timestamp', () => {
   const env = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
   const bad = relayConfigBody();
