@@ -440,7 +440,10 @@ function assignAction_(data) {
 
 function ignoreAction_(data) {
   var record = findRecord_(readLog_(), String(data.id || ''));
-  if (record && record.car === 'unassigned') {
+  if (record && record.car !== 'unassigned') {
+    throw new Error('Only unassigned sessions can be ignored');
+  }
+  if (record) {
     recordAssignmentFeedback_(record, 'guest', 'owner');
   }
   var deleted = deleteLog_(String(data.id || ''));
@@ -449,7 +452,9 @@ function ignoreAction_(data) {
 
 function reassignAction_(data) {
   var record = findRecord_(readLog_(), String(data.id || ''));
-  if (!record) throw new Error('Unknown record');
+  if (!record || !record.car || record.car === 'unassigned') {
+    throw new Error('Only assigned records can be reassigned');
+  }
   var car = findCar_(data.car);
   if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
   var at = record.teslaStartAt || record.startAt;
