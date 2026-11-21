@@ -50,6 +50,14 @@ function unassignedRecord(id, startAt, teslaKey) {
     offPeakKWh: 12,
     teslaKey,
     source: 'tesla',
+    evidenceUrl: '',
+    suggestedCar: '',
+    suggestionConfidence: null,
+    suggestionPlate: '',
+    suggestionStatus: '',
+    identifiedAt: null,
+    suggestionEngine: '',
+    suggestionSnapshotId: '',
   };
 }
 
@@ -164,6 +172,201 @@ test('family UI: claim an unassigned Tesla session', { timeout: 20000 }, async (
     assert.equal(log.length, 1);
     assert.equal(log[0].car, 'model3');
     assert.equal(log[0].source, 'tesla');
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family sees a suggestion hint and no evidence', { timeout: 20000 }, async () => {
+  const mine = {
+    ...unassignedRecord('u-family', '2026-11-21T04:00:00.000Z', 'din:f'),
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.9,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'vlm',
+    evidenceUrl: 'https://drive.google.com/file/d/file-1/view',
+  };
+  const other = {
+    ...unassignedRecord('u-other', '2026-11-21T03:00:00.000Z', 'din:o'),
+    suggestedCar: 'leaf',
+    suggestionConfidence: 0.95,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'plate',
+    evidenceUrl: 'https://drive.google.com/file/d/file-2/view',
+  };
+  const sheets = defaultSheets({ records: [logRow(mine), logRow(other)] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.querySelector('.suggestion-label'), 12000);
+    const hints = ui.document.querySelectorAll('#familyUnassigned .suggestion-label');
+    assert.equal(hints.length, 1);
+    assert.match(hints[0].textContent, /系統建議係你（90%），請認領/);
+    assert.equal(ui.document.querySelector('.evidence-link'), null);
+    assert.doesNotMatch(ui.document.getElementById('familyUnassigned').innerHTML, /drive\.google\.com/);
+    assert.doesNotMatch(ui.document.getElementById('familyUnassigned').textContent, /視覺|車牌/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner sees snapshot, engine, confidence, adopt, and ignore', { timeout: 20000 }, async () => {
+  const record = {
+    ...unassignedRecord('u-suggest', '2026-11-21T04:00:00.000Z', 'din:s'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-1/view',
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.84,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'vlm',
+  };
+  const sheets = defaultSheets({ records: [logRow(record)] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelector('.suggestion-label'), 12000);
+    assert.match(ui.document.querySelector('.suggestion-label').textContent, /Model 3.*84%/);
+    assert.match(ui.document.querySelector('.suggestion-label').textContent, /視覺/);
+    assert.equal(ui.document.querySelector('.evidence-link').href, record.evidenceUrl);
+    const select = ui.document.querySelector('#ownerPending select');
+    ui.document.querySelector('.owner-suggestion').click();
+    assert.equal(select.value, 'model3');
+    assert.ok(ui.document.querySelector('.owner-ignore'));
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: engine labels and the manual-selection fallback', { timeout: 20000 }, async () => {
+  const plate = {
+    ...unassignedRecord('u-plate', '2026-11-21T04:00:00.000Z', 'din:p'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-plate/view',
+    suggestedCar: 'leaf',
+    suggestionConfidence: 0.98,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'plate',
+  };
+  const unknown = {
+    ...unassignedRecord('u-unknown', '2026-11-21T03:00:00.000Z', 'din:u'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-unknown/view',
+    suggestionStatus: 'unknown',
+  };
+  const failed = {
+    ...unassignedRecord('u-error', '2026-11-21T02:00:00.000Z', 'din:e'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-error/view',
+    suggestionStatus: 'error',
+  };
+  const fallback = {
+    ...unassignedRecord('u-fallback', '2026-11-21T01:00:00.000Z', 'din:x'),
+    evidenceUrl: 'https://drive.google.com/file/view',
+    suggestionStatus: 'unknown',
+  };
+  const sheets = defaultSheets({ records: [plate, unknown, failed, fallback].map(logRow) });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending .suggestion-label').length === 4, 12000);
+    const labels = Array.from(
+      ui.document.querySelectorAll('#ownerPending .suggestion-label'),
+      (label) => label.textContent,
+    );
+    assert.ok(labels.some((text) => /建議：Leaf（98%，車牌）/.test(text)));
+    assert.ok(labels.some((text) => /未能辨識，請人手選擇/.test(text)));
+    assert.ok(labels.some((text) => /辨識失敗，請人手選擇/.test(text)));
+    assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 4);
+    assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 4);
+    const thumbnails = Array.from(
+      ui.document.querySelectorAll('#ownerPending .evidence-thumb'),
+      (image) => image.getAttribute('src'),
+    );
+    assert.equal(thumbnails.length, 3);
+    assert.ok(thumbnails.includes('https://drive.google.com/thumbnail?id=file-plate&sz=w480'));
+    const linkFallback = Array.from(ui.document.querySelectorAll('#ownerPending .evidence-link'))
+      .find((link) => link.href === 'https://drive.google.com/file/view');
+    assert.equal(linkFallback.textContent, '查看相片');
+    assert.equal(linkFallback.querySelector('img'), null);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: ignoring an unassigned session deletes it and records guest feedback', { timeout: 20000 }, async () => {
+  const record = {
+    ...unassignedRecord('u-ignore', '2026-11-21T04:00:00.000Z', 'din:ignore'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-1/view',
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.6,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'vlm',
+  };
+  const sheets = defaultSheets({ records: [logRow(record)], feedback: [] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelector('.owner-ignore'), 12000);
+    ui.document.querySelector('.owner-ignore').click();
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending > li').length === 0, 12000);
+    assert.match(ui.document.getElementById('ownerToast').textContent, /已標記為非家中車輛/);
+    assert.equal(harness.env.call('readLog_').length, 0);
+    const feedback = harness.env.call('readFeedback_');
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0].recordId, record.id);
+    assert.equal(feedback[0].chosenCar, 'guest');
+    assert.equal(feedback[0].actor, 'owner');
+    assert.equal(ui.document.getElementById('ownerPendingEmpty').hidden, false);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: assigned rows keep compact evidence and reassign through the API', { timeout: 20000 }, async () => {
+  const startAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const record = {
+    id: 'assigned-1',
+    car: 'model3',
+    startAt,
+    kWh: 12,
+    durationSec: 3600,
+    teslaStartAt: startAt,
+    teslaEndAt: new Date(Date.parse(startAt) + 3600 * 1000).toISOString(),
+    peakKWh: 0,
+    offPeakKWh: 12,
+    teslaKey: 'din:assigned',
+    source: 'tesla',
+    evidenceUrl: 'https://drive.google.com/file/d/assigned-file/view',
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.98,
+    suggestionPlate: 'AB1234',
+    suggestionStatus: 'matched',
+    identifiedAt: startAt,
+    suggestionEngine: 'plate',
+    suggestionSnapshotId: 'snap-1',
+  };
+  const sheets = defaultSheets({ records: [logRow(record)], feedback: [] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelector('#ownerAssigned .evidence-link'), 12000);
+    const link = ui.document.querySelector('#ownerAssigned .evidence-link');
+    assert.equal(link.href, record.evidenceUrl);
+    const thumbnail = link.querySelector('.evidence-thumb');
+    assert.equal(thumbnail.getAttribute('src'), 'https://drive.google.com/thumbnail?id=assigned-file&sz=w480');
+    const select = ui.document.querySelector('#ownerAssigned select');
+    await waitFor(() => !select.disabled);
+    select.value = 'leaf';
+    ui.document.querySelector('#ownerAssigned .owner-reassign').click();
+    await waitFor(() => harness.env.call('readLog_').some((row) => row.car === 'leaf'), 12000);
+    assert.match(ui.document.getElementById('ownerToast').textContent, /已改派/);
+    const feedback = harness.env.call('readFeedback_');
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0].recordId, record.id);
+    assert.equal(feedback[0].suggestedCar, 'model3');
+    assert.equal(feedback[0].chosenCar, 'leaf');
+    assert.equal(feedback[0].engine, 'plate');
   } finally {
     ui.close();
     await harness.close();
