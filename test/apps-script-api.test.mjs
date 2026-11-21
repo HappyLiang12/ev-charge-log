@@ -395,7 +395,13 @@ test('ignore records guest feedback and removes the session', () => {
   });
   assert.equal(send(env, { action: 'ignore', id: 'unassigned-1' }).ok, true);
   const feedback = env.values('Feedback');
+  assert.equal(feedback[1][3], 'manual');
   assert.equal(feedback[1][5], 'guest');
+  const ignored = env.values('Ignored');
+  assert.equal(ignored.length, 2);
+  assert.equal(ignored[1][0], 'din:u');
+  assert.equal(ignored[1][2], 'owner');
+  assert.ok(ignored[1][1]);
   assert.equal(plain(env.call('readLog_')).length, 0);
 });
 
@@ -637,14 +643,14 @@ test('a failed Tesla fetch releases the sync lock and leaves Log unchanged', () 
   assert.equal(records[0].source, 'manual');
 });
 
-test('sync imports a session even when a legacy Ignored tab lists its key', () => {
+test('sync skips a session whose key is already in the Ignored tab', () => {
   const key = `din:legacy:${Math.floor(Date.parse(SESSION_START) / 1000)}`;
   const env = setup({
     sheets: {
       Log: [LOG_HEADER],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
       Rates: [RATES_HEADER, RATE_ROW],
-      Ignored: [['teslaKey', 'ignoredAt', 'reason'], [key, '2026-11-14T00:00:00.000Z', 'legacy']],
+      Ignored: [['teslaKey', 'createdAt', 'actor'], [key, '2026-11-14T00:00:00.000Z', 'owner']],
     },
     fetch: (url) => {
       if (url === TOKEN_URL) {
@@ -668,12 +674,50 @@ test('sync imports a session even when a legacy Ignored tab lists its key', () =
   });
   const result = send(env, { action: 'sync' });
   assert.equal(result.ok, true);
-  assert.equal(result.unassigned, 1);
-  assert.equal(result.skippedExisting, 0);
-  const records = plain(env.call('readLog_'));
-  assert.equal(records.length, 1);
-  assert.equal(records[0].car, 'unassigned');
-  assert.equal(records[0].teslaKey, key);
+  assert.equal(result.fetched, 1);
+  assert.equal(result.unassigned, 0);
+  assert.equal(result.skippedExisting, 1);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('an ignored session is not re-imported by the next owner sync', () => {
+  const key = `din:u:${Math.floor(Date.parse(SESSION_START) / 1000)}`;
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: key, 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 7200 },
+              energy_added_wh: 20000,
+              target_id: 'target-1',
+              din: 'din:u',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  assert.equal(send(env, { action: 'ignore', id: 'unassigned-1' }).ok, true);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.fetched, 1);
+  assert.equal(result.unassigned, 0);
+  assert.equal(result.skippedExisting, 1);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+  assert.equal(env.values('Ignored').length, 2);
 });
 
 test('owner sync initializes a 30-day window; family sync without a manual row stays skipped', () => {

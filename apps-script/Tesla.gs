@@ -406,6 +406,12 @@ function syncApply_(sessions, nowIso) {
     for (var k = 0; k < records.length; k += 1) {
       if (records[k].teslaKey) knownKeys[records[k].teslaKey] = true;
     }
+    // Ignored sessions have no Log row to carry their dedupe key, so the
+    // persisted Ignored keys must also suppress re-import.
+    var ignoredKeys = readIgnoredTeslaKeys_();
+    for (var ignoredKey in ignoredKeys) {
+      if (Object.prototype.hasOwnProperty.call(ignoredKeys, ignoredKey)) knownKeys[ignoredKey] = true;
+    }
 
     var matched = 0;
     var unassigned = 0;

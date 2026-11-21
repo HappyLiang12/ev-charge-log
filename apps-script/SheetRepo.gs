@@ -13,6 +13,7 @@ var FEEDBACK_COLUMNS = [
   'id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar',
   'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt',
 ];
+var IGNORED_COLUMNS = ['teslaKey', 'createdAt', 'actor'];
 var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description'];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
@@ -693,6 +694,29 @@ function appendFeedback_(feedback) {
     return value === undefined || value === null ? '' : value;
   });
   sheet.appendRow(row);
+}
+
+function readIgnoredTeslaKeys_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
+  var rows = readObjects_(sheet, IGNORED_COLUMNS);
+  var keys = {};
+  for (var i = 0; i < rows.length; i += 1) {
+    var key = String(rows[i].teslaKey || '').trim();
+    if (key) keys[key] = true;
+  }
+  return keys;
+}
+
+function appendIgnoredTeslaKey_(teslaKey, actor) {
+  var key = String(teslaKey || '').trim();
+  if (!key) return false;
+  if (readIgnoredTeslaKeys_()[key]) return false;
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
+  var entry = { teslaKey: key, createdAt: new Date().toISOString(), actor: String(actor || '').trim() };
+  sheet.appendRow(headerRow_(sheet).map(function (column) {
+    return Object.prototype.hasOwnProperty.call(entry, column) ? entry[column] : '';
+  }));
+  return true;
 }
 
 var CONFIG_COLUMNS = ['key', 'value', 'updatedAt', 'notes'];
