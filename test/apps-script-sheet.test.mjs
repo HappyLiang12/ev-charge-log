@@ -133,6 +133,8 @@ const record = {
   suggestionPlate: '',
   suggestionStatus: '',
   identifiedAt: null,
+  suggestionEngine: '',
+  suggestionSnapshotId: '',
 };
 
 test('readLog_ migrates the old header in place and marks old rows legacy', () => {
@@ -151,7 +153,7 @@ test('readLog_ migrates the old header in place and marks old rows legacy', () =
   assert.equal(rows[0].date, '2026-11-01');
   assert.deepEqual(
     env.values('Log')[0].slice(4),
-    ['car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt'],
+    ['car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt', 'suggestionEngine', 'suggestionSnapshotId'],
   );
   assert.equal(env.values('Log')[1][0], 'old-1');
 });
@@ -166,6 +168,7 @@ test('appendLog_ writes the logical fields into the mapped columns', () => {
     'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt',
     'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl',
     'suggestedCar', 'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt',
+    'suggestionEngine', 'suggestionSnapshotId',
   ]);
   assert.equal(sheetRows[1][2], '2026-11-14');
   assert.equal(sheetRows[1][3], '13:00');
@@ -193,17 +196,17 @@ test('readCars_ filters invalid ids, reserved unassigned, and active flags', () 
   const env = createEnv({
     sheets: {
       Cars: [
-        ['id', 'name', 'active', 'createdAt'],
-        ['model3', 'Model 3', 'TRUE', 'x'],
-        ['leaf', 'Leaf', 'FALSE', 'x'],
-        ['Bad Car', 'Bad', 'TRUE', 'x'],
-        ['unassigned', 'Unassigned', 'TRUE', 'x'],
+        ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description'],
+        ['model3', 'Model 3', 'TRUE', 'x', '', ' White Model 3 '],
+        ['leaf', 'Leaf', 'FALSE', 'x', '', 'Silver Leaf'],
+        ['Bad Car', 'Bad', 'TRUE', 'x', '', ''],
+        ['unassigned', 'Unassigned', 'TRUE', 'x', '', ''],
       ],
     },
   });
   assert.deepEqual(plain(env.call('readCars_')), [
-    { id: 'model3', name: 'Model 3', active: true, peakFactor: 1 },
-    { id: 'leaf', name: 'Leaf', active: false, peakFactor: 1 },
+    { id: 'model3', name: 'Model 3', active: true, peakFactor: 1, description: 'White Model 3' },
+    { id: 'leaf', name: 'Leaf', active: false, peakFactor: 1, description: 'Silver Leaf' },
   ]);
 });
 
@@ -702,10 +705,61 @@ test('snapshots and plates repositories normalize rows', () => {
     bytes: 100,
     source: 'pi',
     createdAt: '2026-11-15T04:00:01.000Z',
+    crop: '10:20:800:600',
   });
   const snaps = plain(env.call('readSnapshots_'));
   assert.equal(snaps.length, 1);
   assert.equal(snaps[0].id, 'snap-1763000000');
   assert.equal(snaps[0].width, 1280);
+  assert.equal(snaps[0].crop, '10:20:800:600');
   assert.equal(snaps[0].driveUrl, 'https://drive.google.com/file/d/file-1/view');
+});
+
+test('deleteSnapshots_ removes only the requested rows', () => {
+  const env = createEnv({
+    sheets: {
+      Snapshots: [
+        ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt'],
+        ['snap-1', '2026-11-15T04:00:00.000Z', 'file-1', 'u1', 1, 1, 1, 'pi', ''],
+        ['snap-2', '2026-11-15T05:00:00.000Z', 'file-2', 'u2', 1, 1, 1, 'pi', ''],
+        ['snap-3', '2026-11-15T06:00:00.000Z', 'file-3', 'u3', 1, 1, 1, 'pi', ''],
+      ],
+    },
+  });
+  assert.equal(env.call('deleteSnapshots_', ['snap-1', 'snap-3', 'missing']), 2);
+  assert.deepEqual(plain(env.call('readSnapshots_')).map((snap) => snap.id), ['snap-2']);
+  assert.equal(env.call('deleteSnapshots_', []), 0);
+});
+
+test('feedback keeps guest choices and engine metadata', () => {
+  const env = createEnv({});
+  env.call('appendFeedback_', {
+    id: 'fb-1', recordId: 'u-1', startAt: '2026-11-21T04:00:00.000Z', engine: 'vlm',
+    suggestedCar: 'model3', chosenCar: 'guest', confidence: 0.84, plate: '',
+    snapshotId: 'snap-1', lighting: 'day', actor: 'owner', createdAt: '2026-11-21T04:01:00.000Z',
+  });
+  assert.equal(plain(env.call('readFeedback_')).length, 1);
+  assert.equal(plain(env.call('readFeedback_'))[0].chosenCar, 'guest');
+});
+
+test('readFeedback_ normalizes rows and drops invalid choices', () => {
+  const env = createEnv({});
+  env.call('appendFeedback_', {
+    id: 'fb-2', recordId: 'u-2', startAt: '2026-11-21T13:00:00.000Z', engine: 'plate',
+    suggestedCar: 'model3', chosenCar: 'model3', confidence: '0.91', plate: 'ab-12 34',
+    snapshotId: 'snap-2', lighting: 'night', actor: 'family', createdAt: '2026-11-21T13:01:00.000Z',
+  });
+  env.call('appendFeedback_', {
+    id: 'fb-3', recordId: 'u-3', startAt: '2026-11-21T14:00:00.000Z', engine: '',
+    suggestedCar: '', chosenCar: 'BAD CAR', confidence: '', plate: '',
+    snapshotId: '', lighting: '', actor: '', createdAt: '',
+  });
+  const rows = plain(env.call('readFeedback_'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].engine, 'plate');
+  assert.equal(rows[0].confidence, 0.91);
+  assert.equal(rows[0].plate, 'AB1234');
+  assert.equal(rows[0].snapshotId, 'snap-2');
+  assert.equal(rows[0].lighting, 'night');
+  assert.equal(rows[0].actor, 'family');
 });

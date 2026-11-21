@@ -2,14 +2,18 @@ var LOG_COLUMNS = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
   'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate',
-  'suggestionStatus', 'identifiedAt',
+  'suggestionStatus', 'identifiedAt', 'suggestionEngine', 'suggestionSnapshotId',
 ];
 var SNAPSHOTS_COLUMNS = [
   'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
-  'bytes', 'source', 'createdAt',
+  'bytes', 'source', 'createdAt', 'crop',
 ];
 var PLATES_COLUMNS = ['plate', 'car', 'active', 'createdAt'];
-var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor'];
+var FEEDBACK_COLUMNS = [
+  'id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar',
+  'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt',
+];
+var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description'];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
@@ -141,6 +145,8 @@ function normalizeLogRow_(row) {
     suggestionPlate: String(row.suggestionPlate || '').trim(),
     suggestionStatus: String(row.suggestionStatus || '').trim(),
     identifiedAt: isoValue_(row.identifiedAt) || null,
+    suggestionEngine: String(row.suggestionEngine || '').trim(),
+    suggestionSnapshotId: String(row.suggestionSnapshotId || '').trim(),
   };
 }
 
@@ -218,6 +224,7 @@ function normalizeCarRow_(row) {
     name: name,
     active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
     peakFactor: clampedPeakFactor_(row.peakFactor),
+    description: String(row.description || '').trim(),
   };
 }
 
@@ -579,6 +586,7 @@ function readSnapshots_() {
       bytes: numberOrNull_(row.bytes),
       source: String(row.source || '').trim(),
       createdAt: isoValue_(row.createdAt) || String(row.createdAt || '').trim(),
+      crop: String(row.crop || '').trim(),
     };
   }).filter(function (row) { return row.id && validIso_(row.capturedAt); });
 }
@@ -592,6 +600,25 @@ function appendSnapshot_(snapshot) {
   sheet.appendRow(row);
 }
 
+function deleteSnapshots_(ids) {
+  if (!ids || !ids.length) return 0;
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return 0;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var idCol = header.indexOf('id');
+  if (idCol === -1) return 0;
+  var wanted = {};
+  for (var i = 0; i < ids.length; i += 1) wanted[String(ids[i])] = true;
+  var rows = [];
+  for (var r = 1; r < values.length; r += 1) {
+    if (wanted[String(values[r][idCol] || '')]) rows.push(r + 1);
+  }
+  rows.sort(function (a, b) { return b - a; });
+  for (var d = 0; d < rows.length; d += 1) sheet.deleteRow(rows[d]);
+  return rows.length;
+}
+
 function readPlates_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Plates', PLATES_COLUMNS);
   return readObjects_(sheet, PLATES_COLUMNS).map(function (row) {
@@ -601,6 +628,37 @@ function readPlates_() {
       active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
     };
   }).filter(function (row) { return row.plate && validCarId_(row.car) && row.active; });
+}
+
+function readFeedback_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Feedback', FEEDBACK_COLUMNS);
+  return readObjects_(sheet, FEEDBACK_COLUMNS).map(function (row) {
+    return {
+      id: String(row.id || '').trim(),
+      recordId: String(row.recordId || '').trim(),
+      startAt: isoValue_(row.startAt) || '',
+      engine: String(row.engine || '').trim(),
+      suggestedCar: String(row.suggestedCar || '').trim(),
+      chosenCar: String(row.chosenCar || '').trim(),
+      confidence: numberOrNull_(row.confidence),
+      plate: normalizePlate_(row.plate),
+      snapshotId: String(row.snapshotId || '').trim(),
+      lighting: String(row.lighting || '').trim(),
+      actor: String(row.actor || '').trim(),
+      createdAt: isoValue_(row.createdAt) || '',
+    };
+  }).filter(function (row) {
+    return row.recordId && (row.chosenCar === 'guest' || validCarId_(row.chosenCar));
+  });
+}
+
+function appendFeedback_(feedback) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Feedback', FEEDBACK_COLUMNS);
+  var row = headerRow_(sheet).map(function (column) {
+    var value = feedback[column];
+    return value === undefined || value === null ? '' : value;
+  });
+  sheet.appendRow(row);
 }
 
 var CONFIG_COLUMNS = ['key', 'value', 'updatedAt', 'notes'];
