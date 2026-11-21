@@ -1,4 +1,7 @@
 var MAX_BODY_BYTES_ = 16384;
+var MAX_SNAPSHOT_BODY_BYTES_ = 1300000;
+var MAX_SNAPSHOT_IMAGE_BYTES_ = 900000;
+var SNAPSHOT_MAX_AGE_MS_ = 10 * 60 * 1000;
 
 function doGet(e) {
   try {
@@ -23,11 +26,21 @@ function doGet(e) {
 function doPost(e) {
   try {
     var raw = e && e.postData ? e.postData.contents : '';
-    if (!raw || raw.length > MAX_BODY_BYTES_) throw new Error('Request body too large');
+    if (!raw || raw.length > MAX_SNAPSHOT_BODY_BYTES_) throw new Error('Request body too large');
     var data = JSON.parse(raw);
     var action = String(data.action || 'append');
+    if (action !== 'snapshot' && raw.length > MAX_BODY_BYTES_) throw new Error('Request body too large');
     // Sync fetches Tesla outside the lock and locks only for Sheet reads/writes.
     if (action === 'sync') return json_(merge_({ ok: true }, syncAction_(data)));
+    if (action === 'snapshot') {
+      var snapshotLock = LockService.getScriptLock();
+      snapshotLock.waitLock(30000);
+      try {
+        return json_(merge_({ ok: true }, snapshotAction_(data)));
+      } finally {
+        snapshotLock.releaseLock();
+      }
+    }
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
@@ -47,6 +60,69 @@ function doPost(e) {
   } catch (error) {
     return json_({ ok: false, error: String(error.message || error) });
   }
+}
+
+function hmacHex_(text, secret) {
+  var bytes = Utilities.computeHmacSha256Signature(String(text), String(secret));
+  var out = '';
+  for (var i = 0; i < bytes.length; i += 1) {
+    var value = (bytes[i] + 256) % 256;
+    out += (value < 16 ? '0' : '') + value.toString(16);
+  }
+  return out;
+}
+
+function snapshotCanonical_(data) {
+  return [
+    String(data.id || ''),
+    String(data.capturedAt || ''),
+    String(data.width || ''),
+    String(data.height || ''),
+    String(data.image || ''),
+  ].join('\n');
+}
+
+function snapshotFolder_() {
+  var configured = PropertiesService.getScriptProperties().getProperty('SNAPSHOT_FOLDER_ID');
+  if (configured) return DriveApp.getFolderById(configured);
+  var folders = DriveApp.getFoldersByName('EV Charge Snapshots');
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder('EV Charge Snapshots');
+}
+
+function snapshotAction_(data) {
+  var secret = PropertiesService.getScriptProperties().getProperty('RELAY_HMAC_SECRET');
+  if (!secret) throw new Error('Missing RELAY_HMAC_SECRET');
+  if (!/^snap-[0-9]{10,13}$/.test(String(data.id || ''))) throw new Error('Invalid snapshot id');
+  if (!validIso_(data.capturedAt)) throw new Error('Invalid capturedAt');
+  var capturedMs = Date.parse(data.capturedAt);
+  if (Math.abs(Date.now() - capturedMs) > SNAPSHOT_MAX_AGE_MS_) throw new Error('Snapshot timestamp outside window');
+  var expected = hmacHex_(snapshotCanonical_(data), secret);
+  if (String(data.signature || '') !== expected) throw new Error('Invalid signature');
+
+  var existing = readSnapshots_().filter(function (row) { return row.id === data.id; });
+  if (existing.length) return { stored: true, existing: true, id: data.id, driveUrl: existing[0].driveUrl };
+
+  var bytes = Utilities.base64Decode(String(data.image || ''));
+  if (!bytes.length || bytes.length > MAX_SNAPSHOT_IMAGE_BYTES_) throw new Error('Snapshot image too large');
+  if ((bytes[0] + 256) % 256 !== 0xff || (bytes[1] + 256) % 256 !== 0xd8) throw new Error('Snapshot is not JPEG');
+
+  var file = snapshotFolder_().createFile(
+    Utilities.newBlob(bytes, 'image/jpeg', data.id + '.jpg'),
+  );
+  var snapshot = {
+    id: data.id,
+    capturedAt: new Date(data.capturedAt).toISOString(),
+    driveFileId: file.getId(),
+    driveUrl: file.getUrl(),
+    width: Number(data.width) || null,
+    height: Number(data.height) || null,
+    bytes: bytes.length,
+    source: 'pi',
+    createdAt: new Date().toISOString(),
+  };
+  appendSnapshot_(snapshot);
+  return { stored: true, existing: false, id: snapshot.id, driveUrl: snapshot.driveUrl };
 }
 
 function setup() {
