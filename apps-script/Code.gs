@@ -133,6 +133,35 @@ function snapshotAction_(data) {
   return { stored: true, existing: false, id: snapshot.id, driveUrl: snapshot.driveUrl };
 }
 
+var CLEANUP_FAILURE_SAMPLE_LIMIT_ = 10;
+
+function cleanupWarn_(message) {
+  if (typeof console === 'undefined' || !console) return;
+  if (typeof console.warn === 'function') console.warn(message);
+  else if (typeof console.log === 'function') console.log(message);
+}
+
+function isDriveNotFound_(error) {
+  var message = String((error && error.message) || error || '');
+  return /no item with the given id|not found|could not be found|does not exist/i.test(message);
+}
+
+// Trashes one snapshot file. A missing file is already gone, so it counts as
+// success; any other error is transient and must reach the caller.
+function trashSnapshotFile_(fileId) {
+  var id = String(fileId || '');
+  if (!id) return;
+  var file;
+  try {
+    file = DriveApp.getFileById(id);
+  } catch (error) {
+    if (isDriveNotFound_(error)) return;
+    throw error;
+  }
+  if (!file) return;
+  file.setTrashed(true);
+}
+
 function cleanupSnapshots_(now, limit) {
   var retentionDays = configInt_(readConfigMap_().values, 'snapshot.retentionDays', 30);
   var cutoff = (now ? now.getTime() : Date.now()) - retentionDays * 86400000;
@@ -142,11 +171,25 @@ function cleanupSnapshots_(now, limit) {
   }).sort(function (a, b) {
     return Date.parse(a.capturedAt) - Date.parse(b.capturedAt);
   }).slice(0, max);
+  var removable = [];
+  var failures = [];
   for (var i = 0; i < expired.length; i += 1) {
-    try { DriveApp.getFileById(expired[i].driveFileId).setTrashed(true); } catch (ignored) {}
+    try {
+      trashSnapshotFile_(expired[i].driveFileId);
+      removable.push(expired[i].id);
+    } catch (error) {
+      // Keep the row so the next cleanup retries the Drive trash.
+      failures.push(expired[i].id + ' (' + String(expired[i].driveFileId || 'no-file-id') + '): '
+        + String((error && error.message) || error));
+    }
   }
-  if (expired.length) deleteSnapshots_(expired.map(function (snapshot) { return snapshot.id; }));
-  return { deleted: expired.length };
+  var deleted = deleteSnapshots_(removable);
+  if (failures.length) {
+    cleanupWarn_('cleanup: trashed ' + deleted + ' of ' + expired.length + ' expired snapshot(s); kept '
+      + failures.length + ' row(s) for retry: '
+      + failures.slice(0, CLEANUP_FAILURE_SAMPLE_LIMIT_).join('; '));
+  }
+  return { deleted: deleted, failed: failures.length };
 }
 
 function cleanupAction_(data) {

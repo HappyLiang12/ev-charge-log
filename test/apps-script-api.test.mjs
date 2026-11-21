@@ -1380,6 +1380,85 @@ test('cleanupSnapshots_ removes expired rows in batches', () => {
 
 const CLEANUP_HEADER = ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'];
 
+function fakeDriveFile(id) {
+  const file = {
+    id,
+    trashed: false,
+    getBlob: () => ({ getBytes: () => [] }),
+    setTrashed(value) { file.trashed = Boolean(value); },
+    isTrashed: () => file.trashed,
+  };
+  return file;
+}
+
+function expiredSnapshotsEnv(rows) {
+  return setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [CONFIG_HEADER, ['snapshot.retentionDays', '30', '', '']],
+      Snapshots: [CLEANUP_HEADER, ...rows],
+    },
+  });
+}
+
+test('cleanup trashes the Drive file, then removes its row', () => {
+  const env = expiredSnapshotsEnv([
+    ['snap-old', '2026-10-01T00:00:00.000Z', 'file-1', 'u1', 1280, 720, 1, 'pi', '', ''],
+  ]);
+  const file = fakeDriveFile('file-1');
+  env.driveFiles.push(file);
+  const result = env.call('cleanupSnapshots_', new Date('2026-11-15T00:00:00.000Z'), 10);
+  assert.equal(result.deleted, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(file.isTrashed(), true);
+  assert.equal(plain(env.call('readSnapshots_')).length, 0);
+  assert.deepEqual(env.warnings, []);
+});
+
+test('cleanup keeps the row and reports failed when the Drive trash fails', () => {
+  const env = expiredSnapshotsEnv([
+    ['snap-old', '2026-10-01T00:00:00.000Z', 'file-1', 'u1', 1280, 720, 1, 'pi', '', ''],
+  ]);
+  const file = fakeDriveFile('file-1');
+  file.setTrashed = () => { throw new Error('Service error: Drive rate limit exceeded'); };
+  env.driveFiles.push(file);
+  const result = env.call('cleanupSnapshots_', new Date('2026-11-15T00:00:00.000Z'), 10);
+  assert.equal(result.deleted, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(file.isTrashed(), false);
+  assert.deepEqual(plain(env.call('readSnapshots_')).map((snapshot) => snapshot.id), ['snap-old']);
+  assert.equal(env.warnings.length, 1);
+  assert.match(env.warnings[0], /snap-old/);
+  assert.match(env.warnings[0], /rate limit/);
+});
+
+test('cleanup deletes only the rows whose files were trashed or already missing', () => {
+  const env = expiredSnapshotsEnv([
+    ['snap-old-1', '2026-10-01T00:00:00.000Z', 'file-1', 'u1', 1280, 720, 1, 'pi', '', ''],
+    ['snap-old-2', '2026-10-02T00:00:00.000Z', 'file-2', 'u2', 1280, 720, 1, 'pi', '', ''],
+  ]);
+  const file = fakeDriveFile('file-1');
+  file.setTrashed = () => { throw new Error('Service error: Drive transient failure'); };
+  env.driveFiles.push(file);
+  // file-2 is absent from Drive, so it is treated as already removed.
+  const result = env.call('cleanupSnapshots_', new Date('2026-11-15T00:00:00.000Z'), 10);
+  assert.equal(result.deleted, 1);
+  assert.equal(result.failed, 1);
+  assert.deepEqual(plain(env.call('readSnapshots_')).map((snapshot) => snapshot.id), ['snap-old-1']);
+});
+
+test('cleanup treats a not-found Drive file as already removed', () => {
+  const env = expiredSnapshotsEnv([
+    ['snap-old', '2026-10-01T00:00:00.000Z', 'file-gone', 'u1', 1280, 720, 1, 'pi', '', ''],
+  ]);
+  env.run("DriveApp.getFileById = function () { throw new Error('No item with the given ID could be found, or you do not have permission to access it.'); };");
+  const result = env.call('cleanupSnapshots_', new Date('2026-11-15T00:00:00.000Z'), 10);
+  assert.equal(result.deleted, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(plain(env.call('readSnapshots_')).length, 0);
+  assert.deepEqual(env.warnings, []);
+});
+
 function cleanupBody(at = new Date().toISOString(), limit = 1, secret = SNAPSHOT_SECRET) {
   return {
     action: 'cleanup',

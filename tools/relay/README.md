@@ -63,8 +63,10 @@ mode; use it for a controlled camera test only, then set the production ROI.
 The Pi triggers retention cleanup every `relay.cleanupIntervalSeconds`
 (default hourly). Each signed `cleanup` request deletes up to
 `relay.cleanupBatch` expired snapshots, oldest first; Apps Script trashes the
-Drive file and removes the `Snapshots` row. `last_cleanup` advances only after
-a successful response, so a failure retries on the next cycle. There is no
+Drive file and removes the `Snapshots` row. A row whose file could not be
+trashed is kept and retried at the next cleanup run; the response reports
+`deleted` and `failed` counts. `last_cleanup` advances only after a successful
+response, so a rejected request retries on the next cycle. There is no
 ScriptApp trigger.
 
 ## Pi setup
@@ -105,8 +107,9 @@ production. `capture_frame(url, path, 1920)` without a crop now raises
 `CropRequired`.
 
 With `API_URL` empty the service is capture-only: frames accumulate under
-`QUEUE_DIR` up to `MAX_QUEUE`. Set `API_URL` and `RELAY_HMAC_SECRET` once the
-Apps Script endpoint is deployed.
+`QUEUE_DIR` up to `relay.maxQueue` (the `MAX_QUEUE` env value is only the
+bootstrap default until the first Config fetch). Set `API_URL` and
+`RELAY_HMAC_SECRET` once the Apps Script endpoint is deployed.
 
 ## Time
 
