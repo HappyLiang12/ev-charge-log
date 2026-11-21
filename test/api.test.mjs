@@ -5,6 +5,7 @@ import {
   apiPost,
   fetchFamilyData,
   fetchOwnerData,
+  fetchLatestSnapshot,
   postRecord,
   deleteRecord,
   syncTesla,
@@ -83,6 +84,39 @@ test('fetchOwnerData sends the owner mode flag and parses all cars', async () =>
   assert.equal(data.cars.length, 1);
   assert.equal(data.records[0].car, 'model3');
   assert.equal(data.sheetUrl, 'https://docs.google.com/spreadsheets/d/abc/edit');
+});
+
+test('fetchLatestSnapshot requests the latest snapshot and normalizes it', async () => {
+  const captured = {};
+  const snapshot = await fetchLatestSnapshot(base, captureFetch({
+    ok: true,
+    snapshot: {
+      id: 'snap-1',
+      capturedAt: '2026-11-21T09:07:07.000Z',
+      driveUrl: 'https://drive.google.com/file/d/file-1/view',
+      driveFileId: 'file-1',
+      width: '1920',
+      height: 1080,
+      crop: 'full',
+    },
+  }, captured));
+  assert.match(captured.url, /[?&]latest=1(?:&|$)/);
+  assert.match(captured.url, /[?&]_=\d+/);
+  assert.equal(captured.init.method, 'GET');
+  assert.deepEqual(snapshot, {
+    id: 'snap-1',
+    capturedAt: '2026-11-21T09:07:07.000Z',
+    driveUrl: 'https://drive.google.com/file/d/file-1/view',
+    driveFileId: 'file-1',
+    width: 1920,
+    height: 1080,
+    crop: 'full',
+  });
+});
+
+test('fetchLatestSnapshot returns null when no snapshot exists', async () => {
+  const snapshot = await fetchLatestSnapshot(base, async () => response({ ok: true, snapshot: null }));
+  assert.equal(snapshot, null);
 });
 
 test('postRecord sends car, startAt, and Hong Kong date/time as text/plain', async () => {

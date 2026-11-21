@@ -12,6 +12,7 @@ function doGet(e) {
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
+      if (params.latest !== undefined) return json_(latestSnapshotPayload_());
       if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
       throw new Error('Missing car or owner parameter');
@@ -307,6 +308,23 @@ function familyBillShares_(carId) {
     });
   }
   return output;
+}
+
+function latestSnapshotPayload_() {
+  var snapshot = readLatestSnapshot_();
+  return {
+    ok: true,
+    snapshot: snapshot ? {
+      id: snapshot.id,
+      capturedAt: snapshot.capturedAt,
+      driveUrl: snapshot.driveUrl,
+      driveFileId: snapshot.driveFileId,
+      width: snapshot.width,
+      height: snapshot.height,
+      crop: snapshot.crop,
+    } : null,
+    serverTime: new Date().toISOString(),
+  };
 }
 
 function ownerPayload_() {

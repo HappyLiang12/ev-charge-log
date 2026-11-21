@@ -54,6 +54,23 @@ export async function fetchOwnerData(apiUrl, fetchImpl = fetch) {
   return parseOwnerPayload(await apiGet(apiUrl, { owner: '1' }, fetchImpl));
 }
 
+export async function fetchLatestSnapshot(apiUrl, fetchImpl = fetch) {
+  const payload = await apiGet(apiUrl, { latest: '1', _: String(Date.now()) }, fetchImpl);
+  const raw = payload.snapshot;
+  if (!raw || !raw.id) return null;
+  const width = Number(raw.width);
+  const height = Number(raw.height);
+  return {
+    id: String(raw.id),
+    capturedAt: String(raw.capturedAt || ''),
+    driveUrl: String(raw.driveUrl || ''),
+    driveFileId: String(raw.driveFileId || ''),
+    width: Number.isFinite(width) ? width : null,
+    height: Number.isFinite(height) ? height : null,
+    crop: String(raw.crop || ''),
+  };
+}
+
 export async function fetchChargerStatus(apiUrl, fetchImpl = fetch) {
   return parseChargerStatus(await apiGet(apiUrl, { status: '1' }, fetchImpl));
 }

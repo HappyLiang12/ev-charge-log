@@ -30,6 +30,7 @@ import {
 } from './bill.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
+import { startSnapshotPolling } from './snapshot.js';
 
 // Null prototype: a tampered engine string must never resolve to an
 // Object.prototype member and render function source.
@@ -93,7 +94,14 @@ export function initOwner({ apiUrl }) {
     billPreview: byId('ownerBillPreview'),
     billSave: byId('ownerBillSave'),
     bills: byId('ownerBills'),
+    snapshotPanel: byId('ownerSnapshotPanel'),
+    snapshotImg: byId('ownerSnapshotImg'),
+    snapshotLink: byId('ownerSnapshotLink'),
+    snapshotTime: byId('ownerSnapshotTime'),
+    snapshotHint: byId('ownerSnapshotHint'),
+    snapshotFallback: byId('ownerSnapshotFallback'),
   };
+  let renderedSnapshotId = '';
 
   function textRow(label, value) {
     const row = document.createElement('div');
@@ -180,6 +188,32 @@ export function initOwner({ apiUrl }) {
     });
     link.append(image);
     return link;
+  }
+
+  function renderSnapshot(snapshot) {
+    if (!snapshot) {
+      els.snapshotPanel.hidden = true;
+      return;
+    }
+    const when = `${formatHkDate(snapshot.capturedAt)} ${formatHkTime12(snapshot.capturedAt)}`.trim();
+    els.snapshotPanel.hidden = false;
+    els.snapshotLink.hidden = false;
+    els.snapshotTime.textContent = when ? `拍攝於 ${when}` : '';
+    els.snapshotHint.textContent = snapshot.crop === 'full'
+      ? '測試模式：全畫面；每 60 秒更新，相機每 5 分鐘拍攝一次。'
+      : '每 60 秒更新；相機每 5 分鐘拍攝一次。';
+    const fileId = snapshot.driveFileId || driveFileId(snapshot.driveUrl);
+    els.snapshotLink.href = snapshot.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+    if (snapshot.id === renderedSnapshotId) return;
+    renderedSnapshotId = snapshot.id;
+    els.snapshotImg.hidden = false;
+    els.snapshotFallback.hidden = true;
+    if (fileId) {
+      els.snapshotImg.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w960`;
+    } else {
+      els.snapshotImg.hidden = true;
+      els.snapshotFallback.hidden = false;
+    }
   }
 
   function billCalibrationMessage(calibration, periodEnd) {
@@ -1043,6 +1077,10 @@ export function initOwner({ apiUrl }) {
   els.exportBtn.addEventListener('click', onExport);
   els.syncBtn.addEventListener('click', () => { void onSync(); });
   els.ratesBtn.addEventListener('click', () => { void onRates(); });
+  els.snapshotImg.addEventListener('error', () => {
+    els.snapshotImg.hidden = true;
+    els.snapshotFallback.hidden = false;
+  });
   els.billFile.addEventListener('change', () => { void onBillFile(); });
   els.billManualBtn.addEventListener('click', () => {
     els.billForm.hidden = false;
@@ -1059,6 +1097,15 @@ export function initOwner({ apiUrl }) {
     if (apiUrl) void load();
   });
   if (apiUrl) {
+    startSnapshotPolling({
+      apiUrl,
+      onSnapshot: renderSnapshot,
+      onError: () => {
+        if (!els.snapshotPanel.hidden) {
+          els.snapshotHint.textContent = '更新失敗，顯示上一張；每分鐘重試。';
+        }
+      },
+    });
     startChargerLive({
       apiUrl,
       getStartAt: () => {

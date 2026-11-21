@@ -235,6 +235,41 @@ test('family sees a suggestion hint and no evidence', { timeout: 20000 }, async 
   }
 });
 
+test('owner sees the latest snapshot card with capture time and mode', { timeout: 20000 }, async () => {
+  const snapshotsHeader = [
+    'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
+    'bytes', 'source', 'createdAt', 'crop',
+  ];
+  const sheets = {
+    ...defaultSheets({ records: [assignedRecord('r-snapshot', '2026-11-21T04:00:00.000Z')] }),
+    Snapshots: [
+      snapshotsHeader,
+      ['snap-old', '2026-11-21T08:00:00.000Z', 'file-old',
+        'https://drive.google.com/file/d/file-old/view', 1920, 1080, 100, 'pi',
+        '2026-11-21T08:00:05.000Z', 'full'],
+      ['snap-new', '2026-11-21T09:07:07.000Z', 'file-new',
+        'https://drive.google.com/file/d/file-new/view', 1920, 1080, 100, 'pi',
+        '2026-11-21T09:07:12.000Z', 'full'],
+    ],
+  };
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerSnapshotPanel').hidden === false, 12000);
+    const img = ui.document.getElementById('ownerSnapshotImg');
+    assert.match(img.src, /thumbnail\?id=file-new/);
+    assert.match(ui.document.getElementById('ownerSnapshotTime').textContent, /拍攝於/);
+    assert.match(ui.document.getElementById('ownerSnapshotHint').textContent, /全畫面/);
+    assert.equal(
+      ui.document.getElementById('ownerSnapshotLink').href,
+      'https://drive.google.com/file/d/file-new/view',
+    );
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('owner sees snapshot, engine, confidence, adopt, and ignore', { timeout: 20000 }, async () => {
   const record = {
     ...unassignedRecord('u-suggest', '2026-11-21T04:00:00.000Z', 'din:s'),

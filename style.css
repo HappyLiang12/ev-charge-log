@@ -701,6 +701,30 @@ select, #exportBtn {
 
 .evidence-thumb-small { width: min(100%, 120px); }
 
+.snapshot-panel .owner-toolbar { margin-bottom: 0; }
+.snapshot-panel .owner-toolbar h2 { flex: 1 1 auto; }
+.snapshot-link {
+  display: block;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.snapshot-image {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: cover;
+}
+.snapshot-fallback {
+  display: block;
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 @media (max-width: 400px) {
   .owner-toolbar select { flex: 1 1 100%; width: 100%; }
   .owner-toolbar-actions button { flex: 1 1 100%; width: 100%; }
