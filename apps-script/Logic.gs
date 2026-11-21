@@ -446,3 +446,26 @@ function billAllocation_(bill, records, cars) {
     rows: rows,
   };
 }
+
+function normalizePlate_(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function nearestSnapshot_(startIso, snapshots, windowMs) {
+  var target = Date.parse(startIso);
+  if (isNaN(target)) return null;
+  var best = null;
+  var bestDelta = Infinity;
+  for (var i = 0; i < (snapshots || []).length; i += 1) {
+    var row = snapshots[i];
+    var at = Date.parse(row.capturedAt);
+    if (isNaN(at)) continue;
+    var delta = Math.abs(at - target);
+    if (delta > windowMs) continue;
+    if (delta < bestDelta || (delta === bestDelta && best && String(row.id) < String(best.id))) {
+      best = row;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
