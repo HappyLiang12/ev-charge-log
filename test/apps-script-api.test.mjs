@@ -1049,6 +1049,28 @@ test('snapshot ingest verifies HMAC, stores one Drive file, and is idempotent', 
   assert.equal(env.driveFiles.length, 1);
 });
 
+test('snapshot ingest stores the current Config crop on the Snapshots row', () => {
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['relay.crop', '10:20:800:600', '', ''],
+      ],
+    },
+  });
+  assert.equal(send(env, snapshotBody()).ok, true);
+  const rows = env.values('Snapshots');
+  const crop = rows[0].indexOf('crop');
+  assert.notEqual(crop, -1);
+  assert.equal(rows[1][crop], '10:20:800:600');
+
+  const blank = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
+  assert.equal(send(blank, snapshotBody()).ok, true);
+  const blankRows = blank.values('Snapshots');
+  assert.equal(blankRows[1][blankRows[0].indexOf('crop')], '');
+});
+
 test('snapshot ingest rejects a bad signature and an old timestamp', () => {
   const env = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
   const bad = snapshotBody();
