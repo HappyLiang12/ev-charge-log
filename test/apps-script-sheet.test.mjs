@@ -715,6 +715,31 @@ test('snapshots and plates repositories normalize rows', () => {
   assert.equal(snaps[0].driveUrl, 'https://drive.google.com/file/d/file-1/view');
 });
 
+test('upsertPlate_ appends and updates normalized plate mappings', () => {
+  const env = createEnv({
+    sheets: {
+      Plates: [
+        ['plate', 'car', 'active', 'createdAt'],
+        ['AB1234', 'model3', 'FALSE', ''],
+      ],
+    },
+  });
+  assert.equal(env.call('upsertPlate_', ' ab-12 34 ', 'ix3'), true);
+  assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'ix3', active: true }]);
+  assert.equal(env.call('upsertPlate_', 'new-99', 'ix3'), true);
+  assert.deepEqual(
+    plain(env.call('readPlates_')).map((row) => [row.plate, row.car]),
+    [['AB1234', 'ix3'], ['NEW99', 'ix3']],
+  );
+  assert.equal(env.call('upsertPlate_', 'new-99', 'guest'), false);
+  assert.equal(env.call('upsertPlate_', 'new-99', 'unassigned'), false);
+  assert.equal(env.call('upsertPlate_', '', 'ix3'), false);
+
+  const empty = createEnv({});
+  assert.equal(empty.call('upsertPlate_', 'ZZ-9', 'model3'), true);
+  assert.deepEqual(plain(empty.call('readPlates_')), [{ plate: 'ZZ9', car: 'model3', active: true }]);
+});
+
 test('deleteSnapshots_ removes only the requested rows', () => {
   const env = createEnv({
     sheets: {

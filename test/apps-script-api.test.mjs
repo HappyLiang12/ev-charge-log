@@ -385,17 +385,73 @@ test('unknown actions report an invalid action', () => {
   assert.match(result.error, /Invalid action/);
 });
 
-test('the ignore action is removed', () => {
+test('ignore records guest feedback and removes the session', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:u', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  assert.equal(send(env, { action: 'ignore', id: 'unassigned-1' }).ok, true);
+  const feedback = env.values('Feedback');
+  assert.equal(feedback[1][5], 'guest');
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('ignore reports an unknown record without recording feedback', () => {
   const env = setup({
     sheets: {
       Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a' })],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
     },
   });
-  const result = send(env, { action: 'ignore', id: 'unassigned-1' });
-  assert.equal(result.ok, false);
-  assert.match(result.error, /Invalid action/);
+  const result = send(env, { action: 'ignore', id: 'missing-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.ignored, false);
   assert.equal(plain(env.call('readLog_')).length, 1);
+  assert.equal(plain(env.call('readFeedback_')).length, 0);
+});
+
+test('reassign updates the car and records a correction', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-1', 4: 'model3', 11: 'din:r', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  assert.equal(send(env, { action: 'reassign', id: 'rec-1', car: 'ix3' }).ok, true);
+  assert.equal(plain(env.call('readLog_'))[0].car, 'ix3');
+  assert.equal(env.values('Feedback')[1][5], 'ix3');
+});
+
+test('reassign recomputes the peak split with the new car peak factor', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({
+          0: 'rec-split', 1: '2026-11-14T09:00:00.000Z', 4: 'model3',
+          5: 10, 6: 3600, 7: '2026-11-14T09:00:00.000Z',
+          8: '2026-11-14T10:00:00.000Z', 9: 10, 10: 0, 11: 'din:split', 12: 'tesla',
+        }),
+      ],
+      Cars: [
+        [...CARS_HEADER, 'peakFactor'],
+        ['model3', 'Model 3', 'TRUE', 'x', 1],
+        ['ix3', 'iX3', 'TRUE', 'x', 0.25],
+      ],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const result = send(env, { action: 'reassign', id: 'rec-split', car: 'ix3' });
+  assert.equal(result.ok, true);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'ix3');
+  assert.equal(record.peakKWh, 2.5);
+  assert.equal(record.offPeakKWh, 7.5);
+  assert.equal(env.values('Feedback')[1][5], 'ix3');
 });
 
 test('sync matches a manual row, updates the cursor, and exposes the full result shape', () => {
@@ -1759,4 +1815,75 @@ test('sync runs identify under short locks with provider calls outside', () => {
   assert.equal(record.suggestionStatus, 'matched');
   assert.equal(record.suggestedCar, 'model3');
   assert.equal(record.suggestionSnapshotId, 'snap-1');
+});
+
+const suggestionRow = (id, suggestion = {}, base = {}) => {
+  const values = identifyRow(id, base);
+  values[14] = suggestion.car || '';
+  values[15] = suggestion.confidence ?? '';
+  values[16] = suggestion.plate || '';
+  values[17] = suggestion.status || '';
+  values[18] = suggestion.identifiedAt || '';
+  values[19] = suggestion.engine || '';
+  values[20] = suggestion.snapshotId || '';
+  return values;
+};
+
+test('an assign correction records feedback and upserts the plate map', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        suggestionRow('u-plate', {
+          car: 'model3', confidence: 0.92, plate: 'AB-12 34', status: 'matched',
+          identifiedAt: '2026-11-14T05:06:00.000Z', engine: 'plate', snapshotId: 'snap-7',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt']],
+    },
+  });
+  const result = send(env, { action: 'assign', id: 'u-plate', car: 'ix3' });
+  assert.equal(result.ok, true);
+  assert.equal(plain(env.call('readLog_'))[0].car, 'ix3');
+  const feedback = plain(env.call('readFeedback_'));
+  assert.equal(feedback.length, 1);
+  assert.equal(feedback[0].engine, 'plate');
+  assert.equal(feedback[0].suggestedCar, 'model3');
+  assert.equal(feedback[0].chosenCar, 'ix3');
+  assert.equal(feedback[0].confidence, 0.92);
+  assert.equal(feedback[0].plate, 'AB1234');
+  assert.equal(feedback[0].snapshotId, 'snap-7');
+  assert.equal(feedback[0].lighting, 'day');
+  assert.equal(feedback[0].actor, 'owner');
+  assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'ix3', active: true }]);
+});
+
+test('claim feedback carries the engine, snapshot id, lighting, and actor', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        suggestionRow('u-meta', {
+          car: 'model3', confidence: 0.88, status: 'matched',
+          identifiedAt: '2026-11-14T13:31:00.000Z', engine: 'vlm', snapshotId: 'snap-8',
+        }, {
+          7: '2026-11-14T13:30:00.000Z',
+          8: '2026-11-14T15:30:00.000Z',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+    },
+  });
+  const result = send(env, { action: 'claim', car: 'ix3', id: 'u-meta' });
+  assert.equal(result.ok, true);
+  const feedback = plain(env.call('readFeedback_'));
+  assert.equal(feedback.length, 1);
+  assert.equal(feedback[0].engine, 'vlm');
+  assert.equal(feedback[0].suggestedCar, 'model3');
+  assert.equal(feedback[0].chosenCar, 'ix3');
+  assert.equal(feedback[0].snapshotId, 'snap-8');
+  assert.equal(feedback[0].lighting, 'night');
+  assert.equal(feedback[0].actor, 'family');
+  assert.equal(plain(env.call('readLog_'))[0].car, 'ix3');
 });

@@ -630,6 +630,40 @@ function readPlates_() {
   }).filter(function (row) { return row.plate && validCarId_(row.car) && row.active; });
 }
 
+function upsertPlate_(plate, carId) {
+  var normalized = normalizePlate_(plate);
+  var target = String(carId || '').trim();
+  // A plate maps to a household car only; guest/ignore choices must not
+  // pollute the OCR mapping.
+  if (!normalized || !validCarId_(target) || target === 'unassigned' || target === 'guest') return false;
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Plates', PLATES_COLUMNS);
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) return false;
+  var header = values[0].map(function (value) { return String(value || '').trim(); });
+  var plateCol = header.indexOf('plate');
+  var carCol = header.indexOf('car');
+  var activeCol = header.indexOf('active');
+  if (plateCol === -1 || carCol === -1) return false;
+  for (var i = 1; i < values.length; i += 1) {
+    if (normalizePlate_(values[i][plateCol]) !== normalized) continue;
+    var row = values[i].slice();
+    while (row.length < header.length) row.push('');
+    row[carCol] = target;
+    if (activeCol !== -1) row[activeCol] = 'TRUE';
+    sheet.getRange(i + 1, 1, 1, header.length).setValues([row]);
+    return true;
+  }
+  var appended = header.map(function (column) {
+    if (column === 'plate') return normalized;
+    if (column === 'car') return target;
+    if (column === 'active') return 'TRUE';
+    if (column === 'createdAt') return new Date().toISOString();
+    return '';
+  });
+  sheet.appendRow(appended);
+  return true;
+}
+
 function readFeedback_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Feedback', FEEDBACK_COLUMNS);
   return readObjects_(sheet, FEEDBACK_COLUMNS).map(function (row) {
