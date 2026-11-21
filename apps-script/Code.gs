@@ -53,6 +53,7 @@ function doPost(e) {
       else if (action === 'bill') result = billAction_(data);
       else if (action === 'publishBill') result = publishBillAction_(data);
       else if (action === 'relayConfig') result = relayConfigAction_(data);
+      else if (action === 'identify') result = identifyAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -310,7 +311,21 @@ function deleteAction_(data) {
 }
 
 function syncAction_(data) {
-  return syncTesla_(!data || !data.car);
+  var result = syncTesla_(!data || !data.car);
+  if (!data || !data.car) {
+    try { result.vision = identifyPending_(); } catch (error) { result.vision = { error: String(error.message || error) }; }
+  }
+  return result;
+}
+
+function readDriveImageBase64_(fileId) {
+  return Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes());
+}
+
+function identifyAction_(data) {
+  var record = findRecord_(readLog_(), String(data.id || ''));
+  if (!record) throw new Error('Unknown record');
+  return identifySession_(record, Boolean(data.force));
 }
 
 function findRecord_(records, id) {
