@@ -122,6 +122,17 @@ function policyAllowsSuggestion_(engine, car, lighting) {
 
 function identifySession_(record, force) {
   if (!record || record.car !== 'unassigned') return { status: 'unknown', reason: 'not unassigned' };
+  if (!force && (record.suggestionStatus === 'matched' || record.suggestionStatus === 'unknown')) {
+    return {
+      engine: record.suggestionEngine || '',
+      car: record.suggestedCar || '',
+      confidence: record.suggestionConfidence || 0,
+      plate: record.suggestionPlate || '',
+      status: record.suggestionStatus,
+      snapshotId: record.suggestionSnapshotId || '',
+      reason: 'skipped',
+    };
+  }
   var engineSetting = visionEngine_();
   if (engineSetting === 'off') return { status: 'unknown', reason: 'vision disabled' };
   var snapshots = readSnapshots_();
@@ -133,8 +144,15 @@ function identifySession_(record, force) {
   var plates = readPlates_();
   var lighting = lightingFor_(record.teslaStartAt || record.startAt);
   var result = null;
+  var readError = '';
   for (var i = 0; i < candidates.length; i += 1) {
-    var image = readDriveImageBase64_(candidates[i].driveFileId);
+    var image;
+    try {
+      image = readDriveImageBase64_(candidates[i].driveFileId);
+    } catch (error) {
+      readError = String(error.message || error);
+      continue;
+    }
     result = plateIdentify_(image, plates);
     if (result.status === 'matched') break;
     if (i <= 1 && engineSetting.indexOf('vlm') !== -1) {
@@ -143,7 +161,13 @@ function identifySession_(record, force) {
       if (vlm.status === 'matched' && policyAllowsSuggestion_('vlm', vlm.car, lighting)) result = vlm;
     }
   }
-  if (!result) result = { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', reason: 'no match' };
+  if (!result) {
+    result = {
+      engine: '', car: '', confidence: 0, plate: '', snapshotId: '',
+      status: readError ? 'error' : 'unknown',
+      reason: readError || 'no match',
+    };
+  }
   updateLog_(record.id, {
     evidenceUrl: candidates[0].driveUrl,
     suggestedCar: result.car,
