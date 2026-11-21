@@ -1,0 +1,15 @@
+[Unit]
+Description=EV Charge Log Tapo relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=evrelay
+EnvironmentFile=/etc/ev-relay/relay.env
+ExecStart=/usr/bin/python3 /opt/ev-relay/tapo_relay.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

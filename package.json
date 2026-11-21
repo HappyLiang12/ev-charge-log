@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "test:relay": "python3 -m unittest discover -s tools/relay -p 'test_*.py'",
     "probe:tesla": "node tools/tesla-probe.mjs",
     "register:tesla": "node tools/tesla-probe.mjs --register",
     "auth:tesla": "node tools/tesla-probe.mjs --save-refresh-token"
