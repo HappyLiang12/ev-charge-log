@@ -1355,6 +1355,70 @@ test('relayConfig rejects a bad signature and an old timestamp', () => {
   assert.match(send(env, old).error, /timestamp/i);
 });
 
+test('cleanupSnapshots_ removes expired rows in batches', () => {
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['snapshot.retentionDays', '30', '', ''],
+      ],
+      Snapshots: [
+        ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'],
+        ['snap-old-1', '2026-10-01T00:00:00.000Z', 'file-1', 'u1', 1280, 720, 1, 'pi', '', ''],
+        ['snap-old-2', '2026-10-02T00:00:00.000Z', 'file-2', 'u2', 1280, 720, 1, 'pi', '', ''],
+        ['snap-new', '2026-11-15T00:00:00.000Z', 'file-3', 'u3', 1280, 720, 1, 'pi', '', ''],
+      ],
+    },
+  });
+  const result = env.call('cleanupSnapshots_', new Date('2026-11-15T00:00:00.000Z'), 1);
+  assert.equal(result.deleted, 1);
+  assert.equal(plain(env.call('readSnapshots_')).length, 2);
+  const ids = plain(env.call('readSnapshots_')).map((snapshot) => snapshot.id);
+  assert.deepEqual(ids, ['snap-old-2', 'snap-new']);
+});
+
+const CLEANUP_HEADER = ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'];
+
+function cleanupBody(at = new Date().toISOString(), limit = 1, secret = SNAPSHOT_SECRET) {
+  return {
+    action: 'cleanup',
+    at,
+    limit,
+    signature: crypto.createHmac('sha256', secret).update('cleanup\n' + at).digest('hex'),
+  };
+}
+
+test('cleanup action verifies the signature and timestamp and deletes expired rows', () => {
+  const old = new Date(Date.now() - 40 * 86400000).toISOString();
+  const fresh = new Date().toISOString();
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [CONFIG_HEADER, ['snapshot.retentionDays', '30', '', '']],
+      Snapshots: [
+        CLEANUP_HEADER,
+        ['snap-old', old, 'file-1', 'u1', 1280, 720, 1, 'pi', '', ''],
+        ['snap-fresh', fresh, 'file-2', 'u2', 1280, 720, 1, 'pi', '', ''],
+      ],
+    },
+  });
+  const bad = cleanupBody();
+  bad.signature = '00';
+  assert.equal(send(env, bad).ok, false);
+  assert.match(send(env, bad).error, /signature/i);
+
+  const stale = cleanupBody('2026-01-01T00:00:00.000Z');
+  assert.equal(send(env, stale).ok, false);
+  assert.match(send(env, stale).error, /timestamp/i);
+  assert.equal(plain(env.call('readSnapshots_')).length, 2);
+
+  const result = send(env, cleanupBody(undefined, 1));
+  assert.equal(result.ok, true);
+  assert.equal(result.deleted, 1);
+  assert.deepEqual(plain(env.call('readSnapshots_')).map((snapshot) => snapshot.id), ['snap-fresh']);
+});
+
 test('setup seeds the Config tab with defaults', () => {
   const env = setup();
   env.call('setup');

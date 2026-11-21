@@ -1,6 +1,6 @@
 # EV Charge Log
 
-Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/off-peak cost estimates. A static app on GitHub Pages; a Google Apps Script Web App owns the Sheet, Tesla OAuth, and CLP rate fetch.
+Per-car EV charging log with on-demand Tesla Wall Connector sync and CLP peak/off-peak cost estimates. A static app on GitHub Pages; a Google Apps Script Web App owns the Sheet, Tesla OAuth, CLP rate fetch, private snapshot storage, and optional plate/VLM car suggestions.
 
 This repository is the application code. The deployed instance is for private family use; there is no public demo deployment. Replace `<your-user>` below with your own GitHub Pages account.
 
@@ -20,6 +20,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet. A pending start disables the button until it is matched or deleted.
 - The owner opens the owner URL (`?owner`), presses `更新充電樁`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
+- A Raspberry Pi relay crops the charging slot from the Tapo CCTV stream and uploads only that crop every 5 minutes. The owner view shows the crop and a plate/vision suggestion; the family view sees only a suggestion hint, never the image.
+- Capture settings live in the Sheet's `Config` tab. The Pi pulls them every cycle, so interval, crop, quality, queue cap, and cleanup cadence are tuned remotely without SSH or a restart.
 - The family view never receives Tesla credentials. The owner view has no key or login; its URL is a mode flag.
 
 ## Features
@@ -42,29 +44,113 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share. Saving a bill with peak/off-peak also learns a per-car `peakFactor` from all usable bills, so later peak/off-peak estimates track the meter's actual split.
 - Bill shares are gated: a bill stays unpublished (and invisible to family links) until the owner presses `發布分攤`. Publishing is blocked while any `unassigned` session starts inside the bill period, and the server re-checks the same rule. Saving or changing a bill clears `publishedAt`, so it must be published again. If a new unassigned session later lands in a published period, family links hide that bill again until it is resolved and republished.
 - Offline-friendly family queue; pending starts retry automatically.
+- Private CCTV evidence: the Pi uploads only a cropped charging-slot JPEG, stored in a private Drive folder and linked from new unassigned sessions. The owner view shows the crop, engine (`車牌`/`視覺`), confidence, and adopt/manual/ignore/reassign controls; family links get a hint only.
+- Plate OCR first (Cloud Vision), then an optional Cloudflare Workers AI VLM. Suggestions never assign a car automatically; a correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
+- Ignoring a non-household session records `guest` feedback and persists its Tesla key in the `Ignored` tab, so a later sync does not re-import it.
+- Snapshot retention is 30 days by default. The Pi triggers a signed, hourly, batched cleanup; no ScriptApp trigger is installed.
 - Mobile-first layout for a 390x844 viewport.
+
+## CCTV evidence and remote config
+
+The Pi relay opens a short RTSP connection each cycle and uploads one cropped JPEG. Apps Script verifies the HMAC, stores the file in a private Drive folder, appends a `Snapshots` row, and attaches the nearest snapshot to a new unassigned Tesla session. The owner view shows that crop and a suggestion; family payloads never include the evidence URL.
+
+### Crop and fail-closed capture
+
+- `relay.crop` is `x:y:w:h` in source pixels. The Pi applies `crop=w:h:x:y`, scales to `min(relay.imageWidth, iw)`, then encodes the JPEG at `relay.jpegQuality`.
+- If `relay.crop` is empty or invalid, the relay logs `crop required` and skips capture/upload. It never falls back to a full frame. Production requires the ROI.
+- `relay.crop=full` is an explicit testing-only mode for a controlled camera test; change it back to the ROI before production.
+- Only the crop is uploaded. The full CCTV frame stays on the camera's own recording; a guest car outside the ROI is neither stored nor analysed.
+- The crop string is stored on each `Snapshots` row for audit and future training data.
+
+### Remote config keys
+
+The `Config` tab (`key`, `value`, `updatedAt`, `notes`) is the single source of tunables. Edit it in Google Sheets; no SSH or restart is needed. `setup()` seeds missing defaults. The server clamps numeric values to the ranges below; the Pi validates and clamps again before applying.
+
+| key | default | range / allowed | effect |
+| --- | --- | --- | --- |
+| `relay.enabled` | `true` | true/false | Pause capture/upload; config polling and cleanup continue |
+| `relay.intervalSeconds` | `300` | 60–3600 | Capture cadence |
+| `relay.imageWidth` | `1920` | 640–2560 | Output width after crop |
+| `relay.jpegQuality` | `3` | 2–10 | ffmpeg `-q:v` |
+| `relay.crop` | empty | `x:y:w:h` or `full` | Charging-slot ROI; empty/invalid stops capture; `full` is testing-only |
+| `relay.captureTimeoutSeconds` | `30` | 10–120 | ffmpeg capture timeout |
+| `relay.maxQueue` | `1000` | 100–5000 | Offline queue cap |
+| `relay.cleanupIntervalSeconds` | `3600` | 600–86400 | Cleanup trigger cadence |
+| `relay.cleanupBatch` | `500` | 10–1000 | Snapshots deleted per cleanup call |
+| `snapshot.retentionDays` | `30` | 1–365 | Drive files and `Snapshots` rows older than this are deleted |
+| `snapshot.windowMinutes` | `10` | 1–60 | Snapshot search window around a session |
+| `snapshot.candidateCount` | `3` | 1–5 | Max snapshots inspected per identification |
+| `vision.engine` | `plate` | `off`, `plate`, `plate+vlm` | Identification pipeline |
+| `vision.minConfidence` | `0.8` | 0.5–0.99 | Minimum VLM confidence for a suggestion |
+| `vision.maxPerSync` | `5` | 0–20 | Max sessions identified per owner sync |
+| `vision.vlmModel` | empty | provider model id | Empty keeps the VLM disabled |
+| `policy.minSamples` | `5` | 1–50 | Feedback samples before a precision gate applies |
+| `policy.minPrecision` | `0.9` | 0.5–0.99 | VLM suggestions below this precision are suppressed |
+
+At the start of every cycle the Pi sends a signed `relayConfig` request. On success it caches the validated response at `/var/lib/ev-relay/config.json` and applies it from the next capture. On failure it uses the cache, then the `relay.env` bootstrap values; capture and cleanup keep running. `relay.enabled=false` skips capture/upload but keeps polling and cleanup. The config response contains no secrets, Sheet IDs, plates, or credentials.
+
+### Plates, Cloud Vision, and the optional VLM
+
+1. Fill `Plates` (`plate`, `car`, `active`, `createdAt`) with each household plate, and `Cars.description` with a short visual description used in the VLM prompt. These stay in the Sheet; never commit plates or descriptions to the repo.
+2. Enable the Cloud Vision API in a Google Cloud project, create an API key, set a budget alert, and confirm the free tier (first 1,000 units/month; a billing account is required). Store the key as the `CLOUD_VISION_API_KEY` Script Property. Plate OCR uses `TEXT_DETECTION` on up to `snapshot.candidateCount` crops.
+3. The optional VLM uses Cloudflare Workers AI. Set `vision.engine=plate+vlm`, `vision.vlmModel` to a provider model id, and the `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` Script Properties. It has a free allocation; verify the model is available in Hong Kong with real crops before enabling it in production.
+4. Gemini is not used. As of 2026-11-15 Hong Kong is not in the official Google AI Studio / Gemini API available-regions list, so no Gemini key or adapter is part of this deployment. Do not use a VPN to bypass the region check.
+5. Suggestions never assign a car automatically. A plate match is deterministic; a VLM match must pass `vision.minConfidence` and the per-`(engine, car, lighting)` feedback precision gate (`policy.minSamples`, `policy.minPrecision`). Otherwise the session stays manual.
+
+Secrets live only in Apps Script Script Properties; non-secret tunables live in `Config`; plates and car descriptions live in the Sheet. None of them belong in git, a report, or a chat message.
+
+### Feedback, reassign, and ignore
+
+- Every human decision appends a `Feedback` row: owner assign and family claim record the chosen car; owner reassign records the correction; owner ignore records `chosenCar=guest`.
+- Feedback keeps the engine, suggested car, confidence, plate, snapshot id, lighting (`day` 07:00–19:00 HK, else `night`), actor, and timestamp. It is append-only and retained after snapshots expire.
+- A plate correction (the suggestion had a plate and the chosen car differs) immediately upserts `Plates[plate] = chosenCar`. Guest/ignore choices never pollute the plate map.
+- Ignore is only for unassigned sessions: it appends `guest` feedback, deletes the Log row from billing, and stores the Tesla session key in `Ignored` (`teslaKey`, `createdAt`, `actor`). Sync treats persisted keys as already seen, so the ignored session is not re-imported.
+- Reassign is owner-only and only for assigned records. It updates the Log car, recomputes the peak/off-peak split with the new car's `peakFactor`, and records Feedback comparing the original suggestion with the chosen car. A wrong family claim is corrected the same way.
+
+### Retention and cleanup
+
+- `snapshot.retentionDays` defaults to 30 (range 1–365) and controls both the Drive file and its `Snapshots` row.
+- There is no ScriptApp trigger. The Pi sends a signed `cleanup` request every `relay.cleanupIntervalSeconds` (default hourly) with `relay.cleanupBatch` (default 500). Apps Script trashes the oldest expired Drive files, then deletes their `Snapshots` rows.
+- A failed cleanup logs and retries on the next interval; the operation is idempotent. Log and Feedback rows are never deleted by retention. Old Log `evidenceUrl` values become stale after their snapshot is removed; this is accepted.
 
 ## Data model
 
-The Google Sheet has four tabs. The script creates missing tabs and appends missing `Log` columns to the right; existing rows are never moved or deleted. An older deployment may still have an unused `Ignored` tab; it is no longer created, read, or written.
+The Google Sheet has up to nine tabs: `Log`, `Cars`, `Rates`, `Bills`, `Snapshots`, `Plates`, `Feedback`, `Ignored`, and `Config`. The script creates missing tabs on first use and appends missing `Log` columns to the right; existing rows are never moved or deleted.
 
 ### `Log`
 
-`id`, `startAt`, `日期`, `時間`, `car`, `kWh`, `durationSec`, `teslaStartAt`, `teslaEndAt`, `peakKWh`, `offPeakKWh`, `teslaKey`, `source`.
+`id`, `startAt`, `日期`, `時間`, `car`, `kWh`, `durationSec`, `teslaStartAt`, `teslaEndAt`, `peakKWh`, `offPeakKWh`, `teslaKey`, `source`, `evidenceUrl`, `suggestedCar`, `suggestionConfidence`, `suggestionPlate`, `suggestionStatus`, `identifiedAt`, `suggestionEngine`, `suggestionSnapshotId`.
 
 - `source`: `manual`, `tesla`, `tesla+manual`, or `legacy`.
 - Old rows without `car` are `legacy`; they are preserved and excluded from billing CSV.
 - Tesla session keys are `<din or target_id>:<start-seconds>`.
 - Date-formatted `startAt`/Tesla cells are normalized to ISO; `日期` and `時間` are derived from `startAt` in Asia/Hong_Kong.
+- `evidenceUrl` is the private Drive link to the chosen crop; family payloads strip it. `suggestedCar`, `suggestionConfidence`, `suggestionPlate`, `suggestionStatus`, `identifiedAt`, `suggestionEngine`, and `suggestionSnapshotId` are written by the identifier and never change `car`. `suggestionStatus` is `matched`, `unknown`, `rate_limited`, or `error`; `suggestionEngine` is `plate`, `vlm`, or empty.
 
 ### `Cars`
 
-`id`, `name`, `active`, `createdAt`, `peakFactor`.
+`id`, `name`, `active`, `createdAt`, `peakFactor`, `description`.
 
 - `id` matches `[a-z0-9-]{1,32}`.
 - `unassigned` is reserved.
 - Family URLs use this `id`.
 - `peakFactor` is 0–1 and defaults to 1 (no shift). Bill calibration updates it; leave it blank or 1 for a car that charges immediately.
+- `description` is a short visual description for the VLM prompt; it falls back to `name` when empty.
+
+### `Snapshots`
+
+`id`, `capturedAt`, `driveFileId`, `driveUrl`, `width`, `height`, `bytes`, `source`, `createdAt`, `crop`.
+
+- One row per accepted Pi upload. The JPEG lives in the private Drive folder (`SNAPSHOT_FOLDER_ID`, or `EV Charge Snapshots` by default).
+- `crop` is the ROI string used for that capture, or empty for a full-frame testing capture.
+- Rows and Drive files are removed by retention cleanup after `snapshot.retentionDays`.
+
+### `Plates`
+
+`plate`, `car`, `active`, `createdAt`.
+
+- The owner fills the household plates; plate text is never committed to the repo.
+- A correction from Feedback upserts the mapping. Guest/ignore choices are not written here.
 
 ### `Rates`
 
@@ -84,6 +170,28 @@ The Google Sheet has four tabs. The script creates missing tabs and appends miss
 - `publishedAt` is set by `publishBill`; saving a bill clears it. Family payloads only include published bills that currently have no unassigned sessions in the period.
 - `cutoff` is the instant that separates this bill from the next: sessions starting before it belong to this bill. The owner UI defaults to the end of `periodEnd`, and can infer an earlier cutoff when the bill shows a partial last month (for example 01-11 to 04-11).
 - The PDF itself is never uploaded or stored; only these numbers and the file name are written.
+
+### `Feedback`
+
+`id`, `recordId`, `startAt`, `engine`, `suggestedCar`, `chosenCar`, `confidence`, `plate`, `snapshotId`, `lighting`, `actor`, `createdAt`.
+
+- Append-only label set for a future offline model. `chosenCar` is an active car id or `guest` (ignored); `engine` is `plate`, `vlm`, `manual`, or empty; `actor` is `owner` or `family`.
+- `lighting` is `day` (07:00–19:00 HK) or `night`, derived from the session start; it is not a camera-mode signal.
+- Feedback is retained beyond snapshot retention.
+
+### `Ignored`
+
+`teslaKey`, `createdAt`, `actor`.
+
+- Written when the owner ignores an unassigned session. The Log row is removed from billing and the Tesla key is retained here, so a later sync does not re-import that session.
+- This tab is created on first use; it is read by sync and the ignore action.
+
+### `Config`
+
+`key`, `value`, `updatedAt`, `notes`.
+
+- Non-secret tunables only. `setup()` seeds missing defaults. See the keys table above.
+- Secrets (`CLOUD_VISION_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `RELAY_HMAC_SECRET`) belong in Script Properties, never in this tab.
 
 ## Billing
 
@@ -116,14 +224,14 @@ car amount     = car kWh * effective rate
 
 ### 1. Google Sheet and Apps Script
 
-1. Open the existing Google Sheet. The Sheet is currently link-shared by the owner's choice; anyone with the link can read the log. Set General access to Restricted if you want it private. The family view never links to it.
+1. Open the existing Google Sheet. The Sheet is currently link-shared by the owner's choice; anyone with the link can read the log and the new plates/feedback/evidence-link tabs. Set General access to Restricted if you want it private. The family view never links to it.
 2. Open Extensions -> Apps Script.
-3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, and `Rates.gs` from [`apps-script/`](apps-script/). The owner view also creates a `Bills` tab on first use.
+3. Replace `Code.gs` and create `Logic.gs`, `SheetRepo.gs`, `Tesla.gs`, `Rates.gs`, and `Vision.gs` from [`apps-script/`](apps-script/). `Vision.gs` is new in v26 (plate OCR and the optional VLM). Other tabs (`Bills`, `Snapshots`, `Plates`, `Feedback`, `Ignored`, `Config`) are created on first use or by `setup()`.
 4. Do not edit the code. The Sheet ID is a Script Property; add `SHEET_ID` in the next section.
 5. Save the project.
 6. Set the Script Properties in section 2, including `SHEET_ID`.
-7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, and `Rates`, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
-8. Deploy -> Manage deployments -> Edit -> Version: New version. Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
+7. In the editor, select `setup` and Run once. It creates or verifies `Log`, `Cars`, `Rates`, and `Config`, seeds the Config defaults, and checks `SHEET_ID`. Existing rows are preserved. `readLog_` alone only creates `Log`.
+8. Deploy -> Manage deployments -> Edit -> Version: New version (v26 for the CCTV/evidence release). Execute as: Me. Who has access: Anyone. The existing deployment URL stays the same.
 
 `Code.gs` is the router: `doGet` serves status, family, and owner reads and `doPost` handles the actions. Status and Tesla telemetry fetches run outside the script lock; family/owner reads and every Sheet write hold it, because reads can migrate headers and writes are read-modify-write. Sync locks only the prepare and apply phases, not the Tesla request. This replaces the legacy fixed-position `Log` API; existing rows are migrated in place and never moved or deleted.
 
@@ -142,10 +250,15 @@ In Apps Script, Project Settings -> Script Properties:
 | `TESLA_BASE_URL` | `https://fleet-api.prd.na.vn.cloud.tesla.com` (optional; this is the default) |
 | `TESLA_SITE_ID` | Observed Wall Connector energy site ID; optional, discovered automatically when omitted |
 | `MATCH_WINDOW_MINUTES` | `30` |
+| `RELAY_HMAC_SECRET` | Shared secret for Pi snapshot/config/cleanup requests; generate with `openssl rand -hex 32` |
+| `SNAPSHOT_FOLDER_ID` | Optional Drive folder ID for snapshot JPEGs; defaults to a private `EV Charge Snapshots` folder |
+| `CLOUD_VISION_API_KEY` | Cloud Vision API key for plate OCR (free tier: 1,000 units/month; billing account required) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID, only for the optional Workers AI VLM |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token, only for the optional Workers AI VLM |
 | `SYNC_FROM` | Leave unset; only set for an intentional backfill |
 | `SYNC_CURSOR` | Internal; do not set manually |
 
-Never put these values in `config.js`, the Sheet, git, or a family link.
+Never put these values in `config.js`, the Sheet, git, a report, or a family link. Snapshots are stored in a private Drive folder; do not create public links.
 
 ### 3. Tesla OAuth
 
@@ -187,6 +300,15 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 5. Copy each family link from the owner view and send it to that car's driver.
 6. Keep the owner URL private. The owner mode has no key or login; anyone with the URL can manage.
 
+### 6. Deployment runbook (CCTV/evidence release, v26)
+
+1. **Apps Script:** add `Vision.gs` as a new file and update `Code.gs`, `SheetRepo.gs`, `Logic.gs`, and `Tesla.gs` as changed. Save, then Deploy -> Manage deployments -> Edit -> Version: New version (v26). The deployment URL stays the same.
+2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
+3. **Config seeding:** run `setup()` once from the Apps Script editor to seed the Config defaults. Set `relay.crop` to the ROI; use `full` only for the test camera. Leave `snapshot.retentionDays=30` unless a different retention is intended.
+4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then check the logs for the first successful config fetch and the next cropped capture. Later tuning needs no SSH.
+5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the Cloudflare provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and a correction appends Feedback and updates `Plates`.
+6. **Physical and evaluation:** install/aim the camera, capture day and night frames, set the ROI, and confirm the guest car stays outside the crop. Run at least 20 real sessions covering day/night and a guest car, review precision and unknown rates, and keep human confirmation. A 95% precision threshold is a future auto-assign gate, not enabled now.
+
 ## Local development
 
 ```bash
@@ -207,8 +329,8 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 
 `GET`:
 
-- `?car=<id>` returns `{ ok, car, records, unassigned, rates, bills, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions. `bills` contains published bill shares only: `{ periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, total, loggedKWh, myKWh, myShare, myAmount, publishedAt }`.
-- `?owner` returns `{ ok, cars, records, rates, bills, serverTime }` for the owner; each car includes `peakFactor`.
+- `?car=<id>` returns `{ ok, car, records, unassigned, rates, bills, serverTime }` for that car. `unassigned` is the list of unclaimed Tesla sessions. `bills` contains published bill shares only: `{ periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, total, loggedKWh, myKWh, myShare, myAmount, publishedAt }`. Evidence URLs are stripped from every family record.
+- `?owner` returns `{ ok, cars, records, rates, bills, sheetUrl, serverTime }` for the owner; each car includes `peakFactor` and `description`, and records include the suggestion fields and private `evidenceUrl`.
 - `?status=1` returns `{ ok, charging, powerW, energyWh, state, available, sampledAt }` from the Wall Connector live status. `energyWh` may be null.
 
 `POST` with a `text/plain` JSON body:
@@ -218,9 +340,13 @@ Node 20+ is required for the built-in test runner (verified on v20.20.2). There 
 - `{ action: 'sync' }` (all cars) or `{ action: 'sync', car }`
 - `{ action: 'assign', id, car }`
 - `{ action: 'claim', car, id }` (family-scoped unassigned claim)
+- `{ action: 'identify', id, force? }` (owner; runs plate/VLM identification without assigning)
+- `{ action: 'ignore', id }` (owner; only unassigned; records `guest` feedback and the Ignored Tesla key)
+- `{ action: 'reassign', id, car }` (owner; only assigned; recomputes the peak split)
 - `{ action: 'refreshRates' }`
 - `{ action: 'bill', bill: { periodStart, periodEnd, cutoff, units, peakKWh, offPeakKWh, energyCharge, fuelCharge, others, total, fileName } }` returns `{ ok, bill, calibration }`; saving a bill with peak/off-peak refits per-car factors and reports `{ applied, billsUsed, updatedCars, recomputed, periods }`. Saving clears `publishedAt`.
 - `{ action: 'publishBill', periodStart, periodEnd }` returns `{ ok, bill, allocation }` and sets `publishedAt`. It is rejected if the period still contains any `unassigned` session or has no assigned kWh.
+- `{ action: 'snapshot', id, capturedAt, width, height, image, signature }` and `{ action: 'relayConfig', at, signature }` and `{ action: 'cleanup', at, limit, signature }` are Pi-only, HMAC-signed with `RELAY_HMAC_SECRET`, and reject a timestamp outside ±10 minutes. `snapshot` accepts a JPEG body up to the image limit and is idempotent by id; `relayConfig` returns only the parsed `relay.*` values and `updatedAt`; `cleanup` trashes expired Drive files and deletes their `Snapshots` rows.
 
 The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Script returns HTTP 200 for API errors; the client checks `ok`.
 
@@ -231,8 +357,12 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - A car QR encodes the same family URL plus `start=1`; anyone who scans it can start a charge for that car. Treat the QR like the family link.
 - The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
+- Snapshot JPEGs are stored in a private Drive folder; nothing is published. Family payloads omit `evidenceUrl`, so a family link never receives the image or its Drive link.
+- Only the cropped charging-slot image is uploaded. The full CCTV frame stays on the camera's own recording; `relay.crop=full` is a controlled-test exception.
+- Cloud Vision and Cloudflare credentials live only in Script Properties. The `Config` tab holds non-secret tunables; plates and car descriptions stay in the Sheet. Never commit or paste any of them.
+- Snapshot, config, and cleanup requests use HMAC-SHA256 with a ±10-minute timestamp window; snapshot ingest also enforces body/image limits, JPEG magic, and idempotency.
 - Bill PDFs are parsed in the browser and never uploaded; only the extracted bill numbers and the file name are stored in the Sheet.
-- The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link. Set General access to Restricted if you want it private.
+- The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. It now also holds plates, car descriptions, feedback, and private evidence links, so set General access to Restricted if you want it private. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link.
 - Family actions require a valid car ID; owner actions require only the Apps Script Web App URL.
 - `index.html` uses `<meta name="referrer" content="no-referrer">`; owner external links use `rel="noreferrer"`.
 - A leaked family URL allows that car's append/delete and claims. Remove the car from the `Cars` tab to stop the old link; existing records stay in the `Log`.
@@ -247,7 +377,11 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - The vehicle may report DC-side energy; the AC meter can differ.
 - CLP page scraping and PDF extraction are fragile. If the PDF text cannot be parsed (for example a scan or password-protected file), enter the bill fields manually; nothing is uploaded.
 - The live charging kWh/cost is an estimate from the last Wall Connector power sample; the completed Tesla session is authoritative. The card polls every 5 minutes while the page is visible (one Tesla call per poll) and interpolates every second.
-- There is no cron, scheduled background sync, outside-charger support, or CCTV integration yet.
+- There is no cron for Tesla sync and no ScriptApp cleanup trigger. Snapshot cleanup is triggered by the Pi every hour by default; if the Pi is offline, expired snapshots remain until it returns. There is no outside-charger support.
+- The plate may be outside the crop (for example a side-on car), and night/IR frames may be unreadable. The VLM and manual selection are required fallbacks, not optional.
+- Cloud Vision and Cloudflare Workers AI free tiers can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
+- Old `evidenceUrl` links become stale after snapshot retention; the Log row and Feedback remain.
+- Cleanup removes a `Snapshots` row even when trashing its Drive file fails (for example a removed or unreadable file id), so the file can be left orphaned in the private folder.
 - `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
@@ -258,7 +392,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 157 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, bill-period filtering, publish gating, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, and the API envelope. Thirteen jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
+The suite currently has 205 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, bill-period filtering, publish gating, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, remote config parsing/clamping and signatures, crop command construction and fail-closed capture, snapshot ingest and retention cleanup, plate/VLM identification and policy suppression, feedback/reassign/ignore (including the Ignored sync skip), and the API envelope. Thirteen jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 

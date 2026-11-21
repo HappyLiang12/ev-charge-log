@@ -58,6 +58,7 @@ function doPost(e) {
       else if (action === 'bill') result = billAction_(data);
       else if (action === 'publishBill') result = publishBillAction_(data);
       else if (action === 'relayConfig') result = relayConfigAction_(data);
+      else if (action === 'cleanup') result = cleanupAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -130,6 +131,32 @@ function snapshotAction_(data) {
   };
   appendSnapshot_(snapshot);
   return { stored: true, existing: false, id: snapshot.id, driveUrl: snapshot.driveUrl };
+}
+
+function cleanupSnapshots_(now, limit) {
+  var retentionDays = configInt_(readConfigMap_().values, 'snapshot.retentionDays', 30);
+  var cutoff = (now ? now.getTime() : Date.now()) - retentionDays * 86400000;
+  var max = Math.max(1, Math.min(Number(limit) || 500, 1000));
+  var expired = readSnapshots_().filter(function (snapshot) {
+    return Date.parse(snapshot.capturedAt) < cutoff;
+  }).sort(function (a, b) {
+    return Date.parse(a.capturedAt) - Date.parse(b.capturedAt);
+  }).slice(0, max);
+  for (var i = 0; i < expired.length; i += 1) {
+    try { DriveApp.getFileById(expired[i].driveFileId).setTrashed(true); } catch (ignored) {}
+  }
+  if (expired.length) deleteSnapshots_(expired.map(function (snapshot) { return snapshot.id; }));
+  return { deleted: expired.length };
+}
+
+function cleanupAction_(data) {
+  var secret = PropertiesService.getScriptProperties().getProperty('RELAY_HMAC_SECRET');
+  if (!secret) throw new Error('Missing RELAY_HMAC_SECRET');
+  if (!validIso_(data.at)) throw new Error('Invalid cleanup timestamp');
+  if (Math.abs(Date.now() - Date.parse(data.at)) > SNAPSHOT_MAX_AGE_MS_) throw new Error('Cleanup timestamp outside window');
+  var expected = hmacHex_('cleanup\n' + String(data.at), secret);
+  if (String(data.signature || '') !== expected) throw new Error('Invalid signature');
+  return cleanupSnapshots_(new Date(), data.limit);
 }
 
 function setup() {
