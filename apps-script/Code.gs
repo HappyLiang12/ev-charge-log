@@ -121,6 +121,7 @@ function snapshotAction_(data) {
     bytes: bytes.length,
     source: 'pi',
     createdAt: new Date().toISOString(),
+    crop: String(configValue_('relay.crop') || ''),
   };
   appendSnapshot_(snapshot);
   return { stored: true, existing: false, id: snapshot.id, driveUrl: snapshot.driveUrl };
