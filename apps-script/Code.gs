@@ -52,6 +52,8 @@ function doPost(e) {
       else if (action === 'delete') result = deleteAction_(data);
       else if (action === 'assign') result = assignAction_(data);
       else if (action === 'claim') result = claimAction_(data);
+      else if (action === 'ignore') result = ignoreAction_(data);
+      else if (action === 'reassign') result = reassignAction_(data);
       else if (action === 'refreshRates') result = ratesAction_(data);
       else if (action === 'bill') result = billAction_(data);
       else if (action === 'publishBill') result = publishBillAction_(data);
@@ -339,10 +341,40 @@ function findRecord_(records, id) {
   return null;
 }
 
-function assignUnassigned_(target, car, records) {
+function recordAssignmentFeedback_(target, chosenCar, actor) {
+  recordFeedbackRow_(target, chosenCar, actor);
+}
+
+function recordCorrectionFeedback_(target, chosenCar) {
+  recordFeedbackRow_(target, chosenCar, 'owner');
+}
+
+function recordFeedbackRow_(target, chosenCar, actor) {
+  if (!target) return;
+  appendFeedback_({
+    id: 'fb-' + target.id + '-' + Date.now(),
+    recordId: target.id,
+    startAt: target.teslaStartAt || target.startAt,
+    engine: target.suggestionEngine || (target.suggestedCar ? 'manual' : ''),
+    suggestedCar: target.suggestedCar || '',
+    chosenCar: chosenCar,
+    confidence: target.suggestionConfidence,
+    plate: target.suggestionPlate || '',
+    snapshotId: target.suggestionSnapshotId || '',
+    lighting: lightingFor_(target.teslaStartAt || target.startAt),
+    actor: actor || '',
+    createdAt: new Date().toISOString(),
+  });
+  if (target.suggestionPlate && target.suggestedCar && target.suggestedCar !== chosenCar) {
+    upsertPlate_(target.suggestionPlate, chosenCar);
+  }
+}
+
+function assignUnassigned_(target, car, records, actor) {
   if (!target) throw new Error('Unknown record');
   if (target.car !== 'unassigned') throw new Error('Only unassigned sessions can be assigned');
   if (!target.teslaKey) throw new Error('Record has no Tesla key');
+  recordAssignmentFeedback_(target, car.id, actor);
   var windowMs = Number(scriptProperty_('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
   var rates = readRates_();
   var split = splitRecordForCar_(target, car, rates);
@@ -396,14 +428,48 @@ function claimAction_(data) {
   var car = findCar_(data.car);
   if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
   var records = readLog_();
-  return assignUnassigned_(findRecord_(records, data.id), car, records);
+  return assignUnassigned_(findRecord_(records, data.id), car, records, 'family');
 }
 
 function assignAction_(data) {
   var car = findCar_(data.car);
   if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
   var records = readLog_();
-  return assignUnassigned_(findRecord_(records, data.id), car, records);
+  return assignUnassigned_(findRecord_(records, data.id), car, records, 'owner');
+}
+
+function ignoreAction_(data) {
+  var record = findRecord_(readLog_(), String(data.id || ''));
+  if (record && record.car === 'unassigned') {
+    recordAssignmentFeedback_(record, 'guest', 'owner');
+  }
+  var deleted = deleteLog_(String(data.id || ''));
+  return { ignored: deleted };
+}
+
+function reassignAction_(data) {
+  var record = findRecord_(readLog_(), String(data.id || ''));
+  if (!record) throw new Error('Unknown record');
+  var car = findCar_(data.car);
+  if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
+  var at = record.teslaStartAt || record.startAt;
+  var rate = selectRateRow_(hkMonth_(at), readRates_());
+  var split = record.kWh !== null && record.durationSec
+    ? splitPeakKwh_(
+        at,
+        record.durationSec,
+        record.kWh,
+        rate ? rate.peakStart : DEFAULT_PEAK_START_,
+        rate ? rate.peakEnd : DEFAULT_PEAK_END_,
+        car.peakFactor,
+      )
+    : null;
+  recordCorrectionFeedback_(record, car.id);
+  var patch = { car: car.id, source: record.source };
+  if (split) { patch.peakKWh = split.peakKWh; patch.offPeakKWh = split.offPeakKWh; }
+  var updated = updateLog_(record.id, patch);
+  if (!updated) throw new Error('Failed to reassign record');
+  return { reassigned: true, id: record.id, car: car.id };
 }
 
 function ratesAction_() {
