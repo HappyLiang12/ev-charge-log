@@ -502,7 +502,9 @@ test('sync fetches Tesla outside the script lock and applies Sheet work under it
   assert.equal(result.matched, 1);
   assert.equal(telemetryLocked, false);
   assert.equal(lock.held, false);
-  assert.equal(lock.waits, 2);
+  // syncWindow_ + syncApply_ + identifyPending_'s locked candidate read.
+  // Identify no longer reads the Sheet lock-free after the Tesla sync.
+  assert.equal(lock.waits, 3);
 
   const again = send(env, { action: 'sync' });
   assert.equal(again.ok, true);
@@ -1369,11 +1371,392 @@ test('identify marks an error when the Drive file cannot be read', () => {
   assert.equal(result.car, '');
   assert.equal(result.confidence, 0);
   assert.equal(result.plate, '');
-  assert.equal(result.snapshotId, '');
+  // Even when no crop could be read, evidence points at the nearest candidate.
+  assert.equal(result.snapshotId, 'snap-1');
   assert.equal(visionCalls, 0);
   const record = plain(env.call('readLog_'))[0];
   assert.equal(record.car, 'unassigned');
   assert.equal(record.suggestionStatus, 'error');
   assert.ok(record.identifiedAt);
   assert.equal(record.suggestedCar, '');
+  assert.equal(record.suggestionSnapshotId, 'snap-1');
+});
+
+const identifyRow = (id, overrides = {}) => [
+  ...row({ 0: id, 4: 'unassigned', 11: `din:${id}`, 12: 'tesla', ...overrides }),
+  '', '', '', '', '', '', '', '',
+];
+
+const snapshotRow = (id, capturedAt, fileId) => [
+  id, capturedAt, fileId, `https://drive.google.com/file/d/${fileId}/view`,
+  1280, 720, 100, 'pi', capturedAt, '',
+];
+
+const snapshotDriveFile = (id) => ({ id, getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
+
+test('identify keeps a VLM match when a later candidate plate is unknown', () => {
+  let visionCalls = 0;
+  let vlmCalls = 0;
+  const at = (seconds) => new Date(Date.parse(SESSION_START) + seconds * 1000).toISOString();
+  const env = setup({
+    props: {
+      RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
+      CLOUD_VISION_API_KEY: 'key-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_API_TOKEN: 'token',
+    },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+      ],
+      Log: [IDENTIFY_HEADER, identifyRow('u-3')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x', '', 'blue Tesla Model 3']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('snap-1', at(0), 'file-1'),
+        snapshotRow('snap-2', at(60), 'file-2'),
+      ],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        visionCalls += 1;
+        // Candidate 1 would also be unreadable; it must never be reached.
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
+        }));
+      }
+      if (url.includes('api.cloudflare.com')) {
+        vlmCalls += 1;
+        return response(200, JSON.stringify({
+          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-1'), snapshotDriveFile('file-2'));
+  const result = send(env, { action: 'identify', id: 'u-3' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'matched');
+  assert.equal(result.engine, 'vlm');
+  assert.equal(result.car, 'model3');
+  assert.equal(result.snapshotId, 'snap-1');
+  assert.equal(visionCalls, 1);
+  assert.equal(vlmCalls, 1);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionStatus, 'matched');
+  assert.equal(record.suggestionEngine, 'vlm');
+  assert.equal(record.suggestionSnapshotId, 'snap-1');
+  assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
+});
+
+test('identify stores the snapshot that produced a later plate match', () => {
+  let visionCalls = 0;
+  const at = (seconds) => new Date(Date.parse(SESSION_START) + seconds * 1000).toISOString();
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [IDENTIFY_HEADER, identifyRow('u-4')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('snap-1', at(0), 'file-1'),
+        snapshotRow('snap-2', at(30), 'file-2'),
+        snapshotRow('snap-3', at(60), 'file-3'),
+      ],
+    },
+    fetch: (url) => {
+      if (!url.includes('vision.googleapis.com')) throw new Error(`Unexpected URL: ${url}`);
+      visionCalls += 1;
+      const description = visionCalls === 3 ? 'AB 1234\nHONG KONG' : 'HONG KONG';
+      return response(200, JSON.stringify({ responses: [{ textAnnotations: [{ description }] }] }));
+    },
+  });
+  env.driveFiles.push(
+    snapshotDriveFile('file-1'),
+    snapshotDriveFile('file-2'),
+    snapshotDriveFile('file-3'),
+  );
+  const result = send(env, { action: 'identify', id: 'u-4' });
+  assert.equal(result.status, 'matched');
+  assert.equal(result.engine, 'plate');
+  assert.equal(result.car, 'model3');
+  assert.equal(result.snapshotId, 'snap-3');
+  assert.equal(visionCalls, 3);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionSnapshotId, 'snap-3');
+  assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-3/view');
+});
+
+test('identify records a VLM provider error when the plate is unknown', () => {
+  let visionCalls = 0;
+  let vlmCalls = 0;
+  const env = setup({
+    props: {
+      RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
+      CLOUD_VISION_API_KEY: 'key-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_API_TOKEN: 'token',
+    },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+      ],
+      Log: [IDENTIFY_HEADER, identifyRow('u-5')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-1', SESSION_START, 'file-1')],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        visionCalls += 1;
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
+        }));
+      }
+      if (url.includes('api.cloudflare.com')) {
+        vlmCalls += 1;
+        return response(500, 'upstream exploded');
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-1'));
+  const result = send(env, { action: 'identify', id: 'u-5' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'error');
+  assert.equal(result.engine, 'vlm');
+  assert.equal(result.car, '');
+  assert.match(result.reason, /VLM 500/);
+  assert.equal(visionCalls, 1);
+  assert.equal(vlmCalls, 1);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionStatus, 'error');
+  assert.equal(record.suggestionEngine, 'vlm');
+  assert.equal(record.suggestedCar, '');
+  assert.equal(record.suggestionSnapshotId, 'snap-1');
+  assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
+});
+
+test('identify lets a later plate match override an earlier VLM error', () => {
+  let visionCalls = 0;
+  let vlmCalls = 0;
+  const at = (seconds) => new Date(Date.parse(SESSION_START) + seconds * 1000).toISOString();
+  const env = setup({
+    props: {
+      RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
+      CLOUD_VISION_API_KEY: 'key-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_API_TOKEN: 'token',
+    },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+      ],
+      Log: [IDENTIFY_HEADER, identifyRow('u-6')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('snap-1', at(0), 'file-1'),
+        snapshotRow('snap-2', at(30), 'file-2'),
+      ],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        visionCalls += 1;
+        const description = visionCalls === 2 ? 'AB 1234\nHONG KONG' : 'HONG KONG';
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description }] }],
+        }));
+      }
+      if (url.includes('api.cloudflare.com')) {
+        vlmCalls += 1;
+        return response(503, 'vlm down');
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-1'), snapshotDriveFile('file-2'));
+  const result = send(env, { action: 'identify', id: 'u-6' });
+  assert.equal(result.status, 'matched');
+  assert.equal(result.engine, 'plate');
+  assert.equal(result.car, 'model3');
+  assert.equal(result.snapshotId, 'snap-2');
+  assert.equal(visionCalls, 2);
+  assert.equal(vlmCalls, 1);
+});
+
+test('identify keeps an unknown suggestion when policy suppresses a VLM match', () => {
+  let vlmCalls = 0;
+  const feedbackHeader = [
+    'id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar',
+    'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt',
+  ];
+  const wrong = [1, 2, 3, 4, 5].map((n) => [
+    `fb-${n}`, `r-${n}`, SESSION_START, 'vlm', 'model3', 'ix3',
+    0.85, '', 'snap-1', 'day', 'owner', SESSION_START,
+  ]);
+  const env = setup({
+    props: {
+      RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
+      CLOUD_VISION_API_KEY: 'key-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_API_TOKEN: 'token',
+    },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+      ],
+      Log: [IDENTIFY_HEADER, identifyRow('u-7')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Feedback: [feedbackHeader, ...wrong],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-1', SESSION_START, 'file-1')],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
+        }));
+      }
+      if (url.includes('api.cloudflare.com')) {
+        vlmCalls += 1;
+        return response(200, JSON.stringify({
+          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-1'));
+  const result = send(env, { action: 'identify', id: 'u-7' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.car, '');
+  assert.equal(vlmCalls, 1);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionStatus, 'unknown');
+  assert.equal(record.suggestedCar, '');
+});
+
+test('identify takes short locks and keeps provider calls outside them', () => {
+  const lock = {
+    held: false,
+    waits: 0,
+    waitLock() { this.waits += 1; this.held = true; },
+    releaseLock() { this.held = false; },
+  };
+  let fetchedUnderLock = null;
+  let readUnderLock = null;
+  let writeUnderLock = null;
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [IDENTIFY_HEADER, identifyRow('u-8')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-1', SESSION_START, 'file-1')],
+    },
+    fetch: () => {
+      fetchedUnderLock = lock.held;
+      return response(200, JSON.stringify({
+        responses: [{ textAnnotations: [{ description: 'AB 1234' }] }],
+      }));
+    },
+  });
+  const readImage = env.context.readDriveImageBase64_;
+  env.context.readDriveImageBase64_ = (fileId) => {
+    readUnderLock = lock.held;
+    return readImage(fileId);
+  };
+  const updateLog = env.context.updateLog_;
+  env.context.updateLog_ = (id, patch) => {
+    writeUnderLock = lock.held;
+    return updateLog(id, patch);
+  };
+  env.context.LockService = { getScriptLock: () => lock };
+  env.driveFiles.push(snapshotDriveFile('file-1'));
+  const result = send(env, { action: 'identify', id: 'u-8' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'matched');
+  // doPost's general lock is bypassed for identify; only the Sheet read lock
+  // and the suggestion write lock are taken.
+  assert.equal(lock.waits, 2);
+  assert.equal(fetchedUnderLock, false);
+  assert.equal(readUnderLock, false);
+  assert.equal(writeUnderLock, true);
+  assert.equal(lock.held, false);
+});
+
+test('sync runs identify under short locks with provider calls outside', () => {
+  const lock = {
+    held: false,
+    waits: 0,
+    waitLock() { this.waits += 1; this.held = true; },
+    releaseLock() { this.held = false; },
+  };
+  let visionUnderLock = null;
+  const env = setup({
+    props: { CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        identifyRow('u-sync', { 5: 20, 6: 7200, 7: SESSION_START, 8: '2026-11-14T07:05:00.000Z', 11: 'din:u-sync' }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-1', SESSION_START, 'file-1')],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/telemetry_history')) {
+        return response(200, JSON.stringify({ response: { telemetry_history: [] } }));
+      }
+      if (url.includes('vision.googleapis.com')) {
+        visionUnderLock = lock.held;
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'AB 1234\nHONG KONG' }] }],
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.context.LockService = { getScriptLock: () => lock };
+  env.driveFiles.push(snapshotDriveFile('file-1'));
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.vision, { identified: 1, unknown: 0 });
+  // syncWindow_ + syncApply_ + identifyPending_ candidate read
+  // + identifySession_ read lock + identifySession_ write lock.
+  assert.equal(lock.waits, 5);
+  assert.equal(visionUnderLock, false);
+  assert.equal(lock.held, false);
+  const record = plain(env.call('readLog_')).find((entry) => entry.id === 'u-sync');
+  assert.equal(record.suggestionStatus, 'matched');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.suggestionSnapshotId, 'snap-1');
 });

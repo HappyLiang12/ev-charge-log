@@ -110,42 +110,90 @@ function selectCandidateSnapshots_(record, snapshots) {
 function policyAllowsSuggestion_(engine, car, lighting) {
   if (!car) return true;
   var config = readConfigMap_().values;
-  var minSamples = configInt_(config, 'policy.minSamples', 5);
-  var minPrecision = configNumber_(config, 'policy.minPrecision', 0.9, 0.5, 0.99);
-  var rows = readFeedback_().filter(function (row) {
-    return row.engine === engine && row.suggestedCar === car && row.lighting === lighting;
-  });
-  if (rows.length < minSamples) return true;
-  var correct = rows.filter(function (row) { return row.chosenCar === car; }).length;
-  return correct / rows.length >= minPrecision;
+  return policyAllowsRows_(
+    readFeedback_(),
+    configInt_(config, 'policy.minSamples', 5),
+    configNumber_(config, 'policy.minPrecision', 0.9, 0.5, 0.99),
+    engine,
+    car,
+    lighting,
+  );
 }
 
-function identifySession_(record, force) {
-  if (!record || record.car !== 'unassigned') return { status: 'unknown', reason: 'not unassigned' };
+function policyAllowsRows_(rows, minSamples, minPrecision, engine, car, lighting) {
+  if (!car) return true;
+  var scoped = (rows || []).filter(function (row) {
+    return row.engine === engine && row.suggestedCar === car && row.lighting === lighting;
+  });
+  if (scoped.length < minSamples) return true;
+  var correct = scoped.filter(function (row) { return row.chosenCar === car; }).length;
+  return correct / scoped.length >= minPrecision;
+}
+
+// Sheet reads and header migration run under the script lock; Drive, Vision,
+// and VLM calls stay outside it. The final write takes a second short lock and
+// re-checks the record so a concurrent assign or identify wins.
+function prepareIdentify_(recordId, force) {
+  var record = findRecord_(readLog_(), recordId);
+  if (!record) throw new Error('Unknown record');
+  if (record.car !== 'unassigned') {
+    return { result: { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'not unassigned' } };
+  }
   if (!force && (record.suggestionStatus === 'matched' || record.suggestionStatus === 'unknown')) {
     return {
-      engine: record.suggestionEngine || '',
-      car: record.suggestedCar || '',
-      confidence: record.suggestionConfidence || 0,
-      plate: record.suggestionPlate || '',
-      status: record.suggestionStatus,
-      snapshotId: record.suggestionSnapshotId || '',
-      reason: 'skipped',
+      result: {
+        engine: record.suggestionEngine || '',
+        car: record.suggestedCar || '',
+        confidence: record.suggestionConfidence || 0,
+        plate: record.suggestionPlate || '',
+        status: record.suggestionStatus,
+        snapshotId: record.suggestionSnapshotId || '',
+        reason: 'skipped',
+      },
     };
   }
   var engineSetting = visionEngine_();
-  if (engineSetting === 'off') return { status: 'unknown', reason: 'vision disabled' };
-  var snapshots = readSnapshots_();
-  var candidates = selectCandidateSnapshots_(record, snapshots);
+  if (engineSetting === 'off') {
+    return { result: { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'vision disabled' } };
+  }
+  var candidates = selectCandidateSnapshots_(record, readSnapshots_());
   if (!candidates.length) {
     updateLog_(record.id, { suggestionStatus: 'unknown', identifiedAt: new Date().toISOString() });
-    return { status: 'unknown', reason: 'no snapshot' };
+    return { result: { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'no snapshot' } };
   }
-  var plates = readPlates_();
-  var lighting = lightingFor_(record.teslaStartAt || record.startAt);
+  var config = readConfigMap_().values;
+  var vlmEnabled = engineSetting.indexOf('vlm') !== -1;
+  return {
+    candidates: candidates,
+    plates: readPlates_(),
+    lighting: lightingFor_(record.teslaStartAt || record.startAt),
+    vlm: vlmEnabled ? {
+      cars: readCars_(),
+      minConfidence: configNumber_(config, 'vision.minConfidence', 0.8, 0.5, 0.99),
+    } : null,
+    feedback: vlmEnabled ? readFeedback_() : [],
+    policy: {
+      minSamples: configInt_(config, 'policy.minSamples', 5),
+      minPrecision: configNumber_(config, 'policy.minPrecision', 0.9, 0.5, 0.99),
+    },
+  };
+}
+
+function identifySession_(record, force) {
+  if (!record || !record.id) {
+    return { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'not unassigned' };
+  }
+  var recordId = String(record.id);
+  var plan = withScriptLock_(function () { return prepareIdentify_(recordId, force); });
+  if (plan.result) return plan.result;
+  var candidates = plan.candidates;
   var result = null;
+  var resultIndex = -1;
+  var vlmError = '';
   var readError = '';
   for (var i = 0; i < candidates.length; i += 1) {
+    // A matched result is final; later candidates never overwrite it.
+    if (result && result.status === 'matched') break;
     var image;
     try {
       image = readDriveImageBase64_(candidates[i].driveFileId);
@@ -153,45 +201,89 @@ function identifySession_(record, force) {
       readError = String(error.message || error);
       continue;
     }
-    result = plateIdentify_(image, plates);
-    if (result.status === 'matched') break;
-    if (i <= 1 && engineSetting.indexOf('vlm') !== -1) {
-      var cars = readCars_();
-      var vlm = vlmIdentify_(image, cars, configNumber_(readConfigMap_().values, 'vision.minConfidence', 0.8, 0.5, 0.99));
-      if (vlm.status === 'matched' && policyAllowsSuggestion_('vlm', vlm.car, lighting)) result = vlm;
+    var plate = plateIdentify_(image, plan.plates);
+    if (plate.status === 'matched') {
+      result = plate;
+      resultIndex = i;
+      break;
     }
+    // Keep the nearest unknown, but let a provider error win over it.
+    if (!result || plate.status === 'error' || plate.status === 'rate_limited') {
+      result = plate;
+      resultIndex = i;
+    }
+    // The VLM inspects the closest candidate and, only when nothing has
+    // matched yet, the second one. At most two visual calls per session.
+    if (!plan.vlm || i > 1) continue;
+    var vlm = vlmIdentify_(image, plan.vlm.cars, plan.vlm.minConfidence);
+    if (vlm.status === 'matched') {
+      if (policyAllowsRows_(plan.feedback, plan.policy.minSamples, plan.policy.minPrecision, 'vlm', vlm.car, plan.lighting)) {
+        result = vlm;
+        resultIndex = i;
+        break;
+      }
+      continue;
+    }
+    if (vlm.status === 'error' && !vlmError) vlmError = vlm.reason;
   }
   if (!result) {
     result = {
-      engine: '', car: '', confidence: 0, plate: '', snapshotId: '',
+      engine: '', car: '', confidence: 0, plate: '',
       status: readError ? 'error' : 'unknown',
       reason: readError || 'no match',
     };
+    resultIndex = 0;
+  } else if (result.status === 'unknown' && vlmError) {
+    // The plate stage could not decide and the provider failed: surface the
+    // provider error instead of hiding it behind an unknown suggestion.
+    result = { engine: 'vlm', car: '', confidence: 0, plate: '', status: 'error', reason: vlmError };
+    resultIndex = 0;
   }
-  updateLog_(record.id, {
-    evidenceUrl: candidates[0].driveUrl,
+  // Suggestion provenance follows the candidate that produced a match; an
+  // unknown/error suggestion points at the nearest candidate.
+  var winner = result.status === 'matched' ? candidates[resultIndex] : null;
+  var evidence = winner || candidates[0];
+  var snapshotId = String(evidence.id);
+  result.snapshotId = snapshotId;
+  result.evidenceUrl = evidence.driveUrl;
+  var patch = {
+    evidenceUrl: evidence.driveUrl,
     suggestedCar: result.car,
     suggestionConfidence: result.confidence,
     suggestionPlate: result.plate,
     suggestionStatus: result.status,
     suggestionEngine: result.engine,
-    suggestionSnapshotId: candidates[0].id,
+    suggestionSnapshotId: snapshotId,
     identifiedAt: new Date().toISOString(),
+  };
+  var written = withScriptLock_(function () {
+    var fresh = findRecord_(readLog_(), recordId);
+    if (!fresh || fresh.car !== 'unassigned') return false;
+    if (!force && (fresh.suggestionStatus === 'matched' || fresh.suggestionStatus === 'unknown')) return false;
+    return Boolean(updateLog_(recordId, patch));
   });
+  if (!written) {
+    return { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'superseded' };
+  }
   return result;
 }
 
 function identifyPending_() {
-  if (visionEngine_() === 'off') return { identified: 0, unknown: 0, engine: 'off' };
-  var max = configInt_(readConfigMap_().values, 'vision.maxPerSync', 5);
-  var candidates = readLog_().filter(function (record) {
-    return record.car === 'unassigned' && record.teslaKey
-      && record.suggestionStatus !== 'matched' && record.suggestionStatus !== 'unknown';
-  }).sort(function (a, b) { return Date.parse(b.startAt) - Date.parse(a.startAt); }).slice(0, max);
+  var state = withScriptLock_(function () {
+    var engine = visionEngine_();
+    if (engine === 'off') return { engine: engine, candidates: [] };
+    var max = configInt_(readConfigMap_().values, 'vision.maxPerSync', 5);
+    var candidates = readLog_().filter(function (record) {
+      return record.car === 'unassigned' && record.teslaKey
+        && record.suggestionStatus !== 'matched' && record.suggestionStatus !== 'unknown';
+    }).sort(function (a, b) { return Date.parse(b.startAt) - Date.parse(a.startAt); }).slice(0, max);
+    return { engine: engine, candidates: candidates };
+  });
+  if (state.engine === 'off') return { identified: 0, unknown: 0, engine: 'off' };
   var identified = 0;
   var unknown = 0;
-  for (var i = 0; i < candidates.length; i += 1) {
-    var result = identifySession_(candidates[i], false);
+  for (var i = 0; i < state.candidates.length; i += 1) {
+    var result = identifySession_(state.candidates[i], false);
     if (result.status === 'matched') identified += 1;
     else unknown += 1;
   }
