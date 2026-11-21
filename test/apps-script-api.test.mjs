@@ -1229,3 +1229,46 @@ test('setup seeds the Config tab with defaults', () => {
   assert.ok(rows.some((row) => row[0] === 'relay.intervalSeconds' && row[1] === '300'));
   assert.ok(rows.some((row) => row[0] === 'snapshot.retentionDays' && row[1] === '30'));
 });
+
+test('identify stores a plate suggestion without assigning the car', () => {
+  const at = SESSION_START;
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'u-1', 4: 'unassigned', 11: 'din:u', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'],
+        ['snap-1', at, 'file-1', 'https://drive.google.com/file/d/file-1/view', 1280, 720, 100, 'pi', at, ''],
+      ],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'AB 1234\nHONG KONG' }] }],
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
+  const result = send(env, { action: 'identify', id: 'u-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'matched');
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.suggestionEngine, 'plate');
+});
+
+test('policy suppresses a low-precision VLM combination', () => {
+  const feedbackHeader = ['id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar', 'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt'];
+  const wrong = [1, 2, 3, 4, 5].map((n) => [
+    `fb-${n}`, `r-${n}`, SESSION_START, 'vlm', 'model3', 'ix3', 0.85, '', 'snap-1', 'day', 'owner', SESSION_START,
+  ]);
+  const env = setup({ sheets: { Feedback: [feedbackHeader, ...wrong] } });
+  assert.equal(env.call('policyAllowsSuggestion_', 'vlm', 'model3', 'day'), false);
+  assert.equal(env.call('policyAllowsSuggestion_', 'vlm', 'ix3', 'day'), true);
+});

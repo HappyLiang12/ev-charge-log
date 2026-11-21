@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 
-const sources = ['Logic.gs', 'SheetRepo.gs', 'Tesla.gs', 'Rates.gs'].map((name) => (
+const sources = ['Logic.gs', 'SheetRepo.gs', 'Tesla.gs', 'Rates.gs', 'Vision.gs'].map((name) => (
   readFileSync(new URL(`../apps-script/${name}`, import.meta.url), 'utf8')
 ));
 
@@ -74,6 +74,7 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         bytes: blob.getBytes(),
         getId: () => id,
         getUrl: () => `https://drive.google.com/file/d/${id}/view`,
+        getBlob: () => ({ getBytes: () => [...file.bytes] }),
       };
       driveFiles.push(file);
       this.files.push(file);
@@ -114,6 +115,7 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         return `${hour}:${minute}`;
       },
       base64Decode: (value) => [...Buffer.from(String(value), 'base64')],
+      base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
       newBlob: (bytes, mimeType, name) => ({
         getBytes: () => [...bytes],
         getMimeType: () => mimeType,
