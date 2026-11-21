@@ -1696,14 +1696,13 @@ test('identify keeps a VLM match when a later candidate plate is unknown', () =>
     props: {
       RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
       CLOUD_VISION_API_KEY: 'key-1',
-      CLOUDFLARE_ACCOUNT_ID: 'acct',
-      CLOUDFLARE_API_TOKEN: 'token',
+      DEEPSEEK_API_KEY: 'key-1',
     },
     sheets: {
       Config: [
         ['key', 'value', 'updatedAt', 'notes'],
         ['vision.engine', 'plate+vlm', '', ''],
-        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
       ],
       Log: [IDENTIFY_HEADER, identifyRow('u-3')],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x', '', 'blue Tesla Model 3']],
@@ -1723,10 +1722,10 @@ test('identify keeps a VLM match when a later candidate plate is unknown', () =>
           responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
         }));
       }
-      if (url.includes('api.cloudflare.com')) {
+      if (url.includes('api.deepseek.com')) {
         vlmCalls += 1;
         return response(200, JSON.stringify({
-          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+          choices: [{ message: { content: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' } }],
         }));
       }
       throw new Error(`Unexpected URL: ${url}`);
@@ -1797,14 +1796,13 @@ test('identify records a VLM provider error when the plate is unknown', () => {
     props: {
       RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
       CLOUD_VISION_API_KEY: 'key-1',
-      CLOUDFLARE_ACCOUNT_ID: 'acct',
-      CLOUDFLARE_API_TOKEN: 'token',
+      DEEPSEEK_API_KEY: 'key-1',
     },
     sheets: {
       Config: [
         ['key', 'value', 'updatedAt', 'notes'],
         ['vision.engine', 'plate+vlm', '', ''],
-        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
       ],
       Log: [IDENTIFY_HEADER, identifyRow('u-5')],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
@@ -1819,7 +1817,7 @@ test('identify records a VLM provider error when the plate is unknown', () => {
           responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
         }));
       }
-      if (url.includes('api.cloudflare.com')) {
+      if (url.includes('api.deepseek.com')) {
         vlmCalls += 1;
         return response(500, 'upstream exploded');
       }
@@ -1832,7 +1830,7 @@ test('identify records a VLM provider error when the plate is unknown', () => {
   assert.equal(result.status, 'error');
   assert.equal(result.engine, 'vlm');
   assert.equal(result.car, '');
-  assert.match(result.reason, /VLM 500/);
+  assert.match(result.reason, /DeepSeek 500/);
   assert.equal(visionCalls, 1);
   assert.equal(vlmCalls, 1);
   const record = plain(env.call('readLog_'))[0];
@@ -1852,14 +1850,13 @@ test('identify lets a later plate match override an earlier VLM error', () => {
     props: {
       RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
       CLOUD_VISION_API_KEY: 'key-1',
-      CLOUDFLARE_ACCOUNT_ID: 'acct',
-      CLOUDFLARE_API_TOKEN: 'token',
+      DEEPSEEK_API_KEY: 'key-1',
     },
     sheets: {
       Config: [
         ['key', 'value', 'updatedAt', 'notes'],
         ['vision.engine', 'plate+vlm', '', ''],
-        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
       ],
       Log: [IDENTIFY_HEADER, identifyRow('u-6')],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
@@ -1879,7 +1876,7 @@ test('identify lets a later plate match override an earlier VLM error', () => {
           responses: [{ textAnnotations: [{ description }] }],
         }));
       }
-      if (url.includes('api.cloudflare.com')) {
+      if (url.includes('api.deepseek.com')) {
         vlmCalls += 1;
         return response(503, 'vlm down');
       }
@@ -1910,14 +1907,13 @@ test('identify keeps an unknown suggestion when policy suppresses a VLM match', 
     props: {
       RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
       CLOUD_VISION_API_KEY: 'key-1',
-      CLOUDFLARE_ACCOUNT_ID: 'acct',
-      CLOUDFLARE_API_TOKEN: 'token',
+      DEEPSEEK_API_KEY: 'key-1',
     },
     sheets: {
       Config: [
         ['key', 'value', 'updatedAt', 'notes'],
         ['vision.engine', 'plate+vlm', '', ''],
-        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
       ],
       Log: [IDENTIFY_HEADER, identifyRow('u-7')],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
@@ -1932,10 +1928,10 @@ test('identify keeps an unknown suggestion when policy suppresses a VLM match', 
           responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
         }));
       }
-      if (url.includes('api.cloudflare.com')) {
+      if (url.includes('api.deepseek.com')) {
         vlmCalls += 1;
         return response(200, JSON.stringify({
-          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+          choices: [{ message: { content: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' } }],
         }));
       }
       throw new Error(`Unexpected URL: ${url}`);
@@ -2025,14 +2021,13 @@ test('identify reads VLM config under the lock, never in the provider stage', ()
     props: {
       RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
       CLOUD_VISION_API_KEY: 'key-1',
-      CLOUDFLARE_ACCOUNT_ID: 'acct',
-      CLOUDFLARE_API_TOKEN: 'token',
+      DEEPSEEK_API_KEY: 'key-1',
     },
     sheets: {
       Config: [
         ['key', 'value', 'updatedAt', 'notes'],
         ['vision.engine', 'plate+vlm', '', ''],
-        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
       ],
       Log: [IDENTIFY_HEADER, identifyRow('u-vlm-lock')],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x', '', 'blue Tesla Model 3']],
@@ -2047,10 +2042,10 @@ test('identify reads VLM config under the lock, never in the provider stage', ()
           responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
         }));
       }
-      if (url.includes('api.cloudflare.com')) {
+      if (url.includes('api.deepseek.com')) {
         providerUnderLock = lock.held;
         return response(200, JSON.stringify({
-          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+          choices: [{ message: { content: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' } }],
         }));
       }
       throw new Error(`Unexpected URL: ${url}`);

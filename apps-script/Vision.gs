@@ -56,32 +56,43 @@ function plateIdentify_(imageBase64, plates) {
 // in; this stage performs only provider calls and must not touch the Sheet.
 function vlmIdentify_(imageBase64, cars, minConfidence, model) {
   try {
-    var account = scriptProperty_('CLOUDFLARE_ACCOUNT_ID');
-    var token = scriptProperty_('CLOUDFLARE_API_TOKEN');
+    var key = scriptProperty_('DEEPSEEK_API_KEY');
     var modelId = String(model || '');
-    if (!account || !token || !modelId) throw new Error('VLM provider is not configured');
+    if (!key || !modelId) throw new Error('DeepSeek vision is not configured');
     var choices = cars.filter(function (car) { return car.active; }).map(function (car) {
       return car.id + ' = ' + (car.description || car.name);
     }).join('; ');
     var prompt = 'Identify the car parked in the charging slot. Choose exactly one: '
       + choices + '; guest = any other car; unknown = unclear. Only the car in the charging slot counts; ignore other parked cars. '
       + 'Return JSON only: {"carId":"<id>","confidence":0..1,"reason":"<short>"}';
-    var response = UrlFetchApp.fetch(
-      'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(account)
-        + '/ai/run/' + modelId.split('/').map(encodeURIComponent).join('/'),
-      {
-        method: 'post',
-        contentType: 'application/json',
-        headers: { Authorization: 'Bearer ' + token },
-        payload: JSON.stringify({ prompt: prompt, image: Utilities.base64Decode(imageBase64) }),
-        muteHttpExceptions: true,
-      },
-    );
+    var response = UrlFetchApp.fetch('https://api.deepseek.com/chat/completions', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + key },
+      payload: JSON.stringify({
+        model: modelId,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + imageBase64, detail: 'original' } },
+          ],
+        }],
+        temperature: 0,
+      }),
+      muteHttpExceptions: true,
+    });
     var status = response.getResponseCode();
     var body = response.getContentText();
-    if (status < 200 || status >= 300) throw new Error('VLM ' + status + ': ' + body);
+    if (status < 200 || status >= 300) throw new Error('DeepSeek ' + status + ': ' + body);
     var parsed = JSON.parse(body);
-    var text = parsed.result && parsed.result.response ? parsed.result.response : '';
+    var content = parsed.choices && parsed.choices[0] && parsed.choices[0].message
+      ? parsed.choices[0].message.content : '';
+    if (!content) throw new Error('DeepSeek response missing content');
+    var text = String(content).trim();
+    if (text.indexOf('```') === 0) {
+      text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    }
     var data = JSON.parse(text);
     var carId = String(data.carId || '');
     var confidence = Number(data.confidence);

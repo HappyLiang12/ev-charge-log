@@ -4,9 +4,9 @@
 
 **Goal:** AI-assisted (plate OCR + free VLM) snapshot evidence for unassigned sessions, human-confirmed car matching, a feedback loop that calibrates suggestions, 30-day retention, and remotely tunable Pi capture settings — all without SSH or same-network access.
 
-**Architecture:** The Pi uploads only a cropped charging-slot JPEG and pulls a signed `relayConfig` at the start of every cycle. Apps Script stores tunables in a `Config` tab, ingests snapshots, runs plate OCR then an optional Cloudflare VLM, records every human decision in `Feedback`, and uses feedback precision to suppress bad suggestions. The owner UI shows the crop, engine, confidence, adopt/manual/ignore/reassign controls; the family UI sees only a suggestion hint, never the image.
+**Architecture:** The Pi uploads only a cropped charging-slot JPEG and pulls a signed `relayConfig` at the start of every cycle. Apps Script stores tunables in a `Config` tab, ingests snapshots, runs plate OCR then an optional DeepSeek vision VLM, records every human decision in `Feedback`, and uses feedback precision to suppress bad suggestions. The owner UI shows the crop, engine, confidence, adopt/manual/ignore/reassign controls; the family UI sees only a suggestion hint, never the image.
 
-**Tech Stack:** Google Apps Script V8 (Code.gs, SheetRepo.gs, Logic.gs, Tesla.gs, Rates.gs, new Vision.gs), Google Sheets/Drive, Cloud Vision, Cloudflare Workers AI (optional), Python 3 standard library + ffmpeg on the Pi, static ES modules, Node 20 test runner, WKWebView/jsdom UI harness.
+**Tech Stack:** Google Apps Script V8 (Code.gs, SheetRepo.gs, Logic.gs, Tesla.gs, Rates.gs, new Vision.gs), Google Sheets/Drive, Cloud Vision, DeepSeek vision (optional), Python 3 standard library + ffmpeg on the Pi, static ES modules, Node 20 test runner, WKWebView/jsdom UI harness.
 
 **Spec:** `docs/superpowers/specs/2026-11-21-cctv-evidence-feedback-design.md`
 
@@ -16,7 +16,7 @@
 - **Fail-closed crop.** Only a configured crop is uploaded; `relay.crop` empty/invalid disables capture/upload. `relay.crop=full` is an explicit testing-only mode and must not be used in production.
 - **Family payloads never contain `evidenceUrl`** or image data.
 - **Remote tunables live in the `Config` tab** (non-secret only), default 30-day retention, and are applied by the Pi on its next cycle with no SSH/restart.
-- **Secrets live only in Apps Script Script Properties** (`CLOUD_VISION_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`) and in `/etc/ev-relay/relay.env` on the Pi (mode 600). Never commit or print them, and never put them in the Config tab.
+- **Secrets live only in Apps Script Script Properties** (`CLOUD_VISION_API_KEY`, `DEEPSEEK_API_KEY`) and in `/etc/ev-relay/relay.env` on the Pi (mode 600). Never commit or print them, and never put them in the Config tab.
 - **HMAC everywhere:** `snapshot`, `cleanup`, and `relayConfig` requests use HMAC-SHA256 with a ±10-minute timestamp window.
 - **Retention:** default 30 days (`snapshot.retentionDays`), enforced by the Pi's hourly batched cleanup; no ScriptApp daily trigger.
 - **Plates and personal data** are supplied by the user in the Sheet and never committed to the repo.
@@ -776,7 +776,9 @@ git commit -m "feat: add evidence engine and feedback schema"
 
 ---
 
-### Task 4: Plate OCR, Free VLM, Policy, and Identify
+### Task 4: Plate OCR, DeepSeek VLM, Policy, and Identify
+
+> The live implementation uses the DeepSeek vision adapter in `apps-script/Vision.gs` (`deepseek-flash`, `DEEPSEEK_API_KEY`). The Cloudflare code and test snippets below are the historical plan and must be adapted to DeepSeek before use.
 
 **Files:**
 - Create: `apps-script/Vision.gs`
@@ -1516,10 +1518,10 @@ git commit -m "feat: add snapshot retention and docs"
 ## Deployment Runbook (after the PR is merged)
 
 1. Apps Script: add `Vision.gs` (new file), update Code/SheetRepo/Logic/Tesla as changed; save; deploy a new version (v26). The deployment URL stays the same.
-2. Script Properties: `RELAY_HMAC_SECRET` (already set), `CLOUD_VISION_API_KEY` (when ready), `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` (only if VLM). Enter them manually; never in chat or the Sheet.
+2. Script Properties: `RELAY_HMAC_SECRET` (already set), `CLOUD_VISION_API_KEY` (when ready), `DEEPSEEK_API_KEY` (only if the VLM is used). Enter them manually; never in chat or the Sheet.
 3. Config tab: run `setup()` once to seed defaults; set `relay.crop` (use `full` only for the test camera; production requires the ROI); optionally set `snapshot.retentionDays=30` (default).
 4. Pi: `sudo ev-relay-update` (pulls the new relay code), then verify the first config fetch and the next capture in the logs. No SSH needed for later tuning.
-5. Verify: Plate OCR on one session (after plates and the Vision key are set); VLM only after the Cloudflare provider trial; owner UI shows the crop/suggestion; family hint; a correction records Feedback and updates Plates.
+5. Verify: Plate OCR on one session (after plates and the Vision key are set); VLM only after the DeepSeek provider trial; owner UI shows the crop/suggestion; family hint; a correction records Feedback and updates Plates.
 6. Physical: install the camera, capture day/night frames, set the ROI, confirm the guest car stays outside the crop, run 20 sessions before enabling the VLM in production.
 
 ## Self-Review
