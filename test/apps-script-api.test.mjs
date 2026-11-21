@@ -413,6 +413,23 @@ test('ignore reports an unknown record without recording feedback', () => {
   assert.equal(plain(env.call('readFeedback_')).length, 0);
 });
 
+test('ignore rejects an assigned record without deleting or recording feedback', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-1', 4: 'model3', 11: 'din:r', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const result = send(env, { action: 'ignore', id: 'rec-1' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Only unassigned sessions can be ignored/);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].car, 'model3');
+  assert.equal(plain(env.call('readFeedback_')).length, 0);
+});
+
 test('reassign updates the car and records a correction', () => {
   const env = setup({
     sheets: {
@@ -452,6 +469,21 @@ test('reassign recomputes the peak split with the new car peak factor', () => {
   assert.equal(record.peakKWh, 2.5);
   assert.equal(record.offPeakKWh, 7.5);
   assert.equal(env.values('Feedback')[1][5], 'ix3');
+});
+
+test('reassign rejects an unassigned record and leaves it unassigned', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:u', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const result = send(env, { action: 'reassign', id: 'unassigned-1', car: 'ix3' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Only assigned records can be reassigned/);
+  assert.equal(plain(env.call('readLog_'))[0].car, 'unassigned');
+  assert.equal(plain(env.call('readFeedback_')).length, 0);
 });
 
 test('sync matches a manual row, updates the cursor, and exposes the full result shape', () => {
