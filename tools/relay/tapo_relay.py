@@ -58,7 +58,7 @@ def build_relay_config_payload(at, secret):
 def clamp_number(value, limits):
     try:
         number = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return max(limits[0], min(limits[1], number))
 
@@ -162,6 +162,31 @@ def build_cleanup_payload(at, secret, limit=500):
     }
 
 
+def parse_cleanup_result(result):
+    """Return (deleted, failed) from a successful cleanup response.
+
+    A missing or malformed failed count is treated as 0 so a logging problem
+    never turns an otherwise successful cleanup into an error.
+    """
+    deleted = result.get("deleted")
+    try:
+        failed = int(result.get("failed") or 0)
+    except (TypeError, ValueError):
+        failed = 0
+    return deleted, failed
+
+
+CROP_REQUIRED_MESSAGE = "crop required: set relay.crop in the Config tab"
+
+
+def log_once(previous, message):
+    """Log a repeated message once per change; return the new previous value."""
+    if message == previous:
+        return previous
+    print(message, flush=True)
+    return message
+
+
 def cleanup_due(now, last_cleanup, interval):
     return now - last_cleanup >= interval
 
@@ -234,6 +259,7 @@ def main():
     config = load_cached_config(cache_path, fallback)
     last_cleanup = 0.0
     last_config_error = None
+    last_crop_error = None
     while True:
         if env["API_URL"]:
             at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -252,8 +278,9 @@ def main():
         if config["relay.enabled"]:
             crop, full_mode = parse_crop(config["relay.crop"])
             if not crop and not full_mode:
-                print("crop required: set relay.crop in the Config tab", flush=True)
+                last_crop_error = log_once(last_crop_error, CROP_REQUIRED_MESSAGE)
             else:
+                last_crop_error = None
                 captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
                 image_path = queue / ("pending-" + str(int(time.time())) + ".jpg")
                 try:
@@ -279,7 +306,10 @@ def main():
                     result = post_json(env["API_URL"], cleanup, timeout=120)
                     if not result.get("ok"):
                         raise RuntimeError(result.get("error") or "cleanup rejected")
-                    print("cleanup deleted:", result.get("deleted"), flush=True)
+                    deleted, failed = parse_cleanup_result(result)
+                    print(f"cleanup deleted: {deleted} failed: {failed}", flush=True)
+                    if failed > 0:
+                        print(f"cleanup warning: {failed} snapshot(s) kept for retry", flush=True)
                     last_cleanup = now_ts
                 except Exception as error:
                     print("cleanup error:", error, flush=True)
