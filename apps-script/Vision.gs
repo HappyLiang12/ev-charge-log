@@ -52,12 +52,14 @@ function plateIdentify_(imageBase64, plates) {
   }
 }
 
-function vlmIdentify_(imageBase64, cars, minConfidence) {
+// The VLM model id is read under the script lock in prepareIdentify_ and passed
+// in; this stage performs only provider calls and must not touch the Sheet.
+function vlmIdentify_(imageBase64, cars, minConfidence, model) {
   try {
     var account = scriptProperty_('CLOUDFLARE_ACCOUNT_ID');
     var token = scriptProperty_('CLOUDFLARE_API_TOKEN');
-    var model = String(configValue_('vision.vlmModel') || '');
-    if (!account || !token || !model) throw new Error('VLM provider is not configured');
+    var modelId = String(model || '');
+    if (!account || !token || !modelId) throw new Error('VLM provider is not configured');
     var choices = cars.filter(function (car) { return car.active; }).map(function (car) {
       return car.id + ' = ' + (car.description || car.name);
     }).join('; ');
@@ -66,7 +68,7 @@ function vlmIdentify_(imageBase64, cars, minConfidence) {
       + 'Return JSON only: {"carId":"<id>","confidence":0..1,"reason":"<short>"}';
     var response = UrlFetchApp.fetch(
       'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(account)
-        + '/ai/run/' + model.split('/').map(encodeURIComponent).join('/'),
+        + '/ai/run/' + modelId.split('/').map(encodeURIComponent).join('/'),
       {
         method: 'post',
         contentType: 'application/json',
@@ -83,6 +85,8 @@ function vlmIdentify_(imageBase64, cars, minConfidence) {
     var data = JSON.parse(text);
     var carId = String(data.carId || '');
     var confidence = Number(data.confidence);
+    // A provider can return an out-of-range number; clamp it to the contract.
+    if (isFinite(confidence)) confidence = Math.min(1, Math.max(0, confidence));
     var valid = cars.some(function (car) { return car.active && car.id === carId; });
     if (!valid || carId === 'guest' || carId === 'unknown' || !isFinite(confidence) || confidence < minConfidence) {
       return { engine: 'vlm', car: '', confidence: isFinite(confidence) ? confidence : 0, plate: '', status: 'unknown', reason: String(data.reason || 'not confident') };
@@ -170,6 +174,7 @@ function prepareIdentify_(recordId, force) {
     vlm: vlmEnabled ? {
       cars: readCars_(),
       minConfidence: configNumber_(config, 'vision.minConfidence', 0.8, 0.5, 0.99),
+      model: String(configRaw_(config, 'vision.vlmModel', '') || ''),
     } : null,
     feedback: vlmEnabled ? readFeedback_() : [],
     policy: {
@@ -215,7 +220,7 @@ function identifySession_(record, force) {
     // The VLM inspects the closest candidate and, only when nothing has
     // matched yet, the second one. At most two visual calls per session.
     if (!plan.vlm || i > 1) continue;
-    var vlm = vlmIdentify_(image, plan.vlm.cars, plan.vlm.minConfidence);
+    var vlm = vlmIdentify_(image, plan.vlm.cars, plan.vlm.minConfidence, plan.vlm.model);
     if (vlm.status === 'matched') {
       if (policyAllowsRows_(plan.feedback, plan.policy.minSamples, plan.policy.minPrecision, 'vlm', vlm.car, plan.lighting)) {
         result = vlm;
