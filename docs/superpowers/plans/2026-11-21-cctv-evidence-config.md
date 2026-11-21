@@ -1192,7 +1192,7 @@ function recordFeedbackRow_(target, chosenCar, actor) {
     id: 'fb-' + target.id + '-' + Date.now(),
     recordId: target.id,
     startAt: target.teslaStartAt || target.startAt,
-    engine: target.suggestionEngine || (target.suggestedCar ? 'manual' : ''),
+    engine: target.suggestionEngine || (target.suggestedCar ? '' : 'manual'),
     suggestedCar: target.suggestedCar || '',
     chosenCar: chosenCar,
     confidence: target.suggestionConfidence,

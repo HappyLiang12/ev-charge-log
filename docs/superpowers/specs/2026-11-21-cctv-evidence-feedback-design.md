@@ -78,7 +78,7 @@ External providers:
 
 ### Snapshots (append column)
 
-- `crop`: the ROI string `x:y:w:h`, or empty for a full frame.
+- `crop`: the configured `relay.crop` value at ingest: an `x:y:w:h` ROI, empty, or `full` during a testing capture. `relay.crop=full` must be removed for production.
 
 ### Feedback (new tab)
 
@@ -136,6 +136,8 @@ Unchanged (`plate`, `car`, `active`, `createdAt`). The user fills the three hous
 | `policy.minSamples` | Apps Script | int | `5` | 1–50 | Feedback samples before a precision gate applies |
 | `policy.minPrecision` | Apps Script | number | `0.9` | 0.5–0.99 | VLM suggestions below this are suppressed |
 
+`vision.engine=plate` is the default. Before switching to `plate+vlm`, fill `Plates` and `Cars.description` and set `CLOUD_VISION_API_KEY` (and the Cloudflare account ID, token, and `vision.vlmModel` when the VLM is used); otherwise the added stage cannot resolve a car. With `vision.engine=plate+vlm` and an empty `vision.vlmModel` (or missing Cloudflare properties), the provider is unconfigured: when plate OCR cannot decide, the session is written with `suggestionStatus=error`, so the owner sees a provider failure rather than a silent suggestion.
+
 ### relayConfig endpoint
 
 - `POST { action: 'relayConfig', at: <ISO>, signature: HMAC-SHA256(secret, "relayConfig\n" + at) }`.
@@ -160,7 +162,7 @@ Unchanged (`plate`, `car`, `active`, `createdAt`). The user fills the three hous
 - Production requires a configured ROI. If `relay.crop` is empty or invalid, the relay skips capture/upload and logs "crop required"; it does not fall back to a full frame. `relay.crop=full` is an explicit testing-only mode and must be changed before production.
 - The ROI is configured after installation via `relay.crop`; verify with a test snapshot in the owner view/Drive; adjust the numbers if needed.
 - The plate may still be outside the crop (for example a side-on Model 3). The visual engine and manual fallback cover that case.
-- The crop string is stored on each Snapshots row for audit and future model training; the Feedback row also carries the snapshot id.
+- The crop string is stored on each Snapshots row for audit and future model training; the Feedback row also carries the snapshot id. The stored value is the configured `relay.crop` at ingest (an ROI, empty, or `full` during testing); remove `full` before production.
 
 ## 8. Matching Engine
 
@@ -206,7 +208,7 @@ The result is written to the Log suggestion fields; it never changes `car`.
 
 - Compute precision per `(engine, car, lighting)` from Feedback, counting only suggestions that named a car (not guest/unknown).
 - When samples ≥ `policy.minSamples` and precision < `policy.minPrecision`, suppress that combination's VLM suggestions (fall back to unknown/manual) until the data improves.
-- Plate suggestions are deterministic and are not suppressed; plate corrections update the mapping.
+- Plate suggestions are deterministic and are not suppressed; owner plate corrections update the mapping (plate-map tuning is owner-only; a family claim records feedback only).
 - This is the Phase A "self-tuning": policy calibration, not model-weight updates.
 
 ### Lighting
@@ -229,15 +231,15 @@ Every human decision appends Feedback:
 | action | chosenCar | notes |
 | --- | --- | --- |
 | owner assign | car id | Compare against the Log suggestion |
-| family claim | car id | Actor=`family` |
+| family claim | car id | Actor=`family`; feedback only, never rewrites `Plates` |
 | owner reassign | car id | Corrects an assigned record; actor=`owner` |
-| owner ignore | `guest` | Removes the Log row from billing; the Tesla key is persisted in `Ignored` so later syncs skip it; feedback retained |
+| owner ignore | `guest` | Requires an explicit confirmation; removes the Log row from billing; the Tesla key is persisted in `Ignored` so later syncs skip it; feedback retained |
 
 When the record has no stored suggestion, the engine at decision time is `manual` (no prior guess is invented).
 
 ### Effects
 
-- **Plate corrections:** if the suggestion had a plate and the chosen car differs, upsert `Plates[plate] = chosenCar` immediately.
+- **Plate corrections:** if the suggestion had a plate and the chosen car differs, an owner action upserts `Plates[plate] = chosenCar` immediately. Plate-map tuning is owner-only: a family claim still appends its Feedback row with the suggested/chosen/plate data, but never writes `Plates` (a mistaken family claim must not change OCR for every car).
 - **Dataset:** every row records engine, suggestion, actual, confidence, snapshot id, lighting, actor, crop. This is the labelled set for a future offline model.
 - **Policy:** precision buckets drive the suppression policy above.
 - **No weight updates** happen in Phase A.
@@ -255,7 +257,7 @@ When the record has no stored suggestion, the engine at decision time is `manual
   - Crop thumbnail (Drive thumbnail URL derived from `evidenceUrl`) with an image link fallback.
   - Suggestion label with engine and confidence: `建議：Model 3（98%，車牌）` or `（84%，視覺）`, plus an adopt button.
   - Manual car select + assign.
-  - `非家中車輛（忽略）` action (records `guest`).
+  - `非家中車輛（忽略）` action (records `guest`); it asks for confirmation first because the Log row is deleted and cannot be restored from the UI.
   - No suggestion: `未能辨識，請人手選擇` (or `辨識失敗，請人手選擇` on provider error).
 - Assigned records: a compact evidence link and a reassign control.
 - Existing owner/family layout, accessibility labels, responsive styles are reused.
@@ -272,7 +274,7 @@ When the record has no stored suggestion, the engine at decision time is `manual
 - The cleanup request is HMAC-signed (`cleanup\n<at>`); the server validates the timestamp and signature. No ScriptApp trigger is used, avoiding a new OAuth scope and the six-minute execution limit.
 - Feedback and Log rows are retained. Snapshot rows disappear after retention, so old Log `evidenceUrl` values become stale links; this is accepted.
 - Estimated storage: a 1920px crop at q3 is roughly 300–450 KB; 288 snapshots/day ≈ 90–130 MB/day; 30 days ≈ 3–4 GB. The account currently has about 62 GB free.
-- Cleanup failures log and retry on the next hourly trigger; the operation is idempotent.
+- Cleanup failures log and retry on the next hourly trigger; the operation is idempotent. A partial failure is not a config error: after a successful response the Pi logs `cleanup deleted: <n> failed: <m>` and, when `failed > 0`, one warning line, so a stalled retention is visible on the Pi rather than only in Apps Script.
 
 ## 12. Security and Privacy
 
@@ -296,14 +298,14 @@ When the record has no stored suggestion, the engine at decision time is `manual
   - Owner/family UI rendering (thumbnail, suggestion, adopt, manual, ignore; family hint, no evidence).
 - Relay tests: config fetch payload/parse/persist, crop command, cleanup payload.
 - Integration: a config change in the Config tab is visible in the next relay config response; owner/family payload behavior; retention.
-- E2E (after deployment): the Pi applies a changed interval/crop without restart; snapshots upload; one session is identified via plate OCR or VLM; a correction updates the plate map/policy.
+- E2E (after deployment): the Pi applies a changed interval/crop without restart; snapshots upload; one session is identified via plate OCR or VLM; an owner correction updates the plate map/policy.
 - Shadow evaluation: at least 20 real sessions covering day/night and a guest car. Record precision per engine. VLM stays suggestion-only; the 95% precision threshold remains a future auto-assign gate.
 
 ## 14. Rollout
 
 1. **Phase 0 (physical, user):** install/aim the camera at the charging slot; capture day and night frames; fill the three plates; fill car descriptions; determine the ROI string; confirm the guest car stays outside the ROI.
 2. **Phase A (code):** implement remote config, crop, UI, feedback, retention, plate OCR, VLM adapter (providers off), with tests. Open PR, merge, deploy Apps Script v26, update the Pi relay via `ev-relay-update`, seed the Config tab.
-3. **Phase B (configuration):** set the Cloud Vision key (and Cloudflare credentials if VLM is enabled); set `relay.crop`; verify the next snapshot is cropped; run `identify` on a session; enable `vision.engine=plate`, then `plate+vlm` after a small provider trial.
+3. **Phase B (configuration):** fill `Plates` and `Cars.description` and set the Cloud Vision key first; set `relay.crop`; verify the next snapshot is cropped; run `identify` on a session; then enable `vision.engine=plate` (the default). Only after that, add the Cloudflare credentials and `vision.vlmModel`, verify the model with a real crop, and enable `plate+vlm`. An empty `vision.vlmModel` with `plate+vlm` surfaces a provider error status on undecided sessions; it is not a silent fallback.
 4. **Phase C (evaluation):** run at least 20 sessions; review precision and unknown rates; keep human confirmation; consider a local model only if the free VLM is insufficient.
 
 ## 15. Open Setup Items

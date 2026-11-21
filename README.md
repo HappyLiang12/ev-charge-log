@@ -45,8 +45,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Bill shares are gated: a bill stays unpublished (and invisible to family links) until the owner presses `發布分攤`. Publishing is blocked while any `unassigned` session starts inside the bill period, and the server re-checks the same rule. Saving or changing a bill clears `publishedAt`, so it must be published again. If a new unassigned session later lands in a published period, family links hide that bill again until it is resolved and republished.
 - Offline-friendly family queue; pending starts retry automatically.
 - Private CCTV evidence: the Pi uploads only a cropped charging-slot JPEG, stored in a private Drive folder and linked from new unassigned sessions. The owner view shows the crop, engine (`車牌`/`視覺`), confidence, and adopt/manual/ignore/reassign controls; family links get a hint only.
-- Plate OCR first (Cloud Vision), then an optional Cloudflare Workers AI VLM. Suggestions never assign a car automatically; a correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
-- Ignoring a non-household session records `guest` feedback and persists its Tesla key in the `Ignored` tab, so a later sync does not re-import it.
+- Plate OCR first (Cloud Vision), then an optional Cloudflare Workers AI VLM. Suggestions never assign a car automatically; an owner correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
+- Ignoring a non-household session asks for confirmation, records `guest` feedback, and persists its Tesla key in the `Ignored` tab, so a later sync does not re-import it.
 - Snapshot retention is 30 days by default. The Pi triggers a signed, hourly, batched cleanup; no ScriptApp trigger is installed.
 - Mobile-first layout for a 390x844 viewport.
 
@@ -58,9 +58,9 @@ The Pi relay opens a short RTSP connection each cycle and uploads one cropped JP
 
 - `relay.crop` is `x:y:w:h` in source pixels. The Pi applies `crop=w:h:x:y`, scales to `min(relay.imageWidth, iw)`, then encodes the JPEG at `relay.jpegQuality`.
 - If `relay.crop` is empty or invalid, the relay logs `crop required` and skips capture/upload. It never falls back to a full frame. Production requires the ROI.
-- `relay.crop=full` is an explicit testing-only mode for a controlled camera test; change it back to the ROI before production.
+- `relay.crop=full` is an explicit testing-only mode for a controlled camera test; it must be removed (set back to the ROI) before production.
 - Only the crop is uploaded. The full CCTV frame stays on the camera's own recording; a guest car outside the ROI is neither stored nor analysed.
-- The crop string is stored on each `Snapshots` row for audit and future training data.
+- `Snapshots.crop` stores the configured `relay.crop` value at ingest (an `x:y:w:h` ROI, empty, or `full` during testing); it is kept for audit and future training data.
 
 ### Remote config keys
 
@@ -103,15 +103,15 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 - Every human decision appends a `Feedback` row: owner assign and family claim record the chosen car; owner reassign records the correction; owner ignore records `chosenCar=guest`.
 - Feedback keeps the engine, suggested car, confidence, plate, snapshot id, lighting (`day` 07:00–19:00 HK, else `night`), actor, and timestamp. It is append-only and retained after snapshots expire.
-- A plate correction (the suggestion had a plate and the chosen car differs) immediately upserts `Plates[plate] = chosenCar`. Guest/ignore choices never pollute the plate map.
-- Ignore is only for unassigned sessions: it appends `guest` feedback, deletes the Log row from billing, and stores the Tesla session key in `Ignored` (`teslaKey`, `createdAt`, `actor`). Sync treats persisted keys as already seen, so the ignored session is not re-imported.
+- A plate correction (the suggestion had a plate and the chosen car differs) immediately upserts `Plates[plate] = chosenCar`, but only for an owner action. Plate-map tuning is owner-only: a family claim records its feedback row and never rewrites the OCR plate map. Guest/ignore choices never pollute the plate map.
+- Ignore is only for unassigned sessions and asks for confirmation first, because it deletes the Log row and cannot be undone from the UI. It appends `guest` feedback, deletes the Log row from billing, and stores the Tesla session key in `Ignored` (`teslaKey`, `createdAt`, `actor`). Sync treats persisted keys as already seen, so the ignored session is not re-imported.
 - Reassign is owner-only and only for assigned records. It updates the Log car, recomputes the peak/off-peak split with the new car's `peakFactor`, and records Feedback comparing the original suggestion with the chosen car. A wrong family claim is corrected the same way.
 
 ### Retention and cleanup
 
 - `snapshot.retentionDays` defaults to 30 (range 1–365) and controls both the Drive file and its `Snapshots` row.
 - There is no ScriptApp trigger. The Pi sends a signed `cleanup` request every `relay.cleanupIntervalSeconds` (default hourly) with `relay.cleanupBatch` (default 500). Apps Script trashes the oldest expired Drive files, then deletes the `Snapshots` rows whose file was trashed or is already missing; the response reports `deleted` and `failed` counts.
-- A Drive trash failure keeps that `Snapshots` row so the next cleanup run retries it; failures are logged with `console.warn` in the Apps Script execution log. A failed cleanup request (network or rejected) is retried on the next capture cycle, because the Pi only advances `last_cleanup` on success. The operation is idempotent. Log and Feedback rows are never deleted by retention. Old Log `evidenceUrl` values become stale after their snapshot is removed; this is accepted.
+- A Drive trash failure keeps that `Snapshots` row so the next cleanup run retries it; failures are logged with `console.warn` in the Apps Script execution log. After every successful cleanup response the Pi logs `cleanup deleted: <n> failed: <m>`, and when `failed > 0` it also prints one warning line, so a stalled privacy retention is visible on the Pi rather than only in Apps Script. A partial failure is not a config error and does not stop later cleanup cycles. A failed cleanup request (network or rejected) is retried on the next capture cycle, because the Pi only advances `last_cleanup` on a successful response. The operation is idempotent. Log and Feedback rows are never deleted by retention. Old Log `evidenceUrl` values become stale after their snapshot is removed; this is accepted.
 
 ## Data model
 
@@ -142,7 +142,7 @@ The Google Sheet has up to nine tabs: `Log`, `Cars`, `Rates`, `Bills`, `Snapshot
 `id`, `capturedAt`, `driveFileId`, `driveUrl`, `width`, `height`, `bytes`, `source`, `createdAt`, `crop`.
 
 - One row per accepted Pi upload. The JPEG lives in the private Drive folder (`SNAPSHOT_FOLDER_ID`, or `EV Charge Snapshots` by default).
-- `crop` is the ROI string used for that capture, or empty/`full` for a full-frame testing capture.
+- `crop` is the configured `relay.crop` value at ingest: an `x:y:w:h` ROI, empty, or `full` during a testing capture. Remove `relay.crop=full` for production.
 - Rows and Drive files are removed by retention cleanup after `snapshot.retentionDays`.
 
 ### `Plates`
@@ -150,7 +150,7 @@ The Google Sheet has up to nine tabs: `Log`, `Cars`, `Rates`, `Bills`, `Snapshot
 `plate`, `car`, `active`, `createdAt`.
 
 - The owner fills the household plates; plate text is never committed to the repo.
-- A correction from Feedback upserts the mapping. Guest/ignore choices are not written here.
+- An owner correction from Feedback upserts the mapping (plate-map tuning is owner-only); a family claim never writes it. Guest/ignore choices are not written here.
 
 ### `Rates`
 
@@ -305,8 +305,8 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 1. **Apps Script:** add `Vision.gs` as a new file and update `Code.gs`, `SheetRepo.gs`, `Logic.gs`, and `Tesla.gs` as changed. Save, then Deploy -> Manage deployments -> Edit -> Version: New version (v26). The deployment URL stays the same.
 2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
 3. **Config seeding:** run `setup()` once from the Apps Script editor to seed the Config defaults. Set `relay.crop` to the ROI; use `full` only for the test camera. Leave `snapshot.retentionDays=30` unless a different retention is intended.
-4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then confirm success with observable evidence rather than a log line (the relay logs failures only): `systemctl status ev-relay` shows the service running, `/var/lib/ev-relay/config.json` exists and its modification time advances after the first cycle (the Pi rewrites it only after a successful signed config response), and a cropped snapshot appears in the owner view (or the private Drive snapshot folder) at the next `relay.intervalSeconds`. Later tuning needs no SSH.
-5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the Cloudflare provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and a correction appends Feedback and updates `Plates`.
+4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then confirm success with observable evidence rather than a log line (the relay logs config errors, capture/cleanup errors, a one-time `crop required` warning, and the cleanup `deleted`/`failed` counts; use these to diagnose, but verify the artifacts): `systemctl status ev-relay` shows the service running, `/var/lib/ev-relay/config.json` exists and its modification time advances after the first cycle (the Pi rewrites it only after a successful signed config response), and a cropped snapshot appears in the owner view (or the private Drive snapshot folder) at the next `relay.intervalSeconds`. After the first scheduled cleanup, the Pi log shows `cleanup deleted: <n> failed: <m>`; `failed` must stay 0, and a nonzero count or a `cleanup warning` line means Drive trash is failing and retention is stalling. Later tuning needs no SSH.
+5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the Cloudflare provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
 6. **Physical and evaluation:** install/aim the camera, capture day and night frames, set the ROI, and confirm the guest car stays outside the crop. Run at least 20 real sessions covering day/night and a guest car, review precision and unknown rates, and keep human confirmation. A 95% precision threshold is a future auto-assign gate, not enabled now.
 
 ## Local development
@@ -381,7 +381,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - The plate may be outside the crop (for example a side-on car), and night/IR frames may be unreadable. The VLM and manual selection are required fallbacks, not optional.
 - Cloud Vision and Cloudflare Workers AI free tiers can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
 - Old `evidenceUrl` links become stale after snapshot retention; the Log row and Feedback remain.
-- If trashing a Drive file fails transiently (rate limit or service error), its `Snapshots` row is kept and retried at the next cleanup run; a file is only orphaned if it is missing permissions or the row is removed by hand. Cleanup failures are visible in the Apps Script execution log, not in the Pi log.
+- If trashing a Drive file fails transiently (rate limit or service error), its `Snapshots` row is kept and retried at the next cleanup run; a file is only orphaned if it is missing permissions or the row is removed by hand. A partial failure appears in the Apps Script execution log and in the Pi log as `cleanup deleted: N failed: M` plus one `cleanup warning` line.
 - `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
@@ -392,7 +392,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 npm test
 ```
 
-The suite currently has 209 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, bill-period filtering, publish gating, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, remote config parsing/clamping and signatures, crop command construction and fail-closed capture, snapshot ingest and retention cleanup (including Drive trash success, failure, and missing-file paths), plate/VLM identification and policy suppression, feedback/reassign/ignore (including the Ignored sync skip), and the API envelope. Thirteen jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
+The suite currently has 215 tests and covers frontend logic, API payloads, Apps Script logic, Sheet migration, Sheet date-cell coercion, Tesla token/session mapping, CLP parsers, rate validation, duplicate-rate handling, bill PDF parsing (including the inferred cutoff), bill storage/allocation, bill-period filtering, publish gating, per-car peak-factor calibration, owner actions, family claims, QR auto-start URLs, duplicate-start refusal, delete-release behavior, lock scope, live charging estimates, 12-hour Hong Kong time, remote config parsing/clamping and signatures, crop command construction and fail-closed capture, snapshot ingest and retention cleanup (including Drive trash success, failure, and missing-file paths), plate/VLM identification and policy suppression, feedback/reassign/ignore (including the Ignored sync skip), and the API envelope. Twenty-one jsdom integration tests drive the real UI modules against the Apps Script VM with mocked Tesla, CLP, and Sheet data. The bill upload path was verified in a real browser against a real CLP bill export, including its split-cell sub-period rows; the parser also normalizes NFKC compatibility CJK forms. Browser smoke tests are documented in the implementation plan.
 
 CI: [`.github/workflows/test.yml`](.github/workflows/test.yml) runs `npm ci && npm test` on Node 20 for every push and pull request.
 
