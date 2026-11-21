@@ -349,6 +349,8 @@ function syncApply_(sessions, nowIso) {
     var manualRows = manualSyncRows_(records);
     var carFactors = carPeakFactorMap_(readCars_());
     var rates = readRates_();
+    var snapshots = readSnapshots_();
+    var snapshotWindowMs = Number(props.getProperty('SNAPSHOT_WINDOW_MINUTES') || 10) * 60 * 1000;
     var windowMs = Number(props.getProperty('MATCH_WINDOW_MINUTES') || 30) * 60 * 1000;
 
     var reconciled = 0;
@@ -381,6 +383,7 @@ function syncApply_(sessions, nowIso) {
         offPeakKWh: reconcileSplit.offPeakKWh,
         teslaKey: unassignedRow.teslaKey,
         source: 'tesla+manual',
+        evidenceUrl: unassignedRow.evidenceUrl || '',
       });
       if (!updated) continue;
       deleteLog_(unassignedRow.id);
@@ -456,6 +459,7 @@ function syncApply_(sessions, nowIso) {
         peakStart,
         peakEnd,
       );
+      var snapshot = nearestSnapshot_(session.startAt, snapshots, snapshotWindowMs);
       appendLog_({
         id: teslaRecordId_(session),
         car: 'unassigned',
@@ -470,6 +474,7 @@ function syncApply_(sessions, nowIso) {
         offPeakKWh: unassignedSplit.offPeakKWh,
         teslaKey: session.teslaKey,
         source: 'tesla',
+        evidenceUrl: snapshot ? snapshot.driveUrl : '',
       });
       knownKeys[session.teslaKey] = true;
       unassigned += 1;

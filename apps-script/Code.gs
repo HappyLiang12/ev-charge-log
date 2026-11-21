@@ -166,12 +166,22 @@ function familyPayload_(carId) {
   return {
     ok: true,
     car: car,
-    records: records.filter(function (record) { return record.car === car.id; }),
-    unassigned: records.filter(function (record) { return record.car === 'unassigned'; }),
+    records: stripEvidenceUrl_(records.filter(function (record) { return record.car === car.id; })),
+    unassigned: stripEvidenceUrl_(records.filter(function (record) { return record.car === 'unassigned'; })),
     rates: readRates_(),
     bills: familyBillShares_(car.id),
     serverTime: new Date().toISOString(),
   };
+}
+
+function stripEvidenceUrl_(records) {
+  return records.map(function (record) {
+    var copy = {};
+    for (var key in record) {
+      if (Object.prototype.hasOwnProperty.call(record, key) && key !== 'evidenceUrl') copy[key] = record[key];
+    }
+    return copy;
+  });
 }
 
 function familyBillShares_(carId) {
@@ -328,6 +338,7 @@ function assignUnassigned_(target, car, records) {
       offPeakKWh: split ? split.offPeakKWh : target.offPeakKWh,
       teslaKey: target.teslaKey,
       source: 'tesla+manual',
+      evidenceUrl: target.evidenceUrl || '',
     });
     if (!updated) throw new Error('Failed to update manual record');
     deleteLog_(target.id);
