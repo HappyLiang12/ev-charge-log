@@ -10,6 +10,7 @@ from tapo_relay import (
     build_cleanup_payload,
     build_relay_config_payload,
     canonical,
+    cleanup_due,
     load_cached_config,
     parse_crop,
     prune_queue,
@@ -87,6 +88,18 @@ class RelayConfigTest(unittest.TestCase):
         self.assertEqual(cfg["relay.enabled"], False)
         self.assertEqual(cfg["relay.jpegQuality"], 3)
 
+    def test_fallback_crop_survives_missing_raw_key(self):
+        cfg = validate_relay_config({}, {"relay.crop": "10:20:800:600"})
+        self.assertEqual(cfg["relay.crop"], "10:20:800:600")
+
+    def test_blank_raw_crop_overrides_fallback(self):
+        cfg = validate_relay_config({"relay.crop": ""}, {"relay.crop": "10:20:800:600"})
+        self.assertEqual(cfg["relay.crop"], "")
+
+    def test_fallback_numbers_are_clamped(self):
+        cfg = validate_relay_config({}, {"relay.intervalSeconds": 5})
+        self.assertEqual(cfg["relay.intervalSeconds"], 60)
+
     def test_cached_config_round_trips_and_falls_back(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
@@ -137,6 +150,13 @@ class RelayCleanupPayloadTest(unittest.TestCase):
             b"secret", ("cleanup\n" + at).encode("utf-8"), hashlib.sha256
         ).hexdigest()
         self.assertEqual(payload["signature"], expected)
+
+
+class RelayCleanupTriggerTest(unittest.TestCase):
+    def test_cleanup_due(self):
+        self.assertTrue(cleanup_due(1000.0, 0.0, 600))
+        self.assertFalse(cleanup_due(1000.0, 500.0, 600))
+        self.assertTrue(cleanup_due(1100.0, 500.0, 600))
 
 
 if __name__ == "__main__":

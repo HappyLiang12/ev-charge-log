@@ -55,11 +55,26 @@ def build_relay_config_payload(at, secret):
     }
 
 
+def clamp_number(value, limits):
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(limits[0], min(limits[1], number))
+
+
 def validate_relay_config(raw, fallback):
     config = dict(RELAY_CONFIG_DEFAULTS)
     for key, value in (fallback or {}).items():
-        if key in config:
+        if key not in config:
+            continue
+        limits = RELAY_CONFIG_LIMITS.get(key)
+        if limits is None:
             config[key] = value
+            continue
+        number = clamp_number(value, limits)
+        if number is not None:
+            config[key] = number
     if not isinstance(raw, dict):
         return config
     if isinstance(raw.get("relay.enabled"), bool):
@@ -67,19 +82,18 @@ def validate_relay_config(raw, fallback):
     for key, limits in RELAY_CONFIG_LIMITS.items():
         if key not in raw:
             continue
-        try:
-            number = int(round(float(raw[key])))
-        except (TypeError, ValueError):
-            continue
-        config[key] = max(limits[0], min(limits[1], number))
-    crop = str(raw.get("relay.crop", "") or "").strip()
-    if crop == "full":
-        config["relay.crop"] = "full"
-    elif re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", crop):
-        parts = [int(part) for part in crop.split(":")]
-        config["relay.crop"] = crop if parts[2] > 0 and parts[3] > 0 else ""
-    else:
-        config["relay.crop"] = ""
+        number = clamp_number(raw[key], limits)
+        if number is not None:
+            config[key] = number
+    if "relay.crop" in raw:
+        crop = str(raw.get("relay.crop") or "").strip()
+        if crop == "full":
+            config["relay.crop"] = "full"
+        elif re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", crop):
+            parts = [int(part) for part in crop.split(":")]
+            config["relay.crop"] = crop if parts[2] > 0 and parts[3] > 0 else ""
+        else:
+            config["relay.crop"] = ""
     return config
 
 
@@ -146,6 +160,10 @@ def build_cleanup_payload(at, secret, limit=500):
         "limit": int(limit),
         "signature": sign(secret, "cleanup\n" + at),
     }
+
+
+def cleanup_due(now, last_cleanup, interval):
+    return now - last_cleanup >= interval
 
 
 def probe_size(path):
@@ -215,6 +233,7 @@ def main():
     }
     config = load_cached_config(cache_path, fallback)
     last_cleanup = 0.0
+    last_config_error = None
     while True:
         if env["API_URL"]:
             at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -224,35 +243,36 @@ def main():
                     raise RuntimeError(result.get("error") or "config rejected")
                 config = validate_relay_config(result.get("config") or {}, config)
                 save_cached_config(cache_path, config)
+                last_config_error = None
             except Exception as error:
-                print("config error:", error, flush=True)
-        if not config["relay.enabled"]:
-            time.sleep(config["relay.intervalSeconds"])
-            continue
-        crop, full_mode = parse_crop(config["relay.crop"])
-        if not crop and not full_mode:
-            print("crop required: set relay.crop in the Config tab", flush=True)
-            time.sleep(config["relay.intervalSeconds"])
-            continue
-        captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-        image_path = queue / ("pending-" + str(int(time.time())) + ".jpg")
-        try:
-            capture_frame(
-                env["RTSP_URL"], image_path, config["relay.imageWidth"], config["relay.jpegQuality"],
-                crop, full_mode, config["relay.captureTimeoutSeconds"],
-            )
-            width, height = probe_size(image_path)
-            if env["API_URL"]:
-                payload = build_payload(image_path.read_bytes(), captured_at, width, height, env["RELAY_HMAC_SECRET"])
-                result = post_json(env["API_URL"], payload)
-                if not result.get("ok"):
-                    raise RuntimeError(result.get("error") or "snapshot rejected")
-                image_path.unlink(missing_ok=True)
-        except Exception as error:
-            print("relay error:", error, flush=True)
+                message = str(error)
+                if message != last_config_error:
+                    print("config error:", error, flush=True)
+                    last_config_error = message
+        if config["relay.enabled"]:
+            crop, full_mode = parse_crop(config["relay.crop"])
+            if not crop and not full_mode:
+                print("crop required: set relay.crop in the Config tab", flush=True)
+            else:
+                captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+                image_path = queue / ("pending-" + str(int(time.time())) + ".jpg")
+                try:
+                    capture_frame(
+                        env["RTSP_URL"], image_path, config["relay.imageWidth"], config["relay.jpegQuality"],
+                        crop, full_mode, config["relay.captureTimeoutSeconds"],
+                    )
+                    width, height = probe_size(image_path)
+                    if env["API_URL"]:
+                        payload = build_payload(image_path.read_bytes(), captured_at, width, height, env["RELAY_HMAC_SECRET"])
+                        result = post_json(env["API_URL"], payload)
+                        if not result.get("ok"):
+                            raise RuntimeError(result.get("error") or "snapshot rejected")
+                        image_path.unlink(missing_ok=True)
+                except Exception as error:
+                    print("relay error:", error, flush=True)
         if env["API_URL"]:
             now_ts = time.time()
-            if now_ts - last_cleanup >= config["relay.cleanupIntervalSeconds"]:
+            if cleanup_due(now_ts, last_cleanup, config["relay.cleanupIntervalSeconds"]):
                 try:
                     at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
                     cleanup = build_cleanup_payload(at, env["RELAY_HMAC_SECRET"], config["relay.cleanupBatch"])
