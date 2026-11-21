@@ -69,6 +69,12 @@ const record = (overrides = {}) => ({
   offPeakKWh: 10,
   teslaKey: 'din:1786968749',
   source: 'tesla+manual',
+  evidenceUrl: '',
+  suggestedCar: '',
+  suggestionConfidence: null,
+  suggestionPlate: '',
+  suggestionStatus: '',
+  identifiedAt: null,
   ...overrides,
 });
 
@@ -396,4 +402,20 @@ test('isValidRecord accepts the new record shape and old records', () => {
   assert.equal(isValidRecord(record()), true);
   assert.equal(isValidRecord({ id: 'old', startAt: base }), true);
   assert.equal(isValidRecord({ id: 'bad id', startAt: base }), false);
+});
+
+test('normalizeRecord keeps evidence and suggestion fields', () => {
+  const record = normalizeRecord({
+    id: 'rec-1', car: 'unassigned', startAt: '2026-11-15T04:00:00.000Z',
+    evidenceUrl: 'https://drive.google.com/file/d/file-1/view',
+    suggestedCar: 'model3', suggestionConfidence: 0.99,
+    suggestionPlate: 'AB1234', suggestionStatus: 'matched',
+    identifiedAt: '2026-11-15T04:01:00.000Z',
+  });
+  assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
+  assert.equal(record.suggestedCar, 'model3');
+  assert.equal(record.suggestionConfidence, 0.99);
+  assert.equal(record.suggestionPlate, 'AB1234');
+  assert.equal(record.suggestionStatus, 'matched');
+  assert.equal(record.identifiedAt, '2026-11-15T04:01:00.000Z');
 });

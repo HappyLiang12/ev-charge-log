@@ -1060,3 +1060,65 @@ test('snapshot ingest rejects a bad signature and an old timestamp', () => {
   assert.equal(send(env, old).ok, false);
   assert.match(send(env, old).error, /timestamp/i);
 });
+
+test('sync attaches the nearest snapshot URL to a new unassigned session', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt'],
+        ['snap-1', '2026-11-14T05:04:00.000Z', 'file-1', 'https://drive.google.com/file/d/file-1/view', 1920, 1080, 1000, 'pi', '2026-11-14T05:04:01.000Z'],
+      ],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600, refresh_token: 'refresh-2' }));
+      }
+      if (url.includes('/api/1/energy_sites/site-1/telemetry_history')) {
+        return response(200, JSON.stringify({
+          response: {
+            telemetry_history: [{
+              charge_start_time: { seconds: Math.floor(Date.parse(SESSION_START) / 1000) },
+              charge_duration: { seconds: 3600 },
+              energy_added_wh: 12000,
+              target_id: 'target-1',
+              din: 'din:evidence',
+            }],
+          },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const result = send(env, { action: 'sync' });
+  assert.equal(result.ok, true);
+  assert.equal(result.unassigned, 1);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
+});
+
+test('family payload omits the private evidence URL', () => {
+  const header = [
+    'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt',
+    'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl', 'suggestedCar',
+    'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt',
+  ];
+  const env = setup({
+    sheets: {
+      Log: [
+        header,
+        ['rec-1', '2026-11-14T05:00:00.000Z', '2026-11-14', '13:00', 'model3', 20, 7200, '', '', 10, 10, '', 'manual', 'https://drive.google.com/file/d/x/view', '', '', '', '', ''],
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const family = receive(env, { car: 'model3' });
+  assert.equal(family.records.length, 1);
+  assert.equal('evidenceUrl' in family.records[0], false);
+  const owner = receive(env, { owner: '1' });
+  assert.equal(owner.records[0].evidenceUrl, 'https://drive.google.com/file/d/x/view');
+});
