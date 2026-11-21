@@ -99,17 +99,53 @@ def save_cached_config(path, config):
     temp.replace(path)
 
 
-def capture_frame(rtsp_url, output_path, width=1280):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
+class CropRequired(RuntimeError):
+    pass
+
+
+def parse_crop(value):
+    text = str(value or "").strip()
+    if text == "full":
+        return None, True
+    match = re.fullmatch(r"([0-9]+):([0-9]+):([0-9]+):([0-9]+)", text)
+    if not match:
+        return None, False
+    x, y, width, height = [int(part) for part in match.groups()]
+    if width <= 0 or height <= 0:
+        return None, False
+    return (x, y, width, height), False
+
+
+def build_capture_command(rtsp_url, output_path, width, quality, crop, full_mode):
+    if not crop and not full_mode:
+        raise CropRequired("relay.crop is not configured")
+    filters = []
+    if crop:
+        x, y, crop_width, crop_height = crop
+        filters.append(f"crop={crop_width}:{crop_height}:{x}:{y}")
+    filters.append(f"scale='min({int(width)},iw)':-2")
+    return [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-rtsp_transport", "tcp", "-i", rtsp_url,
-        "-frames:v", "1", "-vf", f"scale='min({width},iw)':-2",
-        "-q:v", "3", "-an", "-y", str(output_path),
+        "-frames:v", "1", "-vf", ",".join(filters),
+        "-q:v", str(int(quality)), "-an", "-y", str(output_path),
     ]
-    subprocess.run(cmd, check=True, timeout=30)
-    return output_path
+
+
+def capture_frame(rtsp_url, output_path, width=1920, quality=3, crop=None, full_mode=False, timeout_seconds=30):
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    cmd = build_capture_command(rtsp_url, output_path, width, quality, crop, full_mode)
+    subprocess.run(cmd, check=True, timeout=max(10, int(timeout_seconds)))
+    return Path(output_path)
+
+
+def build_cleanup_payload(at, secret, limit=500):
+    return {
+        "action": "cleanup",
+        "at": at,
+        "limit": int(limit),
+        "signature": sign(secret, "cleanup\n" + at),
+    }
 
 
 def probe_size(path):
@@ -159,20 +195,52 @@ def main():
         "RTSP_URL": os.environ["RTSP_URL"],
         "API_URL": os.environ.get("API_URL", "").strip(),
         "RELAY_HMAC_SECRET": os.environ.get("RELAY_HMAC_SECRET", ""),
-        "INTERVAL_SECONDS": int(os.environ.get("INTERVAL_SECONDS", "300")),
-        "IMAGE_WIDTH": int(os.environ.get("IMAGE_WIDTH", "1280")),
         "QUEUE_DIR": os.environ.get("QUEUE_DIR", "/var/lib/ev-relay/queue"),
-        "MAX_QUEUE": int(os.environ.get("MAX_QUEUE", "1000")),
     }
     if env["API_URL"] and not env["RELAY_HMAC_SECRET"]:
         raise SystemExit("RELAY_HMAC_SECRET is required when API_URL is set")
     queue = Path(env["QUEUE_DIR"])
     queue.mkdir(parents=True, exist_ok=True)
+    cache_path = queue.parent / "config.json"
+    fallback = {
+        "relay.enabled": True,
+        "relay.intervalSeconds": int(os.environ.get("INTERVAL_SECONDS", "300")),
+        "relay.imageWidth": int(os.environ.get("IMAGE_WIDTH", "1920")),
+        "relay.jpegQuality": int(os.environ.get("JPEG_QUALITY", "3")),
+        "relay.crop": os.environ.get("CROP", ""),
+        "relay.captureTimeoutSeconds": int(os.environ.get("CAPTURE_TIMEOUT_SECONDS", "30")),
+        "relay.maxQueue": int(os.environ.get("MAX_QUEUE", "1000")),
+        "relay.cleanupIntervalSeconds": int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "3600")),
+        "relay.cleanupBatch": int(os.environ.get("CLEANUP_BATCH", "500")),
+    }
+    config = load_cached_config(cache_path, fallback)
+    last_cleanup = 0.0
     while True:
+        if env["API_URL"]:
+            at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            try:
+                result = post_json(env["API_URL"], build_relay_config_payload(at, env["RELAY_HMAC_SECRET"]), timeout=30)
+                if not result.get("ok"):
+                    raise RuntimeError(result.get("error") or "config rejected")
+                config = validate_relay_config(result.get("config") or {}, config)
+                save_cached_config(cache_path, config)
+            except Exception as error:
+                print("config error:", error, flush=True)
+        if not config["relay.enabled"]:
+            time.sleep(config["relay.intervalSeconds"])
+            continue
+        crop, full_mode = parse_crop(config["relay.crop"])
+        if not crop and not full_mode:
+            print("crop required: set relay.crop in the Config tab", flush=True)
+            time.sleep(config["relay.intervalSeconds"])
+            continue
         captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         image_path = queue / ("pending-" + str(int(time.time())) + ".jpg")
         try:
-            capture_frame(env["RTSP_URL"], image_path, env["IMAGE_WIDTH"])
+            capture_frame(
+                env["RTSP_URL"], image_path, config["relay.imageWidth"], config["relay.jpegQuality"],
+                crop, full_mode, config["relay.captureTimeoutSeconds"],
+            )
             width, height = probe_size(image_path)
             if env["API_URL"]:
                 payload = build_payload(image_path.read_bytes(), captured_at, width, height, env["RELAY_HMAC_SECRET"])
@@ -182,11 +250,24 @@ def main():
                 image_path.unlink(missing_ok=True)
         except Exception as error:
             print("relay error:", error, flush=True)
+        if env["API_URL"]:
+            now_ts = time.time()
+            if now_ts - last_cleanup >= config["relay.cleanupIntervalSeconds"]:
+                try:
+                    at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+                    cleanup = build_cleanup_payload(at, env["RELAY_HMAC_SECRET"], config["relay.cleanupBatch"])
+                    result = post_json(env["API_URL"], cleanup, timeout=120)
+                    if not result.get("ok"):
+                        raise RuntimeError(result.get("error") or "cleanup rejected")
+                    print("cleanup deleted:", result.get("deleted"), flush=True)
+                    last_cleanup = now_ts
+                except Exception as error:
+                    print("cleanup error:", error, flush=True)
         try:
-            prune_queue(queue, env["MAX_QUEUE"])
+            prune_queue(queue, config["relay.maxQueue"])
         except Exception as error:
             print("queue error:", error, flush=True)
-        time.sleep(env["INTERVAL_SECONDS"])
+        time.sleep(config["relay.intervalSeconds"])
 
 
 if __name__ == "__main__":
