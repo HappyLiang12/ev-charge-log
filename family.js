@@ -219,6 +219,18 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
     meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
+    let hint = null;
+    if (record.suggestedCar === state.car.id && record.suggestionStatus === 'matched') {
+      hint = document.createElement('span');
+      hint.className = 'suggestion-label';
+      const percent = record.suggestionConfidence > 0
+        ? Math.round(record.suggestionConfidence * 100)
+        : 0;
+      hint.textContent = percent > 0
+        ? `系統建議係你（${percent}%），請認領`
+        : '系統建議係你，請認領';
+    }
+
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
     const claim = document.createElement('button');
@@ -232,7 +244,9 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     );
     claim.addEventListener('click', () => { void onClaim(record); });
     actions.append(claim);
-    li.append(head, meta, actions);
+    li.append(head, meta);
+    if (hint) li.append(hint);
+    li.append(actions);
     return li;
   }
 

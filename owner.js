@@ -16,6 +16,8 @@ import {
   syncTesla,
   refreshRates,
   assignSession,
+  ignoreSession,
+  reassignSession,
   saveBill,
   publishBill,
 } from './api.js';
@@ -28,6 +30,9 @@ import {
 } from './bill.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
+
+const ENGINE_LABELS = { plate: '車牌', vlm: '視覺' };
+const ASSIGNED_LIMIT = 10;
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -59,6 +64,8 @@ export function initOwner({ apiUrl }) {
     legacy: byId('ownerLegacy'),
     pending: byId('ownerPending'),
     pendingEmpty: byId('ownerPendingEmpty'),
+    assigned: byId('ownerAssigned'),
+    assignedEmpty: byId('ownerAssignedEmpty'),
     rates: byId('ownerRates'),
     rateSource: byId('ownerRateSource'),
     links: byId('ownerLinks'),
@@ -106,6 +113,59 @@ export function initOwner({ apiUrl }) {
   function pctLabel(value) {
     if (value === null || value === undefined || !Number.isFinite(value)) return '—';
     return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+  }
+
+  function carLabel(id) {
+    const car = state.cars.find((item) => item.id === id);
+    return car ? car.name : id;
+  }
+
+  function confidencePercent(value) {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.round(value * 100);
+  }
+
+  function suggestionLabel(record) {
+    const parts = [];
+    const percent = confidencePercent(record.suggestionConfidence);
+    if (percent > 0) parts.push(`${percent}%`);
+    const engine = ENGINE_LABELS[record.suggestionEngine];
+    if (engine) parts.push(engine);
+    return parts.length
+      ? `建議：${carLabel(record.suggestedCar)}（${parts.join('，')}）`
+      : `建議：${carLabel(record.suggestedCar)}`;
+  }
+
+  function driveFileId(url) {
+    const value = String(url || '');
+    const match = value.match(/\/d\/([^/?#]+)/) || value.match(/[?&]id=([^&#]+)/);
+    return match ? match[1] : '';
+  }
+
+  function makeEvidenceLink(record, { compact = false } = {}) {
+    if (!record.evidenceUrl) return null;
+    const link = document.createElement('a');
+    link.className = compact ? 'evidence-link evidence-compact' : 'evidence-link';
+    link.href = record.evidenceUrl;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.setAttribute('aria-label', '查看充電紀錄相片');
+    const fileId = driveFileId(record.evidenceUrl);
+    if (!fileId) {
+      link.textContent = '查看相片';
+      return link;
+    }
+    const image = document.createElement('img');
+    image.className = compact ? 'evidence-thumb evidence-thumb-small' : 'evidence-thumb';
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w480`;
+    image.addEventListener('error', () => {
+      image.remove();
+      if (!link.textContent) link.textContent = '查看相片';
+    });
+    link.append(image);
+    return link;
   }
 
   function billCalibrationMessage(calibration, periodEnd) {
@@ -513,6 +573,30 @@ export function initOwner({ apiUrl }) {
     return card;
   }
 
+  function fillCarOptions(select, { placeholder, current } = {}) {
+    if (placeholder !== undefined) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = placeholder;
+      select.append(option);
+    }
+    for (const car of state.cars.filter((item) => item.active)) {
+      const option = document.createElement('option');
+      option.value = car.id;
+      option.textContent = car.name;
+      select.append(option);
+    }
+    if (current && !state.cars.some((car) => car.active && car.id === current)) {
+      const option = document.createElement('option');
+      option.value = current;
+      option.textContent = `${carLabel(current)}（已停用）`;
+      option.disabled = true;
+      select.append(option);
+    }
+    if (current) select.value = current;
+    return select;
+  }
+
   function makeUnassignedRow(record) {
     const li = document.createElement('li');
     const head = document.createElement('div');
@@ -530,28 +614,90 @@ export function initOwner({ apiUrl }) {
     const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
     meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
-    const actions = document.createElement('div');
-    actions.className = 'owner-row-actions';
     const select = document.createElement('select');
     select.setAttribute('aria-label', '分配車輛');
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = '選擇車輛';
-    select.append(placeholder);
-    for (const car of state.cars.filter((item) => item.active)) {
-      const option = document.createElement('option');
-      option.value = car.id;
-      option.textContent = car.name;
-      select.append(option);
-    }
+    fillCarOptions(select, { placeholder: '選擇車輛' });
     select.disabled = state.busy;
+
+    let suggestion = null;
+    if (record.suggestedCar && record.suggestionStatus === 'matched') {
+      suggestion = document.createElement('div');
+      suggestion.className = 'suggestion-row';
+      const label = document.createElement('span');
+      label.className = 'suggestion-label';
+      label.textContent = suggestionLabel(record);
+      const adopt = document.createElement('button');
+      adopt.type = 'button';
+      adopt.className = 'owner-suggestion';
+      adopt.textContent = '採用建議';
+      adopt.disabled = state.busy
+        || !state.cars.some((car) => car.active && car.id === record.suggestedCar);
+      adopt.addEventListener('click', () => { select.value = record.suggestedCar; });
+      suggestion.append(label, adopt);
+    } else if (record.evidenceUrl) {
+      suggestion = document.createElement('span');
+      suggestion.className = 'suggestion-label';
+      suggestion.textContent = record.suggestionStatus === 'error'
+        ? '辨識失敗，請人手選擇'
+        : '未能辨識，請人手選擇';
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'owner-row-actions';
     const assign = document.createElement('button');
     assign.type = 'button';
     assign.textContent = '分配';
     assign.disabled = state.busy;
     assign.addEventListener('click', () => { void onAssign(record, select); });
-    actions.append(select, assign);
-    li.append(head, meta, actions);
+    const ignore = document.createElement('button');
+    ignore.type = 'button';
+    ignore.className = 'owner-ignore';
+    ignore.textContent = '非家中車輛（忽略）';
+    ignore.disabled = state.busy;
+    ignore.addEventListener('click', () => { void onIgnore(record); });
+    actions.append(select, assign, ignore);
+
+    li.append(head, meta);
+    if (suggestion) li.append(suggestion);
+    const evidence = makeEvidenceLink(record);
+    if (evidence) li.append(evidence);
+    li.append(actions);
+    return li;
+  }
+
+  function makeAssignedRow(record) {
+    const li = document.createElement('li');
+    const head = document.createElement('div');
+    head.className = 'owner-row-head';
+    const when = document.createElement('span');
+    when.textContent = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
+    const title = document.createElement('strong');
+    title.textContent = carLabel(record.car);
+    head.append(when, title);
+
+    const meta = document.createElement('div');
+    meta.className = 'owner-row-meta';
+    const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
+    meta.textContent = `${record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh · ${duration}`;
+
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `改派 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的車輛`);
+    fillCarOptions(select, { current: record.car });
+    select.disabled = state.busy;
+    const reassign = document.createElement('button');
+    reassign.type = 'button';
+    reassign.className = 'owner-reassign';
+    reassign.textContent = '改派';
+    reassign.disabled = state.busy;
+    reassign.addEventListener('click', () => { void onReassign(record, select); });
+    const actions = document.createElement('div');
+    actions.className = 'owner-row-actions';
+    actions.append(select, reassign);
+
+    li.append(head, meta);
+    const evidence = makeEvidenceLink(record, { compact: true });
+    if (evidence) li.append(evidence);
+    li.append(actions);
     return li;
   }
 
@@ -651,6 +797,16 @@ export function initOwner({ apiUrl }) {
     );
     els.pendingEmpty.hidden = pending.length > 0;
     els.pendingEmpty.textContent = '所有紀錄都已配對。';
+
+    const assigned = filtered
+      .filter((record) => (
+        record.car && record.car !== 'unassigned' && record.kWh !== null && record.source !== 'legacy'
+      ))
+      .sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt))
+      .slice(0, ASSIGNED_LIMIT);
+    els.assigned.replaceChildren();
+    for (const record of assigned) els.assigned.append(makeAssignedRow(record));
+    els.assignedEmpty.hidden = assigned.length > 0;
 
     els.rates.replaceChildren();
     renderRateCards(els.rates, state.rates, '未有費率；請按「更新費率」。');
@@ -758,6 +914,49 @@ export function initOwner({ apiUrl }) {
     } catch (error) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '分配失敗，請檢查網絡後重試。'));
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onIgnore(record) {
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      await ignoreSession(apiUrl, record.id);
+      showToast(els.toast, '已標記為非家中車輛。');
+      await refreshOrWarn('已忽略，但未能載入最新資料，請重新載入。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '忽略失敗，請檢查網絡後重試。'));
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onReassign(record, select) {
+    const car = select.value;
+    if (!car) {
+      showToast(els.toast, '請先選擇車輛。');
+      return;
+    }
+    if (car === record.car) {
+      showToast(els.toast, '請選擇其他車輛。');
+      return;
+    }
+    if (!apiUrl || state.busy) return;
+    state.busy = true;
+    render();
+    try {
+      await reassignSession(apiUrl, record.id, car);
+      showToast(els.toast, '已改派。');
+      await refreshOrWarn('已改派，但未能載入最新資料，請重新載入。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '改派失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();

@@ -15,6 +15,12 @@ export const TOKEN_URL = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/to
 export const LOG_HEADER = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
+  'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate',
+  'suggestionStatus', 'identifiedAt', 'suggestionEngine', 'suggestionSnapshotId',
+];
+export const FEEDBACK_HEADER = [
+  'id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar',
+  'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt',
 ];
 export const CARS_HEADER = ['id', 'name', 'active', 'createdAt'];
 export const RATES_HEADER = [
@@ -101,17 +107,23 @@ export function rateRow(month, fuelAdjustment, { duplicate = false, sourceUrl = 
 }
 
 export function logRow(record) {
+  // Accept a pre-built row so tests can use logRow(record) seeds directly.
+  if (Array.isArray(record)) return record;
   return [
     record.id, record.startAt, hkDate(record.startAt), hkTime(record.startAt),
     record.car, record.kWh ?? '', record.durationSec ?? '',
     record.teslaStartAt ?? '', record.teslaEndAt ?? '',
     record.peakKWh ?? '', record.offPeakKWh ?? '',
     record.teslaKey ?? '', record.source ?? 'manual',
+    record.evidenceUrl ?? '', record.suggestedCar ?? '',
+    record.suggestionConfidence ?? '', record.suggestionPlate ?? '',
+    record.suggestionStatus ?? '', record.identifiedAt ?? '',
+    record.suggestionEngine ?? '', record.suggestionSnapshotId ?? '',
   ];
 }
 
-export function defaultSheets({ rates, records = [], cars } = {}) {
-  return {
+export function defaultSheets({ rates, records = [], cars, feedback } = {}) {
+  const sheets = {
     Cars: [
       CARS_HEADER,
       ...(cars || [
@@ -122,6 +134,8 @@ export function defaultSheets({ rates, records = [], cars } = {}) {
     Rates: [RATES_HEADER, ...(rates || [rateRow('2026-11', 47.4)])],
     Log: [LOG_HEADER, ...records.map(logRow)],
   };
+  if (Array.isArray(feedback)) sheets.Feedback = [FEEDBACK_HEADER, ...feedback];
+  return sheets;
 }
 
 export function teslaSession(startAt, { energyWh = 12000, durationSec = 3600 } = {}) {

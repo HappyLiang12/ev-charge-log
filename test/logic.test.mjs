@@ -75,6 +75,8 @@ const record = (overrides = {}) => ({
   suggestionPlate: '',
   suggestionStatus: '',
   identifiedAt: null,
+  suggestionEngine: '',
+  suggestionSnapshotId: '',
   ...overrides,
 });
 
@@ -411,6 +413,7 @@ test('normalizeRecord keeps evidence and suggestion fields', () => {
     suggestedCar: 'model3', suggestionConfidence: 0.99,
     suggestionPlate: 'AB1234', suggestionStatus: 'matched',
     identifiedAt: '2026-11-15T04:01:00.000Z',
+    suggestionEngine: 'vlm', suggestionSnapshotId: 'snap-1',
   });
   assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
   assert.equal(record.suggestedCar, 'model3');
@@ -418,4 +421,6 @@ test('normalizeRecord keeps evidence and suggestion fields', () => {
   assert.equal(record.suggestionPlate, 'AB1234');
   assert.equal(record.suggestionStatus, 'matched');
   assert.equal(record.identifiedAt, '2026-11-15T04:01:00.000Z');
+  assert.equal(record.suggestionEngine, 'vlm');
+  assert.equal(record.suggestionSnapshotId, 'snap-1');
 });

@@ -87,6 +87,8 @@ export function normalizeRecord(value) {
     suggestionPlate: text(value.suggestionPlate),
     suggestionStatus: text(value.suggestionStatus),
     identifiedAt: nullableDate(value.identifiedAt),
+    suggestionEngine: text(value.suggestionEngine),
+    suggestionSnapshotId: text(value.suggestionSnapshotId),
   };
 }
 
