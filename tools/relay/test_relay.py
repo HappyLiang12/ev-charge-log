@@ -1,10 +1,13 @@
 import hashlib
 import hmac
+import io
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from tapo_relay import (
+    CROP_REQUIRED_MESSAGE,
     CropRequired,
     build_capture_command,
     build_cleanup_payload,
@@ -12,6 +15,8 @@ from tapo_relay import (
     canonical,
     cleanup_due,
     load_cached_config,
+    log_once,
+    parse_cleanup_result,
     parse_crop,
     prune_queue,
     save_cached_config,
@@ -100,6 +105,13 @@ class RelayConfigTest(unittest.TestCase):
         cfg = validate_relay_config({}, {"relay.intervalSeconds": 5})
         self.assertEqual(cfg["relay.intervalSeconds"], 60)
 
+    def test_non_finite_numbers_fall_back_to_default(self):
+        for value in (float("inf"), float("-inf")):
+            cfg = validate_relay_config({"relay.intervalSeconds": value}, {})
+            self.assertEqual(cfg["relay.intervalSeconds"], 300)
+        cfg = validate_relay_config({}, {"relay.intervalSeconds": float("inf")})
+        self.assertEqual(cfg["relay.intervalSeconds"], 300)
+
     def test_cached_config_round_trips_and_falls_back(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
@@ -157,6 +169,25 @@ class RelayCleanupTriggerTest(unittest.TestCase):
         self.assertTrue(cleanup_due(1000.0, 0.0, 600))
         self.assertFalse(cleanup_due(1000.0, 500.0, 600))
         self.assertTrue(cleanup_due(1100.0, 500.0, 600))
+
+
+class RelayCleanupLogTest(unittest.TestCase):
+    def test_parse_cleanup_result(self):
+        self.assertEqual(parse_cleanup_result({"deleted": 3, "failed": 2}), (3, 2))
+        self.assertEqual(parse_cleanup_result({"deleted": 1}), (1, 0))
+        self.assertEqual(parse_cleanup_result({"deleted": 0, "failed": None}), (0, 0))
+        self.assertEqual(parse_cleanup_result({"deleted": 0, "failed": "bad"}), (0, 0))
+
+    def test_crop_warning_logs_once_per_change(self):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            last = log_once(None, CROP_REQUIRED_MESSAGE)
+            last = log_once(last, CROP_REQUIRED_MESSAGE)
+            last = log_once(last, CROP_REQUIRED_MESSAGE)
+            self.assertEqual(last, CROP_REQUIRED_MESSAGE)
+            # A later recurrence (after a valid crop reset) logs again.
+            last = log_once(None, CROP_REQUIRED_MESSAGE)
+        self.assertEqual(buffer.getvalue().count(CROP_REQUIRED_MESSAGE), 2)
 
 
 if __name__ == "__main__":
