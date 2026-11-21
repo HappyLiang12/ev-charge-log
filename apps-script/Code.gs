@@ -244,19 +244,27 @@ function familyPayload_(carId) {
   return {
     ok: true,
     car: car,
-    records: stripEvidenceUrl_(records.filter(function (record) { return record.car === car.id; })),
-    unassigned: stripEvidenceUrl_(records.filter(function (record) { return record.car === 'unassigned'; })),
+    records: stripFamilyRecord_(records.filter(function (record) { return record.car === car.id; })),
+    unassigned: stripFamilyRecord_(records.filter(function (record) { return record.car === 'unassigned'; })),
     rates: readRates_(),
     bills: familyBillShares_(car.id),
     serverTime: new Date().toISOString(),
   };
 }
 
-function stripEvidenceUrl_(records) {
+// Family payloads carry only what the family UI needs: no evidence link, no
+// engine, and no snapshot id. Least privilege keeps internal provenance out of
+// a capability URL.
+var FAMILY_HIDDEN_FIELDS_ = { evidenceUrl: true, suggestionEngine: true, suggestionSnapshotId: true };
+
+function stripFamilyRecord_(records) {
   return records.map(function (record) {
     var copy = {};
     for (var key in record) {
-      if (Object.prototype.hasOwnProperty.call(record, key) && key !== 'evidenceUrl') copy[key] = record[key];
+      if (Object.prototype.hasOwnProperty.call(record, key)
+        && !Object.prototype.hasOwnProperty.call(FAMILY_HIDDEN_FIELDS_, key)) {
+        copy[key] = record[key];
+      }
     }
     return copy;
   });
@@ -435,7 +443,9 @@ function recordFeedbackRow_(target, chosenCar, actor) {
     actor: actor || '',
     createdAt: new Date().toISOString(),
   });
-  if (target.suggestionPlate && target.suggestedCar && target.suggestedCar !== chosenCar) {
+  // Plate-map tuning is owner-only: a family claim still records its feedback
+  // row, but a mistaken family claim must never rewrite OCR for every car.
+  if (actor === 'owner' && target.suggestionPlate && target.suggestedCar && target.suggestedCar !== chosenCar) {
     upsertPlate_(target.suggestionPlate, chosenCar);
   }
 }
@@ -510,16 +520,15 @@ function assignAction_(data) {
 
 function ignoreAction_(data) {
   var record = findRecord_(readLog_(), String(data.id || ''));
-  if (record && record.car !== 'unassigned') {
+  if (!record) throw new Error('Unknown record');
+  if (record.car !== 'unassigned') {
     throw new Error('Only unassigned sessions can be ignored');
   }
-  if (record) {
-    // Deleting the Log row also deletes the dedupe key, so persist it first;
-    // otherwise the next sync re-imports the session.
-    if (record.teslaKey) appendIgnoredTeslaKey_(record.teslaKey, 'owner');
-    recordAssignmentFeedback_(record, 'guest', 'owner');
-  }
-  var deleted = deleteLog_(String(data.id || ''));
+  // Deleting the Log row also deletes the dedupe key, so persist it first;
+  // otherwise the next sync re-imports the session.
+  if (record.teslaKey) appendIgnoredTeslaKey_(record.teslaKey, 'owner');
+  recordAssignmentFeedback_(record, 'guest', 'owner');
+  var deleted = deleteLog_(record.id);
   return { ignored: deleted };
 }
 
@@ -530,6 +539,9 @@ function reassignAction_(data) {
   }
   var car = findCar_(data.car);
   if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
+  // The UI blocks this, but a direct call must not append a duplicate
+  // correction that would inflate the precision buckets.
+  if (record.car === car.id) throw new Error('Record already belongs to this car');
   var at = record.teslaStartAt || record.startAt;
   var rate = selectRateRow_(hkMonth_(at), readRates_());
   var split = record.kWh !== null && record.durationSec

@@ -42,7 +42,30 @@ test('VLM low confidence and guest become unknown', () => {
     }) }),
   });
   const cars = [{ id: 'model3', name: 'Model 3', description: 'blue Tesla Model 3' }];
-  const result = env.call('vlmIdentify_', 'base64', cars, 0.8);
+  const result = env.call('vlmIdentify_', 'base64', cars, 0.8, '@cf/test/vision-model');
   assert.equal(result.status, 'unknown');
   assert.equal(result.car, '');
+});
+
+test('VLM confidence above 1 is clamped to 1', () => {
+  const env = setupVision({
+    fetch: () => ({ getResponseCode: () => 200, getContentText: () => JSON.stringify({
+      result: { response: '{"carId":"model3","confidence":1.7,"reason":"clear"}' },
+    }) }),
+  });
+  const cars = [{ id: 'model3', name: 'Model 3', active: true, description: 'blue Tesla Model 3' }];
+  const result = env.call('vlmIdentify_', 'base64', cars, 0.8, '@cf/test/vision-model');
+  assert.equal(result.status, 'matched');
+  assert.equal(result.car, 'model3');
+  assert.equal(result.confidence, 1);
+});
+
+test('VLM requires a model id passed from the locked config read', () => {
+  const env = setupVision({
+    fetch: () => { throw new Error('provider must not be called without a model'); },
+  });
+  const cars = [{ id: 'model3', name: 'Model 3', description: 'blue Tesla Model 3' }];
+  const result = env.call('vlmIdentify_', 'base64', cars, 0.8, '');
+  assert.equal(result.status, 'error');
+  assert.match(result.reason, /not configured/);
 });

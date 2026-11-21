@@ -405,7 +405,7 @@ test('ignore records guest feedback and removes the session', () => {
   assert.equal(plain(env.call('readLog_')).length, 0);
 });
 
-test('ignore reports an unknown record without recording feedback', () => {
+test('ignore rejects an unknown record without recording feedback', () => {
   const env = setup({
     sheets: {
       Log: [LOG_HEADER, row({ 0: 'unassigned-1', 4: 'unassigned', 11: 'din:a' })],
@@ -413,8 +413,9 @@ test('ignore reports an unknown record without recording feedback', () => {
     },
   });
   const result = send(env, { action: 'ignore', id: 'missing-1' });
-  assert.equal(result.ok, true);
-  assert.equal(result.ignored, false);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Unknown record/);
+  assert.equal(result.ignored, undefined);
   assert.equal(plain(env.call('readLog_')).length, 1);
   assert.equal(plain(env.call('readFeedback_')).length, 0);
 });
@@ -475,6 +476,21 @@ test('reassign recomputes the peak split with the new car peak factor', () => {
   assert.equal(record.peakKWh, 2.5);
   assert.equal(record.offPeakKWh, 7.5);
   assert.equal(env.values('Feedback')[1][5], 'ix3');
+});
+
+test('reassign rejects a same-car reassign without appending feedback', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-1', 4: 'model3', 11: 'din:r', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+    },
+  });
+  const result = send(env, { action: 'reassign', id: 'rec-1', car: 'model3' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /already belongs to this car/);
+  assert.equal(plain(env.call('readLog_'))[0].car, 'model3');
+  assert.equal(plain(env.call('readFeedback_')).length, 0);
 });
 
 test('reassign rejects an unassigned record and leaves it unassigned', () => {
@@ -1256,27 +1272,30 @@ test('sync attaches the nearest snapshot URL to a new unassigned session', () =>
   assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-1/view');
 });
 
-test('family payload omits the private evidence URL', () => {
-  const header = [
-    'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec', 'teslaStartAt', 'teslaEndAt',
-    'peakKWh', 'offPeakKWh', 'teslaKey', 'source', 'evidenceUrl', 'suggestedCar',
-    'suggestionConfidence', 'suggestionPlate', 'suggestionStatus', 'identifiedAt',
+test('family payload omits the evidence URL, engine, and snapshot id', () => {
+  const record = [
+    ...row({ 0: 'rec-1', 4: 'model3' }),
+    'https://drive.google.com/file/d/x/view', 'model3', 0.9, 'AB1234', 'matched',
+    SESSION_START, 'plate', 'snap-1',
   ];
   const env = setup({
     sheets: {
-      Log: [
-        header,
-        ['rec-1', '2026-11-14T05:00:00.000Z', '2026-11-14', '13:00', 'model3', 20, 7200, '', '', 10, 10, '', 'manual', 'https://drive.google.com/file/d/x/view', '', '', '', '', ''],
-      ],
+      Log: [IDENTIFY_HEADER, record],
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
       Rates: [RATES_HEADER, RATE_ROW],
     },
   });
   const family = receive(env, { car: 'model3' });
   assert.equal(family.records.length, 1);
-  assert.equal('evidenceUrl' in family.records[0], false);
+  for (const hidden of ['evidenceUrl', 'suggestionEngine', 'suggestionSnapshotId']) {
+    assert.equal(hidden in family.records[0], false, hidden);
+  }
+  assert.equal(family.records[0].suggestedCar, 'model3');
+  assert.equal(family.records[0].suggestionConfidence, 0.9);
   const owner = receive(env, { owner: '1' });
   assert.equal(owner.records[0].evidenceUrl, 'https://drive.google.com/file/d/x/view');
+  assert.equal(owner.records[0].suggestionEngine, 'plate');
+  assert.equal(owner.records[0].suggestionSnapshotId, 'snap-1');
 });
 
 const CONFIG_HEADER = ['key', 'value', 'updatedAt', 'notes'];
@@ -1970,6 +1989,14 @@ test('identify takes short locks and keeps provider calls outside them', () => {
     writeUnderLock = lock.held;
     return updateLog(id, patch);
   };
+  // Every Config access (including a first-run header write) must happen under
+  // the prepare lock; the provider stage must not read Config.
+  const configAccessUnderLock = [];
+  const sheetNamed = env.context.sheetNamed_;
+  env.context.sheetNamed_ = (spreadsheet, name, columns) => {
+    if (name === 'Config') configAccessUnderLock.push(lock.held);
+    return sheetNamed(spreadsheet, name, columns);
+  };
   env.context.LockService = { getScriptLock: () => lock };
   env.driveFiles.push(snapshotDriveFile('file-1'));
   const result = send(env, { action: 'identify', id: 'u-8' });
@@ -1981,6 +2008,68 @@ test('identify takes short locks and keeps provider calls outside them', () => {
   assert.equal(fetchedUnderLock, false);
   assert.equal(readUnderLock, false);
   assert.equal(writeUnderLock, true);
+  assert.equal(lock.held, false);
+  assert.ok(configAccessUnderLock.length > 0);
+  assert.ok(configAccessUnderLock.every(Boolean), 'Config read outside the lock');
+});
+
+test('identify reads VLM config under the lock, never in the provider stage', () => {
+  const lock = {
+    held: false,
+    waitLock() { this.held = true; },
+    releaseLock() { this.held = false; },
+  };
+  let providerUnderLock = null;
+  const configAccessUnderLock = [];
+  const env = setup({
+    props: {
+      RELAY_HMAC_SECRET: SNAPSHOT_SECRET,
+      CLOUD_VISION_API_KEY: 'key-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_API_TOKEN: 'token',
+    },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', '@cf/test/vision-model', '', ''],
+      ],
+      Log: [IDENTIFY_HEADER, identifyRow('u-vlm-lock')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x', '', 'blue Tesla Model 3']],
+      Plates: [['plate', 'car', 'active', 'createdAt']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-1', SESSION_START, 'file-1')],
+    },
+    fetch: (url) => {
+      if (url.includes('vision.googleapis.com')) {
+        providerUnderLock = lock.held;
+        return response(200, JSON.stringify({
+          responses: [{ textAnnotations: [{ description: 'HONG KONG' }] }],
+        }));
+      }
+      if (url.includes('api.cloudflare.com')) {
+        providerUnderLock = lock.held;
+        return response(200, JSON.stringify({
+          result: { response: '{"carId":"model3","confidence":0.95,"reason":"blue tesla"}' },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const sheetNamed = env.context.sheetNamed_;
+  env.context.sheetNamed_ = (spreadsheet, name, columns) => {
+    if (name === 'Config') configAccessUnderLock.push(lock.held);
+    return sheetNamed(spreadsheet, name, columns);
+  };
+  env.context.LockService = { getScriptLock: () => lock };
+  env.driveFiles.push(snapshotDriveFile('file-1'));
+  const result = send(env, { action: 'identify', id: 'u-vlm-lock' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'matched');
+  assert.equal(result.engine, 'vlm');
+  assert.equal(providerUnderLock, false);
+  assert.ok(configAccessUnderLock.length > 0);
+  assert.ok(configAccessUnderLock.every(Boolean), 'Config read outside the lock');
   assert.equal(lock.held, false);
 });
 
@@ -2105,4 +2194,32 @@ test('claim feedback carries the engine, snapshot id, lighting, and actor', () =
   assert.equal(feedback[0].lighting, 'night');
   assert.equal(feedback[0].actor, 'family');
   assert.equal(plain(env.call('readLog_'))[0].car, 'ix3');
+});
+
+test('family claim records its feedback but never rewrites the plate map', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        suggestionRow('u-family-plate', {
+          car: 'model3', confidence: 0.93, plate: 'AB-12 34', status: 'matched',
+          identifiedAt: '2026-11-14T05:06:00.000Z', engine: 'plate', snapshotId: 'snap-9',
+        }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+    },
+  });
+  const result = send(env, { action: 'claim', car: 'ix3', id: 'u-family-plate' });
+  assert.equal(result.ok, true);
+  assert.equal(plain(env.call('readLog_'))[0].car, 'ix3');
+  const feedback = plain(env.call('readFeedback_'));
+  assert.equal(feedback.length, 1);
+  assert.equal(feedback[0].actor, 'family');
+  assert.equal(feedback[0].engine, 'plate');
+  assert.equal(feedback[0].plate, 'AB1234');
+  assert.equal(feedback[0].suggestedCar, 'model3');
+  assert.equal(feedback[0].chosenCar, 'ix3');
+  // The owner-only plate map is untouched by the family claim.
+  assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'model3', active: true }]);
 });
