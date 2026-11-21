@@ -454,9 +454,17 @@ function configBool_(map, key, fallback) {
   return fallback;
 }
 
+function configNumericRaw_(map, key, fallback) {
+  var raw = configRaw_(map, key, fallback);
+  if (raw === undefined || raw === null) return NaN;
+  raw = String(raw).trim();
+  if (raw === '') return NaN;
+  return Number(raw);
+}
+
 function configInt_(map, key, fallback) {
   var limits = CONFIG_INT_LIMITS_[key];
-  var number = Number(configRaw_(map, key, fallback));
+  var number = configNumericRaw_(map, key, fallback);
   if (!isFinite(number)) number = fallback;
   number = Math.round(number);
   if (!limits) return number;
@@ -464,7 +472,7 @@ function configInt_(map, key, fallback) {
 }
 
 function configNumber_(map, key, fallback, min, max) {
-  var number = Number(configRaw_(map, key, fallback));
+  var number = configNumericRaw_(map, key, fallback);
   if (!isFinite(number)) number = fallback;
   return Math.min(Math.max(number, min), max);
 }
