@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 import { createAppsScriptEnv } from './fake-apps-script.mjs';
 
 const codeSource = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
@@ -1013,4 +1014,49 @@ test('publishBill blocks unassigned sessions and family sees only published shar
 
   send(env, { action: 'bill', bill: { ...bill, total: 310 } });
   assert.equal(receive(env, { owner: '1' }).bills[0].publishedAt, '');
+});
+
+const SNAPSHOT_SECRET = 'test-relay-secret';
+
+function snapshotBody(overrides = {}) {
+  const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64');
+  const body = {
+    action: 'snapshot',
+    id: 'snap-' + Math.floor(Date.now() / 1000),
+    capturedAt: new Date().toISOString(),
+    width: 1920,
+    height: 1080,
+    image,
+    ...overrides,
+  };
+  const canonical = [body.id, body.capturedAt, body.width, body.height, body.image].join('\n');
+  body.signature = crypto.createHmac('sha256', SNAPSHOT_SECRET).update(canonical).digest('hex');
+  return body;
+}
+
+test('snapshot ingest verifies HMAC, stores one Drive file, and is idempotent', () => {
+  const env = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
+  const body = snapshotBody();
+  const first = send(env, body);
+  assert.equal(first.ok, true);
+  assert.equal(first.stored, true);
+  assert.equal(env.driveFiles.length, 1);
+  assert.equal(env.values('Snapshots').length, 2);
+
+  const second = send(env, body);
+  assert.equal(second.ok, true);
+  assert.equal(second.existing, true);
+  assert.equal(env.driveFiles.length, 1);
+});
+
+test('snapshot ingest rejects a bad signature and an old timestamp', () => {
+  const env = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
+  const bad = snapshotBody();
+  bad.signature = '00';
+  assert.equal(send(env, bad).ok, false);
+  assert.match(send(env, bad).error, /signature/i);
+
+  const old = snapshotBody({ capturedAt: '2026-11-01T00:00:00.000Z' });
+  assert.equal(send(env, old).ok, false);
+  assert.match(send(env, old).error, /timestamp/i);
 });

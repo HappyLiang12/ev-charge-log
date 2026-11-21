@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 
 const sources = ['Logic.gs', 'SheetRepo.gs', 'Tesla.gs', 'Rates.gs'].map((name) => (
   readFileSync(new URL(`../apps-script/${name}`, import.meta.url), 'utf8')
@@ -55,8 +56,43 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
       return sheet;
     },
   };
+  const driveFiles = [];
+  const driveFolders = [];
+  const folderIterator = (matches) => ({
+    hasNext: () => matches.length > 0,
+    next: () => matches.shift(),
+  });
+  const makeFolder = (name) => ({
+    id: `folder-${driveFolders.length + 1}`,
+    name,
+    files: [],
+    createFile(blob) {
+      const id = `file-${driveFiles.length + 1}`;
+      const file = {
+        id,
+        name: blob.getName(),
+        bytes: blob.getBytes(),
+        getId: () => id,
+        getUrl: () => `https://drive.google.com/file/d/${id}/view`,
+      };
+      driveFiles.push(file);
+      this.files.push(file);
+      return file;
+    },
+  });
+  const DriveApp = {
+    getFolderById: (id) => driveFolders.find((folder) => folder.id === id) || null,
+    getFoldersByName: (name) => folderIterator(driveFolders.filter((folder) => folder.name === name)),
+    createFolder: (name) => {
+      const folder = makeFolder(name);
+      driveFolders.push(folder);
+      return folder;
+    },
+    getFileById: (id) => driveFiles.find((file) => file.id === id) || null,
+  };
   const context = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet },
+    DriveApp,
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (key) => (Object.prototype.hasOwnProperty.call(scriptProps, key) ? scriptProps[key] : null),
@@ -77,6 +113,15 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         const minute = parts.find((part) => part.type === 'minute').value;
         return `${hour}:${minute}`;
       },
+      base64Decode: (value) => [...Buffer.from(String(value), 'base64')],
+      newBlob: (bytes, mimeType, name) => ({
+        getBytes: () => [...bytes],
+        getMimeType: () => mimeType,
+        getName: () => name,
+      }),
+      computeHmacSha256Signature: (value, secret) => [
+        ...crypto.createHmac('sha256', String(secret)).update(String(value)).digest(),
+      ],
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     UrlFetchApp: {
@@ -98,6 +143,8 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
     context,
     props: scriptProps,
     spreadsheet,
+    driveFiles,
+    driveFolders,
     call: (name, ...args) => context[name](...args),
     values: (name) => {
       const sheet = sheetMap.get(name);
