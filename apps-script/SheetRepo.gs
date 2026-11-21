@@ -574,22 +574,43 @@ function updateBillPublished_(periodStart, periodEnd, publishedAt) {
   throw new Error('Unknown bill period');
 }
 
+function snapshotFromRow_(row) {
+  return {
+    id: String(row.id || '').trim(),
+    capturedAt: isoValue_(row.capturedAt) || String(row.capturedAt || '').trim(),
+    driveFileId: String(row.driveFileId || '').trim(),
+    driveUrl: String(row.driveUrl || '').trim(),
+    width: numberOrNull_(row.width),
+    height: numberOrNull_(row.height),
+    bytes: numberOrNull_(row.bytes),
+    source: String(row.source || '').trim(),
+    createdAt: isoValue_(row.createdAt) || String(row.createdAt || '').trim(),
+    crop: String(row.crop || '').trim(),
+  };
+}
+
 function readSnapshots_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
-  return readObjects_(sheet, SNAPSHOTS_COLUMNS).map(function (row) {
-    return {
-      id: String(row.id || '').trim(),
-      capturedAt: isoValue_(row.capturedAt) || String(row.capturedAt || '').trim(),
-      driveFileId: String(row.driveFileId || '').trim(),
-      driveUrl: String(row.driveUrl || '').trim(),
-      width: numberOrNull_(row.width),
-      height: numberOrNull_(row.height),
-      bytes: numberOrNull_(row.bytes),
-      source: String(row.source || '').trim(),
-      createdAt: isoValue_(row.createdAt) || String(row.createdAt || '').trim(),
-      crop: String(row.crop || '').trim(),
-    };
-  }).filter(function (row) { return row.id && validIso_(row.capturedAt); });
+  return readObjects_(sheet, SNAPSHOTS_COLUMNS).map(snapshotFromRow_)
+    .filter(function (row) { return row.id && validIso_(row.capturedAt); });
+}
+
+function readLatestSnapshot_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var start = Math.max(2, lastRow - 2);
+  var headers = headerRow_(sheet);
+  var values = sheet.getRange(start, 1, lastRow - start + 1, headers.length).getValues();
+  var latest = null;
+  for (var i = 0; i < values.length; i += 1) {
+    var row = {};
+    for (var k = 0; k < headers.length; k += 1) row[headers[k]] = values[i][k];
+    var snapshot = snapshotFromRow_(row);
+    if (!snapshot.id || !validIso_(snapshot.capturedAt)) continue;
+    if (!latest || Date.parse(snapshot.capturedAt) > Date.parse(latest.capturedAt)) latest = snapshot;
+  }
+  return latest;
 }
 
 function appendSnapshot_(snapshot) {

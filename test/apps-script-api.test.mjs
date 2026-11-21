@@ -17,6 +17,15 @@ const LOG_HEADER = [
   'id', 'startAt', '日期', '時間', 'car', 'kWh', 'durationSec',
   'teslaStartAt', 'teslaEndAt', 'peakKWh', 'offPeakKWh', 'teslaKey', 'source',
 ];
+const SNAPSHOTS_HEADER = [
+  'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
+  'bytes', 'source', 'createdAt', 'crop',
+];
+const latestSnapshotRow = (overrides = {}) => [
+  'snap-1', '2026-11-21T09:00:00.000Z', 'file-1',
+  'https://drive.google.com/file/d/file-1/view', 1920, 1080, 400000, 'pi',
+  '2026-11-21T09:00:05.000Z', 'full',
+].map((value, index) => (overrides[index] !== undefined ? overrides[index] : value));
 const CARS_HEADER = ['id', 'name', 'active', 'createdAt'];
 const RATES_HEADER = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
@@ -142,6 +151,46 @@ test('doGet returns only the requested car records and the owner returns all rec
   assert.equal(receive(env, { car: 'missing' }).ok, false);
   assert.match(receive(env, { car: 'missing' }).error, /Unknown car: missing/);
   assert.match(receive(env, { car: 'BAD CAR' }).error, /Invalid car id/);
+});
+
+test('doGet latest returns the newest snapshot and its crop', () => {
+  const env = setup({
+    sheets: {
+      Snapshots: [
+        SNAPSHOTS_HEADER,
+        latestSnapshotRow({ 0: 'snap-old', 1: '2026-11-21T08:00:00.000Z' }),
+        latestSnapshotRow({ 0: 'snap-new', 1: '2026-11-21T09:07:07.000Z', 2: 'file-new' }),
+      ],
+    },
+  });
+  const result = receive(env, { latest: '1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.id, 'snap-new');
+  assert.equal(result.snapshot.capturedAt, '2026-11-21T09:07:07.000Z');
+  assert.equal(result.snapshot.driveFileId, 'file-new');
+  assert.equal(result.snapshot.crop, 'full');
+  assert.ok(result.serverTime);
+});
+
+test('doGet latest returns null when no snapshot exists', () => {
+  const env = setup();
+  const result = receive(env, { latest: '1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot, null);
+});
+
+test('doGet latest picks the newest capturedAt when recent rows are unordered', () => {
+  const env = setup({
+    sheets: {
+      Snapshots: [
+        SNAPSHOTS_HEADER,
+        latestSnapshotRow({ 0: 'snap-mid', 1: '2026-11-21T08:30:00.000Z' }),
+        latestSnapshotRow({ 0: 'snap-newest', 1: '2026-11-21T09:07:07.000Z' }),
+        latestSnapshotRow({ 0: 'snap-old', 1: '2026-11-21T08:00:00.000Z' }),
+      ],
+    },
+  });
+  assert.equal(receive(env, { latest: '1' }).snapshot.id, 'snap-newest');
 });
 
 test('doGet and doPost both serialize on the script lock', () => {
