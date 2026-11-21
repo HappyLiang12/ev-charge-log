@@ -66,7 +66,7 @@ Web app (owner + family)
 External providers:
 
 - **Cloud Vision** for plate OCR (free 1,000 units/month; API key in Script Properties).
-- **Cloudflare Workers AI** for the optional VLM (free allocation; account ID and token in Script Properties; model id in the Config tab). Provider/model availability in Hong Kong must be verified with real crops before enabling.
+- **DeepSeek vision** for the optional VLM (a user-supplied API key in Script Properties; model id in the Config tab, `deepseek-flash`). Model availability in Hong Kong and image behavior must be verified with real crops before enabling.
 
 ## 5. Data Model
 
@@ -111,7 +111,7 @@ Unchanged (`plate`, `car`, `active`, `createdAt`). The user fills the three hous
 ### Source and editing
 
 - The `Config` tab is the single source of tunables. It is editable from Google Sheets anywhere; the owner page already links to the Sheet. A dedicated owner settings panel can be added later and will write the same tab through an owner action.
-- Secrets never go in the Config tab. `CLOUD_VISION_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN` live in Apps Script Project Settings → Script Properties.
+- Secrets never go in the Config tab. `CLOUD_VISION_API_KEY` and `DEEPSEEK_API_KEY` live in Apps Script Project Settings → Script Properties.
 
 ### Keys
 
@@ -136,7 +136,7 @@ Unchanged (`plate`, `car`, `active`, `createdAt`). The user fills the three hous
 | `policy.minSamples` | Apps Script | int | `5` | 1–50 | Feedback samples before a precision gate applies |
 | `policy.minPrecision` | Apps Script | number | `0.9` | 0.5–0.99 | VLM suggestions below this are suppressed |
 
-`vision.engine=plate` is the default. Before switching to `plate+vlm`, fill `Plates` and `Cars.description` and set `CLOUD_VISION_API_KEY` (and the Cloudflare account ID, token, and `vision.vlmModel` when the VLM is used); otherwise the added stage cannot resolve a car. With `vision.engine=plate+vlm` and an empty `vision.vlmModel` (or missing Cloudflare properties), the provider is unconfigured: when plate OCR cannot decide, the session is written with `suggestionStatus=error`, so the owner sees a provider failure rather than a silent suggestion.
+`vision.engine=plate` is the default. Before switching to `plate+vlm`, fill `Plates` and `Cars.description` and set `CLOUD_VISION_API_KEY` (and the `DEEPSEEK_API_KEY` Script Property plus `vision.vlmModel=deepseek-flash` when the VLM is used); otherwise the added stage cannot resolve a car. With `vision.engine=plate+vlm` and an empty `vision.vlmModel` (or missing DeepSeek properties), the provider is unconfigured: when plate OCR cannot decide, the session is written with `suggestionStatus=error`, so the owner sees a provider failure rather than a silent suggestion.
 
 ### relayConfig endpoint
 
@@ -281,7 +281,7 @@ When the record has no stored suggestion, the engine at decision time is `manual
 - Only the crop is uploaded; the full CCTV stream/frame never leaves the LAN by default. `relay.crop=full` is an explicit testing-only exception.
 - Drive stays private; no public links; family payloads omit `evidenceUrl`.
 - Snapshot/cleanup/config requests use HMAC-SHA256 with a timestamp window; snapshot ingest also enforces body/image limits, JPEG magic, and idempotency.
-- Vision credentials and the Cloudflare token live in Script Properties, never in the Sheet or repo. The Config tab holds non-secret tunables only.
+- Vision credentials and the DeepSeek API key live in Script Properties, never in the Sheet or repo. The Config tab holds non-secret tunables only.
 - VLM output is restricted to active car ids plus `guest`/`unknown`; low confidence becomes unknown.
 - Human confirmation is mandatory; no auto-assign exists.
 
@@ -305,14 +305,14 @@ When the record has no stored suggestion, the engine at decision time is `manual
 
 1. **Phase 0 (physical, user):** install/aim the camera at the charging slot; capture day and night frames; fill the three plates; fill car descriptions; determine the ROI string; confirm the guest car stays outside the ROI.
 2. **Phase A (code):** implement remote config, crop, UI, feedback, retention, plate OCR, VLM adapter (providers off), with tests. Open PR, merge, deploy Apps Script v26, update the Pi relay via `ev-relay-update`, seed the Config tab.
-3. **Phase B (configuration):** fill `Plates` and `Cars.description` and set the Cloud Vision key first; set `relay.crop`; verify the next snapshot is cropped; run `identify` on a session; then enable `vision.engine=plate` (the default). Only after that, add the Cloudflare credentials and `vision.vlmModel`, verify the model with a real crop, and enable `plate+vlm`. An empty `vision.vlmModel` with `plate+vlm` surfaces a provider error status on undecided sessions; it is not a silent fallback.
+3. **Phase B (configuration):** fill `Plates` and `Cars.description` and set the Cloud Vision key first; set `relay.crop`; verify the next snapshot is cropped; run `identify` on a session; then enable `vision.engine=plate` (the default). Only after that, add the `DEEPSEEK_API_KEY` Script Property and `vision.vlmModel`, verify the model with a real crop, and enable `plate+vlm`. An empty `vision.vlmModel` with `plate+vlm` surfaces a provider error status on undecided sessions; it is not a silent fallback.
 4. **Phase C (evaluation):** run at least 20 sessions; review precision and unknown rates; keep human confirmation; consider a local model only if the free VLM is insufficient.
 
 ## 15. Open Setup Items
 
 - The user will enter the three plates in `Plates` and visual descriptions in `Cars.description`.
 - Cloud Vision API key and billing account (free tier) in Script Properties.
-- Cloudflare account, account ID, and API token in Script Properties if the VLM is used; verify model availability in Hong Kong.
+- DeepSeek API key in Script Properties if the VLM is used; verify `deepseek-flash` availability and image behavior in Hong Kong with real crops.
 - ROI coordinates after installation, entered in the Config tab.
 - Confirm the guest/ignore semantics and the desired default retention period (30 days).
 

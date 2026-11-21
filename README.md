@@ -45,7 +45,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Bill shares are gated: a bill stays unpublished (and invisible to family links) until the owner presses `發布分攤`. Publishing is blocked while any `unassigned` session starts inside the bill period, and the server re-checks the same rule. Saving or changing a bill clears `publishedAt`, so it must be published again. If a new unassigned session later lands in a published period, family links hide that bill again until it is resolved and republished.
 - Offline-friendly family queue; pending starts retry automatically.
 - Private CCTV evidence: the Pi uploads only a cropped charging-slot JPEG, stored in a private Drive folder and linked from new unassigned sessions. The owner view shows the crop, engine (`車牌`/`視覺`), confidence, and adopt/manual/ignore/reassign controls; family links get a hint only.
-- Plate OCR first (Cloud Vision), then an optional Cloudflare Workers AI VLM. Suggestions never assign a car automatically; an owner correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
+- Plate OCR first (Cloud Vision), then an optional DeepSeek vision VLM. Suggestions never assign a car automatically; an owner correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
 - Ignoring a non-household session asks for confirmation, records `guest` feedback, and persists its Tesla key in the `Ignored` tab, so a later sync does not re-import it.
 - Snapshot retention is 30 days by default. The Pi triggers a signed, hourly, batched cleanup; no ScriptApp trigger is installed.
 - Mobile-first layout for a 390x844 viewport.
@@ -93,7 +93,7 @@ At the start of every cycle the Pi sends a signed `relayConfig` request. On succ
 
 1. Fill `Plates` (`plate`, `car`, `active`, `createdAt`) with each household plate, and `Cars.description` with a short visual description used in the VLM prompt. These stay in the Sheet; never commit plates or descriptions to the repo.
 2. Enable the Cloud Vision API in a Google Cloud project, create an API key, set a budget alert, and confirm the free tier (first 1,000 units/month; a billing account is required). Store the key as the `CLOUD_VISION_API_KEY` Script Property. Plate OCR uses `TEXT_DETECTION` on up to `snapshot.candidateCount` crops.
-3. The optional VLM uses Cloudflare Workers AI. Set `vision.engine=plate+vlm`, `vision.vlmModel` to a provider model id, and the `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` Script Properties. It has a free allocation; verify the model is available in Hong Kong with real crops before enabling it in production. Leaving `vision.engine=plate` (the default) disables the VLM regardless of the other keys. With `plate+vlm` and no `vision.vlmModel` (or missing Cloudflare properties), the provider is unconfigured: when plate OCR cannot decide, the session gets `suggestionStatus=error`, so the owner sees an error rather than a silent suggestion.
+3. The optional VLM uses DeepSeek vision. Set `vision.engine=plate+vlm`, `vision.vlmModel=deepseek-flash`, and the `DEEPSEEK_API_KEY` Script Property. The DeepSeek API is user-supplied and paid; verify the model with real crops before enabling it in production. Leaving `vision.engine=plate` (the default) disables the VLM regardless of the other keys. With `plate+vlm` and no `vision.vlmModel` (or a missing `DEEPSEEK_API_KEY`), the provider is unconfigured: when plate OCR cannot decide, the session gets `suggestionStatus=error`, so the owner sees an error rather than a silent suggestion.
 4. Gemini is not used. As of 2026-11-15 Hong Kong is not in the official Google AI Studio / Gemini API available-regions list, so no Gemini key or adapter is part of this deployment. Do not use a VPN to bypass the region check.
 5. Suggestions never assign a car automatically. A plate match is deterministic; a VLM match must pass `vision.minConfidence` and the per-`(engine, car, lighting)` feedback precision gate (`policy.minSamples`, `policy.minPrecision`). Otherwise the session stays manual.
 
@@ -191,7 +191,7 @@ The Google Sheet has up to nine tabs: `Log`, `Cars`, `Rates`, `Bills`, `Snapshot
 `key`, `value`, `updatedAt`, `notes`.
 
 - Non-secret tunables only. `setup()` seeds missing defaults. See the keys table above.
-- Secrets (`CLOUD_VISION_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `RELAY_HMAC_SECRET`) belong in Script Properties, never in this tab.
+- Secrets (`CLOUD_VISION_API_KEY`, `DEEPSEEK_API_KEY`, `RELAY_HMAC_SECRET`) belong in Script Properties, never in this tab.
 
 ## Billing
 
@@ -253,8 +253,7 @@ In Apps Script, Project Settings -> Script Properties:
 | `RELAY_HMAC_SECRET` | Shared secret for Pi snapshot/config/cleanup requests; generate with `openssl rand -hex 32` |
 | `SNAPSHOT_FOLDER_ID` | Optional Drive folder ID for snapshot JPEGs; defaults to a private `EV Charge Snapshots` folder |
 | `CLOUD_VISION_API_KEY` | Cloud Vision API key for plate OCR (free tier: 1,000 units/month; billing account required) |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID, only for the optional Workers AI VLM |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token, only for the optional Workers AI VLM |
+| `DEEPSEEK_API_KEY` | DeepSeek API key for the optional vision VLM |
 | `SYNC_FROM` | Leave unset; only set for an intentional backfill |
 | `SYNC_CURSOR` | Internal; do not set manually |
 
@@ -303,10 +302,10 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 ### 6. Deployment runbook (CCTV/evidence release, v26)
 
 1. **Apps Script:** add `Vision.gs` as a new file and update `Code.gs`, `SheetRepo.gs`, `Logic.gs`, and `Tesla.gs` as changed. Save, then Deploy -> Manage deployments -> Edit -> Version: New version (v26). The deployment URL stays the same.
-2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
+2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `DEEPSEEK_API_KEY` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
 3. **Config seeding:** run `setup()` once from the Apps Script editor to seed the Config defaults. Set `relay.crop` to the ROI; use `full` only for the test camera. Leave `snapshot.retentionDays=30` unless a different retention is intended.
 4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then confirm success with observable evidence rather than a log line (the relay logs config errors, capture/cleanup errors, a one-time `crop required` warning, and the cleanup `deleted`/`failed` counts; use these to diagnose, but verify the artifacts): `systemctl status ev-relay` shows the service running, `/var/lib/ev-relay/config.json` exists and its modification time advances after the first cycle (the Pi rewrites it only after a successful signed config response), and a cropped snapshot appears in the owner view (or the private Drive snapshot folder) at the next `relay.intervalSeconds`. After the first scheduled cleanup, the Pi log shows `cleanup deleted: <n> failed: <m>`; `failed` must stay 0, and a nonzero count or a `cleanup warning` line means Drive trash is failing and retention is stalling. Later tuning needs no SSH.
-5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the Cloudflare provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
+5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the DeepSeek provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
 6. **Physical and evaluation:** install/aim the camera, capture day and night frames, set the ROI, and confirm the guest car stays outside the crop. Run at least 20 real sessions covering day/night and a guest car, review precision and unknown rates, and keep human confirmation. A 95% precision threshold is a future auto-assign gate, not enabled now.
 
 ## Local development
@@ -359,7 +358,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Tesla credentials live only in Script Properties.
 - Snapshot JPEGs are stored in a private Drive folder; nothing is published. Family payloads omit `evidenceUrl`, so a family link never receives the image or its Drive link.
 - Only the cropped charging-slot image is uploaded. The full CCTV frame stays on the camera's own recording; `relay.crop=full` is a controlled-test exception.
-- Cloud Vision and Cloudflare credentials live only in Script Properties. The `Config` tab holds non-secret tunables; plates and car descriptions stay in the Sheet. Never commit or paste any of them.
+- Cloud Vision and DeepSeek credentials live only in Script Properties. The `Config` tab holds non-secret tunables; plates and car descriptions stay in the Sheet. Never commit or paste any of them.
 - Snapshot, config, and cleanup requests use HMAC-SHA256 with a ±10-minute timestamp window; snapshot ingest also enforces body/image limits, JPEG magic, and idempotency.
 - Bill PDFs are parsed in the browser and never uploaded; only the extracted bill numbers and the file name are stored in the Sheet.
 - The Sheet is link-shared as of the current owner choice; anyone with the link can read the log. It now also holds plates, car descriptions, feedback, and private evidence links, so set General access to Restricted if you want it private. The link is not in this repository: `SHEET_ID` is a Script Property and the owner API derives the link.
@@ -379,7 +378,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - The live charging kWh/cost is an estimate from the last Wall Connector power sample; the completed Tesla session is authoritative. The card polls every 5 minutes while the page is visible (one Tesla call per poll) and interpolates every second.
 - There is no cron for Tesla sync and no ScriptApp cleanup trigger. Snapshot cleanup is triggered by the Pi every hour by default; if the Pi is offline, expired snapshots remain until it returns. There is no outside-charger support.
 - The plate may be outside the crop (for example a side-on car), and night/IR frames may be unreadable. The VLM and manual selection are required fallbacks, not optional.
-- Cloud Vision and Cloudflare Workers AI free tiers can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
+- Cloud Vision's free tier and the paid DeepSeek API can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
 - Old `evidenceUrl` links become stale after snapshot retention; the Log row and Feedback remain.
 - If trashing a Drive file fails transiently (rate limit or service error), its `Snapshots` row is kept and retried at the next cleanup run; a file is only orphaned if it is missing permissions or the row is removed by hand. A partial failure appears in the Apps Script execution log and in the Pi log as `cleanup deleted: N failed: M` plus one `cleanup warning` line.
 - `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
