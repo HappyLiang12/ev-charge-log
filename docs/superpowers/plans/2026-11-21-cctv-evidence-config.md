@@ -450,7 +450,7 @@ git commit -m "feat: add remote relay config"
 
 Append to `tools/relay/test_relay.py`:
 ```python
-from tapo_relay import CropRequired, build_capture_command, parse_crop
+from tapo_relay import CropRequired, build_capture_command, build_cleanup_payload, parse_crop
 
 
 class RelayCropTest(unittest.TestCase):
@@ -475,6 +475,19 @@ class RelayCropTest(unittest.TestCase):
     def test_full_mode_is_explicit(self):
         command = build_capture_command("rtsp://cam", "/tmp/a.jpg", 1280, 5, None, True)
         self.assertNotIn("crop=", " ".join(command))
+
+
+class RelayCleanupPayloadTest(unittest.TestCase):
+    def test_cleanup_payload_is_signed(self):
+        at = "2026-11-21T05:00:00Z"
+        payload = build_cleanup_payload(at, "secret", 300)
+        self.assertEqual(payload["action"], "cleanup")
+        self.assertEqual(payload["at"], at)
+        self.assertEqual(payload["limit"], 300)
+        expected = hmac.new(
+            b"secret", ("cleanup\n" + at).encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        self.assertEqual(payload["signature"], expected)
 ```
 
 - [ ] **Step 2: Run test to verify failure**
@@ -524,6 +537,15 @@ def capture_frame(rtsp_url, output_path, width=1920, quality=3, crop=None, full_
     cmd = build_capture_command(rtsp_url, output_path, width, quality, crop, full_mode)
     subprocess.run(cmd, check=True, timeout=max(10, int(timeout_seconds)))
     return Path(output_path)
+
+
+def build_cleanup_payload(at, secret, limit=500):
+    return {
+        "action": "cleanup",
+        "at": at,
+        "limit": int(limit),
+        "signature": sign(secret, "cleanup\n" + at),
+    }
 ```
 
 - [ ] **Step 4: Use the config in `main()`**
