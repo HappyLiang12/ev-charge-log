@@ -5,3 +5,7 @@ tools/.env.tesla.local
 tools/.tesla-refresh-token.local
 
 .superpowers/
+
+tools/relay/relay.env
+tools/relay/*.jpg
+tools/relay/__pycache__/
