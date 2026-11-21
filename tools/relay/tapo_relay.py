@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.request
@@ -22,6 +23,80 @@ def canonical(data):
 
 def sign(secret, text):
     return hmac.new(secret.encode("utf-8"), text.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+RELAY_CONFIG_DEFAULTS = {
+    "relay.enabled": True,
+    "relay.intervalSeconds": 300,
+    "relay.imageWidth": 1920,
+    "relay.jpegQuality": 3,
+    "relay.crop": "",
+    "relay.captureTimeoutSeconds": 30,
+    "relay.maxQueue": 1000,
+    "relay.cleanupIntervalSeconds": 3600,
+    "relay.cleanupBatch": 500,
+}
+RELAY_CONFIG_LIMITS = {
+    "relay.intervalSeconds": (60, 3600),
+    "relay.imageWidth": (640, 2560),
+    "relay.jpegQuality": (2, 10),
+    "relay.captureTimeoutSeconds": (10, 120),
+    "relay.maxQueue": (100, 5000),
+    "relay.cleanupIntervalSeconds": (600, 86400),
+    "relay.cleanupBatch": (10, 1000),
+}
+
+
+def build_relay_config_payload(at, secret):
+    return {
+        "action": "relayConfig",
+        "at": at,
+        "signature": sign(secret, "relayConfig\n" + at),
+    }
+
+
+def validate_relay_config(raw, fallback):
+    config = dict(RELAY_CONFIG_DEFAULTS)
+    for key, value in (fallback or {}).items():
+        if key in config:
+            config[key] = value
+    if not isinstance(raw, dict):
+        return config
+    if isinstance(raw.get("relay.enabled"), bool):
+        config["relay.enabled"] = raw["relay.enabled"]
+    for key, limits in RELAY_CONFIG_LIMITS.items():
+        if key not in raw:
+            continue
+        try:
+            number = int(round(float(raw[key])))
+        except (TypeError, ValueError):
+            continue
+        config[key] = max(limits[0], min(limits[1], number))
+    crop = str(raw.get("relay.crop", "") or "").strip()
+    if crop == "full":
+        config["relay.crop"] = "full"
+    elif re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:[0-9]+", crop):
+        parts = [int(part) for part in crop.split(":")]
+        config["relay.crop"] = crop if parts[2] > 0 and parts[3] > 0 else ""
+    else:
+        config["relay.crop"] = ""
+    return config
+
+
+def load_cached_config(path, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return validate_relay_config(json.load(handle), fallback)
+    except (OSError, ValueError):
+        return validate_relay_config({}, fallback)
+
+
+def save_cached_config(path, config):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(config, separators=(",", ":")), encoding="utf-8")
+    temp.replace(path)
 
 
 def capture_frame(rtsp_url, output_path, width=1280):

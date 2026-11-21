@@ -602,3 +602,57 @@ function readPlates_() {
     };
   }).filter(function (row) { return row.plate && validCarId_(row.car) && row.active; });
 }
+
+var CONFIG_COLUMNS = ['key', 'value', 'updatedAt', 'notes'];
+var CONFIG_DEFAULTS = {
+  'relay.enabled': 'true',
+  'relay.intervalSeconds': '300',
+  'relay.imageWidth': '1920',
+  'relay.jpegQuality': '3',
+  'relay.crop': '',
+  'relay.captureTimeoutSeconds': '30',
+  'relay.maxQueue': '1000',
+  'relay.cleanupIntervalSeconds': '3600',
+  'relay.cleanupBatch': '500',
+  'snapshot.retentionDays': '30',
+  'snapshot.windowMinutes': '10',
+  'snapshot.candidateCount': '3',
+  'vision.engine': 'plate',
+  'vision.minConfidence': '0.8',
+  'vision.maxPerSync': '5',
+  'vision.vlmModel': '',
+  'policy.minSamples': '5',
+  'policy.minPrecision': '0.9',
+};
+
+function readConfigMap_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Config', CONFIG_COLUMNS);
+  var map = {};
+  var latest = '';
+  var rows = readObjects_(sheet, CONFIG_COLUMNS);
+  for (var i = 0; i < rows.length; i += 1) {
+    var key = String(rows[i].key || '').trim();
+    if (!key) continue;
+    map[key] = String(rows[i].value === undefined || rows[i].value === null ? '' : rows[i].value).trim();
+    var at = isoValue_(rows[i].updatedAt);
+    if (at && at > latest) latest = at;
+  }
+  return { values: map, updatedAt: latest || new Date().toISOString() };
+}
+
+function configValue_(key) {
+  var map = readConfigMap_().values;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : CONFIG_DEFAULTS[key];
+}
+
+function ensureConfigDefaults_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'Config', CONFIG_COLUMNS);
+  var rows = readObjects_(sheet, CONFIG_COLUMNS);
+  var existing = {};
+  for (var i = 0; i < rows.length; i += 1) existing[String(rows[i].key || '').trim()] = true;
+  var now = new Date().toISOString();
+  for (var key in CONFIG_DEFAULTS) {
+    if (!Object.prototype.hasOwnProperty.call(CONFIG_DEFAULTS, key) || existing[key]) continue;
+    sheet.appendRow([key, CONFIG_DEFAULTS[key], now, 'default']);
+  }
+}
