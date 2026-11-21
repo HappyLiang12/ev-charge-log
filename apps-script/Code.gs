@@ -32,6 +32,9 @@ function doPost(e) {
     if (action !== 'snapshot' && raw.length > MAX_BODY_BYTES_) throw new Error('Request body too large');
     // Sync fetches Tesla outside the lock and locks only for Sheet reads/writes.
     if (action === 'sync') return json_(merge_({ ok: true }, syncAction_(data)));
+    // Identify reads Drive and calls Vision/VLM outside the lock; identifySession_
+    // takes short locks for its own Sheet reads and the final suggestion write.
+    if (action === 'identify') return json_(merge_({ ok: true }, identifyAction_(data)));
     if (action === 'snapshot') {
       var snapshotLock = LockService.getScriptLock();
       snapshotLock.waitLock(30000);
@@ -53,7 +56,6 @@ function doPost(e) {
       else if (action === 'bill') result = billAction_(data);
       else if (action === 'publishBill') result = publishBillAction_(data);
       else if (action === 'relayConfig') result = relayConfigAction_(data);
-      else if (action === 'identify') result = identifyAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -323,9 +325,11 @@ function readDriveImageBase64_(fileId) {
 }
 
 function identifyAction_(data) {
-  var record = findRecord_(readLog_(), String(data.id || ''));
-  if (!record) throw new Error('Unknown record');
-  return identifySession_(record, Boolean(data.force));
+  // identifySession_ re-reads the record under the script lock; this action
+  // runs outside doPost's general lock so provider calls do not block syncs.
+  var id = String(data.id || '');
+  if (!id) throw new Error('Unknown record');
+  return identifySession_({ id: id }, Boolean(data.force));
 }
 
 function findRecord_(records, id) {
