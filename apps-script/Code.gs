@@ -52,6 +52,7 @@ function doPost(e) {
       else if (action === 'refreshRates') result = ratesAction_(data);
       else if (action === 'bill') result = billAction_(data);
       else if (action === 'publishBill') result = publishBillAction_(data);
+      else if (action === 'relayConfig') result = relayConfigAction_(data);
       else throw new Error('Invalid action');
       return json_(merge_({ ok: true }, result));
     } finally {
@@ -126,6 +127,7 @@ function snapshotAction_(data) {
 }
 
 function setup() {
+  ensureConfigDefaults_();
   var cars = readCars_();
   var records = readLog_();
   var rates = readRates_();
@@ -424,6 +426,79 @@ function publishBillAction_(data) {
     bill: updateBillPublished_(periodStart, periodEnd, publishedAt),
     allocation: { loggedKWh: allocation.loggedKWh, unassignedCount: 0 },
   };
+}
+
+var CONFIG_INT_LIMITS_ = {
+  'relay.intervalSeconds': [60, 3600],
+  'relay.imageWidth': [640, 2560],
+  'relay.jpegQuality': [2, 10],
+  'relay.captureTimeoutSeconds': [10, 120],
+  'relay.maxQueue': [100, 5000],
+  'relay.cleanupIntervalSeconds': [600, 86400],
+  'relay.cleanupBatch': [10, 1000],
+  'snapshot.retentionDays': [1, 365],
+  'snapshot.windowMinutes': [1, 60],
+  'snapshot.candidateCount': [1, 5],
+  'vision.maxPerSync': [0, 20],
+  'policy.minSamples': [1, 50],
+};
+
+function configRaw_(map, key, fallback) {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : fallback;
+}
+
+function configBool_(map, key, fallback) {
+  var raw = String(configRaw_(map, key, fallback)).trim().toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return fallback;
+}
+
+function configInt_(map, key, fallback) {
+  var limits = CONFIG_INT_LIMITS_[key];
+  var number = Number(configRaw_(map, key, fallback));
+  if (!isFinite(number)) number = fallback;
+  number = Math.round(number);
+  if (!limits) return number;
+  return Math.min(Math.max(number, limits[0]), limits[1]);
+}
+
+function configNumber_(map, key, fallback, min, max) {
+  var number = Number(configRaw_(map, key, fallback));
+  if (!isFinite(number)) number = fallback;
+  return Math.min(Math.max(number, min), max);
+}
+
+function configCrop_(map) {
+  var raw = String(configRaw_(map, 'relay.crop', '') || '').trim();
+  if (raw === 'full') return 'full';
+  if (!/^[0-9]+:[0-9]+:[0-9]+:[0-9]+$/.test(raw)) return '';
+  var parts = raw.split(':').map(Number);
+  if (parts[2] <= 0 || parts[3] <= 0) return '';
+  return raw;
+}
+
+function relayConfigAction_(data) {
+  var secret = PropertiesService.getScriptProperties().getProperty('RELAY_HMAC_SECRET');
+  if (!secret) throw new Error('Missing RELAY_HMAC_SECRET');
+  if (!validIso_(data.at)) throw new Error('Invalid config timestamp');
+  if (Math.abs(Date.now() - Date.parse(data.at)) > SNAPSHOT_MAX_AGE_MS_) throw new Error('Config timestamp outside window');
+  var expected = hmacHex_('relayConfig\n' + String(data.at), secret);
+  if (String(data.signature || '') !== expected) throw new Error('Invalid signature');
+  var read = readConfigMap_();
+  var map = read.values;
+  var config = {
+    'relay.enabled': configBool_(map, 'relay.enabled', true),
+    'relay.intervalSeconds': configInt_(map, 'relay.intervalSeconds', 300),
+    'relay.imageWidth': configInt_(map, 'relay.imageWidth', 1920),
+    'relay.jpegQuality': configInt_(map, 'relay.jpegQuality', 3),
+    'relay.crop': configCrop_(map),
+    'relay.captureTimeoutSeconds': configInt_(map, 'relay.captureTimeoutSeconds', 30),
+    'relay.maxQueue': configInt_(map, 'relay.maxQueue', 1000),
+    'relay.cleanupIntervalSeconds': configInt_(map, 'relay.cleanupIntervalSeconds', 3600),
+    'relay.cleanupBatch': configInt_(map, 'relay.cleanupBatch', 500),
+  };
+  return { config: config, updatedAt: read.updatedAt };
 }
 
 function recalibratePeakFactors_() {

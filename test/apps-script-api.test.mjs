@@ -1122,3 +1122,56 @@ test('family payload omits the private evidence URL', () => {
   const owner = receive(env, { owner: '1' });
   assert.equal(owner.records[0].evidenceUrl, 'https://drive.google.com/file/d/x/view');
 });
+
+const CONFIG_HEADER = ['key', 'value', 'updatedAt', 'notes'];
+
+function relayConfigBody(at = new Date().toISOString(), secret = SNAPSHOT_SECRET) {
+  return {
+    action: 'relayConfig',
+    at,
+    signature: crypto.createHmac('sha256', secret).update('relayConfig\n' + at).digest('hex'),
+  };
+}
+
+test('relayConfig returns defaults, applies overrides, and clamps values', () => {
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET },
+    sheets: {
+      Config: [
+        CONFIG_HEADER,
+        ['relay.intervalSeconds', '120', '', ''],
+        ['relay.imageWidth', '99999', '', ''],
+        ['snapshot.retentionDays', '45', '', ''],
+        ['vision.engine', 'plate+vlm', '', ''],
+      ],
+    },
+  });
+  const result = send(env, relayConfigBody());
+  assert.equal(result.ok, true);
+  assert.equal(result.config['relay.intervalSeconds'], 120);
+  assert.equal(result.config['relay.imageWidth'], 2560);
+  assert.equal(result.config['relay.crop'], '');
+  assert.equal(result.config['relay.enabled'], true);
+  assert.equal(result.config['snapshot.retentionDays'], undefined);
+  assert.equal(result.config['vision.engine'], undefined);
+});
+
+test('relayConfig rejects a bad signature and an old timestamp', () => {
+  const env = setup({ props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET } });
+  const bad = relayConfigBody();
+  bad.signature = '00';
+  assert.equal(send(env, bad).ok, false);
+  assert.match(send(env, bad).error, /signature/i);
+  const old = relayConfigBody('2026-11-01T00:00:00.000Z');
+  assert.equal(send(env, old).ok, false);
+  assert.match(send(env, old).error, /timestamp/i);
+});
+
+test('setup seeds the Config tab with defaults', () => {
+  const env = setup();
+  env.call('setup');
+  const rows = env.values('Config');
+  assert.equal(rows[0][0], 'key');
+  assert.ok(rows.some((row) => row[0] === 'relay.intervalSeconds' && row[1] === '300'));
+  assert.ok(rows.some((row) => row[0] === 'snapshot.retentionDays' && row[1] === '30'));
+});
