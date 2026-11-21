@@ -46,6 +46,14 @@ function hkMonth_(iso) {
   return hkDateString_(iso).slice(0, 7);
 }
 
+function lightingFor_(iso) {
+  var at = Date.parse(iso);
+  if (isNaN(at)) return '';
+  var local = new Date(at + 8 * 3600 * 1000);
+  var hour = local.getUTCHours();
+  return hour >= 7 && hour < 19 ? 'day' : 'night';
+}
+
 function parseHm_(value) {
   var match = String(value || '').match(/^([01]\d|2[0-3]):([0-5]\d)$/);
   return match ? Number(match[1]) * 60 + Number(match[2]) : null;

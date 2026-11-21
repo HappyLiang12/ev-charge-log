@@ -19,6 +19,11 @@ test('hkDateString_, hkTimeString_, and hkMonth_ use Hong Kong time', () => {
   assert.equal(call('validCarId_', 'Bad Car'), false);
 });
 
+test('lightingFor_ classifies HK day and night', () => {
+  assert.equal(call('lightingFor_', '2026-11-21T04:00:00.000Z'), 'day');   // 12:00 HK
+  assert.equal(call('lightingFor_', '2026-11-21T13:00:00.000Z'), 'night'); // 21:00 HK
+});
+
 test('splitPeakKwh_ splits at the 16:00 and 23:00 Hong Kong boundaries', () => {
   // 15:30 HK, one hour: 30 minutes off-peak, 30 minutes peak.
   assert.deepEqual(plain(call('splitPeakKwh_', '2026-11-14T07:30:00.000Z', 3600, 7.2, '16:00', '23:00')), {
