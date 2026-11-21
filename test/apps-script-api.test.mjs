@@ -1272,3 +1272,108 @@ test('policy suppresses a low-precision VLM combination', () => {
   assert.equal(env.call('policyAllowsSuggestion_', 'vlm', 'model3', 'day'), false);
   assert.equal(env.call('policyAllowsSuggestion_', 'vlm', 'ix3', 'day'), true);
 });
+
+const IDENTIFY_HEADER = [
+  ...LOG_HEADER, 'evidenceUrl', 'suggestedCar', 'suggestionConfidence',
+  'suggestionPlate', 'suggestionStatus', 'identifiedAt', 'suggestionEngine',
+  'suggestionSnapshotId',
+];
+
+const SNAPSHOT_HEADER = [
+  'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes',
+  'source', 'createdAt', 'crop',
+];
+
+test('identify skips a stored result unless force is set', () => {
+  let visionCalls = 0;
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        [
+          ...row({ 0: 'u-1', 4: 'unassigned', 11: 'din:u', 12: 'tesla' }),
+          '', 'ix3', 0.9, '', 'matched', SESSION_START, 'vlm', 'snap-1',
+        ],
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        ['snap-1', SESSION_START, 'file-1', 'https://drive.google.com/file/d/file-1/view', 1280, 720, 100, 'pi', SESSION_START, ''],
+      ],
+    },
+    fetch: (url) => {
+      visionCalls += 1;
+      if (!url.includes('vision.googleapis.com')) throw new Error(`Unexpected URL: ${url}`);
+      return response(200, JSON.stringify({
+        responses: [{ textAnnotations: [{ description: 'AB 1234\nHONG KONG' }] }],
+      }));
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
+  const before = plain(env.values('Log'));
+  const skipped = send(env, { action: 'identify', id: 'u-1' });
+  assert.equal(skipped.ok, true);
+  assert.equal(skipped.status, 'matched');
+  assert.equal(skipped.reason, 'skipped');
+  assert.equal(skipped.engine, 'vlm');
+  assert.equal(skipped.car, 'ix3');
+  assert.equal(skipped.confidence, 0.9);
+  assert.equal(skipped.snapshotId, 'snap-1');
+  assert.equal(visionCalls, 0);
+  assert.deepEqual(plain(env.values('Log')), before);
+
+  const forced = send(env, { action: 'identify', id: 'u-1', force: true });
+  assert.equal(forced.ok, true);
+  assert.equal(forced.status, 'matched');
+  assert.equal(forced.engine, 'plate');
+  assert.equal(forced.car, 'model3');
+  assert.equal(visionCalls, 1);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionStatus, 'matched');
+  assert.equal(record.suggestionEngine, 'plate');
+  assert.equal(record.suggestedCar, 'model3');
+});
+
+test('identify marks an error when the Drive file cannot be read', () => {
+  let visionCalls = 0;
+  const env = setup({
+    props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'u-2', 4: 'unassigned', 11: 'din:u2', 12: 'tesla' })],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        ['snap-1', SESSION_START, 'file-1', 'https://drive.google.com/file/d/file-1/view', 1280, 720, 100, 'pi', SESSION_START, ''],
+      ],
+    },
+    fetch: (url) => {
+      visionCalls += 1;
+      if (!url.includes('vision.googleapis.com')) throw new Error(`Unexpected URL: ${url}`);
+      return response(200, JSON.stringify({
+        responses: [{ textAnnotations: [{ description: 'AB 1234\nHONG KONG' }] }],
+      }));
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => { throw new Error('drive unavailable'); } });
+  const result = send(env, { action: 'identify', id: 'u-2' });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'drive unavailable');
+  assert.equal(result.engine, '');
+  assert.equal(result.car, '');
+  assert.equal(result.confidence, 0);
+  assert.equal(result.plate, '');
+  assert.equal(result.snapshotId, '');
+  assert.equal(visionCalls, 0);
+  const record = plain(env.call('readLog_'))[0];
+  assert.equal(record.car, 'unassigned');
+  assert.equal(record.suggestionStatus, 'error');
+  assert.ok(record.identifiedAt);
+  assert.equal(record.suggestedCar, '');
+});
