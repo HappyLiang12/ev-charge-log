@@ -107,8 +107,6 @@ export function rateRow(month, fuelAdjustment, { duplicate = false, sourceUrl = 
 }
 
 export function logRow(record) {
-  // Accept a pre-built row so tests can use logRow(record) seeds directly.
-  if (Array.isArray(record)) return record;
   return [
     record.id, record.startAt, hkDate(record.startAt), hkTime(record.startAt),
     record.car, record.kWh ?? '', record.durationSec ?? '',

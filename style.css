@@ -633,11 +633,6 @@ select, #exportBtn {
 
 .bill-publish button { width: 100%; }
 
-@media (max-width: 400px) {
-  .owner-toolbar select { flex: 1 1 100%; width: 100%; }
-  .owner-toolbar-actions button { flex: 1 1 100%; width: 100%; }
-}
-
 .suggestion-row {
   display: flex;
   flex-wrap: wrap;
@@ -707,6 +702,8 @@ select, #exportBtn {
 .evidence-thumb-small { width: min(100%, 120px); }
 
 @media (max-width: 400px) {
+  .owner-toolbar select { flex: 1 1 100%; width: 100%; }
+  .owner-toolbar-actions button { flex: 1 1 100%; width: 100%; }
   .suggestion-row { align-items: stretch; }
   .suggestion-row .owner-suggestion { flex: 1 1 100%; }
   .evidence-thumb { width: 100%; }
