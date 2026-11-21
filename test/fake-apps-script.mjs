@@ -72,9 +72,12 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         id,
         name: blob.getName(),
         bytes: blob.getBytes(),
+        trashed: false,
         getId: () => id,
         getUrl: () => `https://drive.google.com/file/d/${id}/view`,
         getBlob: () => ({ getBytes: () => [...file.bytes] }),
+        setTrashed(value) { file.trashed = Boolean(value); },
+        isTrashed: () => file.trashed,
       };
       driveFiles.push(file);
       this.files.push(file);
@@ -91,6 +94,7 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
     },
     getFileById: (id) => driveFiles.find((file) => file.id === id) || null,
   };
+  const warnings = [];
   const context = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet },
     DriveApp,
@@ -138,7 +142,11 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
       }),
     },
     MimeType: { JSON: 'application/json' },
-    console: { log() {}, error() {} },
+    console: {
+      log() {},
+      warn: (...args) => warnings.push(args.join(' ')),
+      error() {},
+    },
   });
   for (const source of sources) vm.runInContext(source, context);
   return {
@@ -147,6 +155,7 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
     spreadsheet,
     driveFiles,
     driveFolders,
+    warnings,
     call: (name, ...args) => context[name](...args),
     values: (name) => {
       const sheet = sheetMap.get(name);
