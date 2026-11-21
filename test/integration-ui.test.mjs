@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatHkDate, formatHkTime12 } from '../logic.js';
+import { formatHkDate, formatHkTime12, monthKey } from '../logic.js';
 import {
   BILLS_HEADER,
   FUEL_URL,
@@ -8,7 +8,6 @@ import {
   createHarness,
   defaultSheets,
   loadUi,
-  logRow,
   rateRow,
   teslaSession,
   waitFor,
@@ -49,6 +48,30 @@ function unassignedRecord(id, startAt, teslaKey) {
     peakKWh: 0,
     offPeakKWh: 12,
     teslaKey,
+    source: 'tesla',
+    evidenceUrl: '',
+    suggestedCar: '',
+    suggestionConfidence: null,
+    suggestionPlate: '',
+    suggestionStatus: '',
+    identifiedAt: null,
+    suggestionEngine: '',
+    suggestionSnapshotId: '',
+  };
+}
+
+function assignedRecord(id, startAt) {
+  return {
+    id,
+    car: 'model3',
+    startAt,
+    kWh: 12,
+    durationSec: 3600,
+    teslaStartAt: startAt,
+    teslaEndAt: new Date(Date.parse(startAt) + 3600 * 1000).toISOString(),
+    peakKWh: 0,
+    offPeakKWh: 12,
+    teslaKey: `din:${id}`,
     source: 'tesla',
     evidenceUrl: '',
     suggestedCar: '',
@@ -195,7 +218,7 @@ test('family sees a suggestion hint and no evidence', { timeout: 20000 }, async 
     suggestionEngine: 'plate',
     evidenceUrl: 'https://drive.google.com/file/d/file-2/view',
   };
-  const sheets = defaultSheets({ records: [logRow(mine), logRow(other)] });
+  const sheets = defaultSheets({ records: [mine, other] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
@@ -221,18 +244,29 @@ test('owner sees snapshot, engine, confidence, adopt, and ignore', { timeout: 20
     suggestionStatus: 'matched',
     suggestionEngine: 'vlm',
   };
-  const sheets = defaultSheets({ records: [logRow(record)] });
+  const sheets = defaultSheets({ records: [record] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
     await waitFor(() => ui.document.querySelector('.suggestion-label'), 12000);
+    const when = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
     assert.match(ui.document.querySelector('.suggestion-label').textContent, /Model 3.*84%/);
     assert.match(ui.document.querySelector('.suggestion-label').textContent, /視覺/);
-    assert.equal(ui.document.querySelector('.evidence-link').href, record.evidenceUrl);
+    const evidence = ui.document.querySelector('.evidence-link');
+    assert.equal(evidence.href, record.evidenceUrl);
+    assert.equal(evidence.getAttribute('aria-label'), `查看 ${when} 的充電紀錄相片`);
     const select = ui.document.querySelector('#ownerPending select');
-    ui.document.querySelector('.owner-suggestion').click();
+    const adopt = ui.document.querySelector('.owner-suggestion');
+    const ignore = ui.document.querySelector('.owner-ignore');
+    assert.equal(adopt.getAttribute('aria-label'), `採用建議（${when}）`);
+    assert.equal(ignore.getAttribute('aria-label'), `非家中車輛（忽略，${when}）`);
+    adopt.click();
     assert.equal(select.value, 'model3');
-    assert.ok(ui.document.querySelector('.owner-ignore'));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const unchanged = harness.env.call('readLog_');
+    assert.equal(unchanged.length, 1);
+    assert.equal(unchanged[0].car, 'unassigned');
+    assert.ok(ignore);
   } finally {
     ui.close();
     await harness.close();
@@ -258,31 +292,40 @@ test('owner UI: engine labels and the manual-selection fallback', { timeout: 200
     evidenceUrl: 'https://drive.google.com/file/d/file-error/view',
     suggestionStatus: 'error',
   };
+  const limited = {
+    ...unassignedRecord('u-limited', '2026-11-21T00:30:00.000Z', 'din:r'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-limited/view',
+    suggestionStatus: 'rate_limited',
+  };
   const fallback = {
     ...unassignedRecord('u-fallback', '2026-11-21T01:00:00.000Z', 'din:x'),
     evidenceUrl: 'https://drive.google.com/file/view',
     suggestionStatus: 'unknown',
   };
-  const sheets = defaultSheets({ records: [plate, unknown, failed, fallback].map(logRow) });
+  const sheets = defaultSheets({ records: [plate, unknown, failed, limited, fallback] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
-    await waitFor(() => ui.document.querySelectorAll('#ownerPending .suggestion-label').length === 4, 12000);
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending .suggestion-label').length === 5, 12000);
     const labels = Array.from(
       ui.document.querySelectorAll('#ownerPending .suggestion-label'),
       (label) => label.textContent,
     );
     assert.ok(labels.some((text) => /建議：Leaf（98%，車牌）/.test(text)));
-    assert.ok(labels.some((text) => /未能辨識，請人手選擇/.test(text)));
-    assert.ok(labels.some((text) => /辨識失敗，請人手選擇/.test(text)));
-    assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 4);
-    assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 4);
+    assert.equal(labels.filter((text) => /未能辨識，請人手選擇/.test(text)).length, 2);
+    assert.equal(labels.filter((text) => /辨識失敗，請人手選擇/.test(text)).length, 2);
+    const limitedRow = Array.from(ui.document.querySelectorAll('#ownerPending > li'))
+      .find((row) => row.textContent.includes('8:30 AM'));
+    assert.match(limitedRow.querySelector('.suggestion-label').textContent, /辨識失敗/);
+    assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 5);
+    assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 5);
     const thumbnails = Array.from(
       ui.document.querySelectorAll('#ownerPending .evidence-thumb'),
       (image) => image.getAttribute('src'),
     );
-    assert.equal(thumbnails.length, 3);
+    assert.equal(thumbnails.length, 4);
     assert.ok(thumbnails.includes('https://drive.google.com/thumbnail?id=file-plate&sz=w480'));
+    assert.ok(thumbnails.includes('https://drive.google.com/thumbnail?id=file-limited&sz=w480'));
     const linkFallback = Array.from(ui.document.querySelectorAll('#ownerPending .evidence-link'))
       .find((link) => link.href === 'https://drive.google.com/file/view');
     assert.equal(linkFallback.textContent, '查看相片');
@@ -302,7 +345,7 @@ test('owner UI: ignoring an unassigned session deletes it and records guest feed
     suggestionStatus: 'matched',
     suggestionEngine: 'vlm',
   };
-  const sheets = defaultSheets({ records: [logRow(record)], feedback: [] });
+  const sheets = defaultSheets({ records: [record], feedback: [] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
@@ -324,19 +367,9 @@ test('owner UI: ignoring an unassigned session deletes it and records guest feed
 });
 
 test('owner UI: assigned rows keep compact evidence and reassign through the API', { timeout: 20000 }, async () => {
-  const startAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const startAt = `${monthKey(new Date().toISOString())}-01T04:00:00.000Z`;
   const record = {
-    id: 'assigned-1',
-    car: 'model3',
-    startAt,
-    kWh: 12,
-    durationSec: 3600,
-    teslaStartAt: startAt,
-    teslaEndAt: new Date(Date.parse(startAt) + 3600 * 1000).toISOString(),
-    peakKWh: 0,
-    offPeakKWh: 12,
-    teslaKey: 'din:assigned',
-    source: 'tesla',
+    ...assignedRecord('assigned-1', startAt),
     evidenceUrl: 'https://drive.google.com/file/d/assigned-file/view',
     suggestedCar: 'model3',
     suggestionConfidence: 0.98,
@@ -346,7 +379,7 @@ test('owner UI: assigned rows keep compact evidence and reassign through the API
     suggestionEngine: 'plate',
     suggestionSnapshotId: 'snap-1',
   };
-  const sheets = defaultSheets({ records: [logRow(record)], feedback: [] });
+  const sheets = defaultSheets({ records: [record], feedback: [] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
@@ -367,6 +400,58 @@ test('owner UI: assigned rows keep compact evidence and reassign through the API
     assert.equal(feedback[0].suggestedCar, 'model3');
     assert.equal(feedback[0].chosenCar, 'leaf');
     assert.equal(feedback[0].engine, 'plate');
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: every assigned record in the period is rendered and reassignable', { timeout: 20000 }, async () => {
+  const month = monthKey(new Date().toISOString());
+  const records = [];
+  for (let day = 1; day <= 11; day += 1) {
+    records.push(assignedRecord(`assigned-${day}`, `${month}-${String(day).padStart(2, '0')}T04:00:00.000Z`));
+  }
+  const oldest = records[0];
+  const harness = await createHarness({ sheets: defaultSheets({ records }) });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelectorAll('#ownerAssigned > li').length === 11, 12000);
+    const rows = Array.from(ui.document.querySelectorAll('#ownerAssigned > li'));
+    const oldestLabel = `${formatHkDate(oldest.startAt)} ${formatHkTime12(oldest.startAt)}`;
+    assert.equal(rows[0].querySelector('.owner-row-head span').textContent, `${formatHkDate(records[10].startAt)} ${formatHkTime12(records[10].startAt)}`);
+    assert.equal(rows[10].querySelector('.owner-row-head span').textContent, oldestLabel);
+    const select = rows[10].querySelector('select');
+    assert.equal(select.value, 'model3');
+    assert.equal(
+      select.getAttribute('aria-label'),
+      `改派 ${oldestLabel} 的車輛`,
+    );
+    const reassign = rows[10].querySelector('.owner-reassign');
+    assert.ok(reassign);
+    assert.equal(reassign.disabled, false);
+    assert.equal(ui.document.getElementById('ownerAssignedEmpty').hidden, true);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: non-http evidence URLs render as plain text, never as links', { timeout: 20000 }, async () => {
+  const record = {
+    ...unassignedRecord('u-js', '2026-11-21T04:00:00.000Z', 'din:js'),
+    evidenceUrl: 'javascript:alert(document.cookie)',
+    suggestionStatus: 'unknown',
+  };
+  const harness = await createHarness({ sheets: defaultSheets({ records: [record] }) });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.querySelector('#ownerPending .evidence-link'), 12000);
+    const fallback = ui.document.querySelector('#ownerPending .evidence-link');
+    assert.equal(fallback.tagName, 'SPAN');
+    assert.equal(fallback.hasAttribute('href'), false);
+    assert.equal(fallback.textContent, '查看相片');
+    assert.equal(ui.document.querySelector('#ownerPending a[href^="javascript:"]'), null);
   } finally {
     ui.close();
     await harness.close();

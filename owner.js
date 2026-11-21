@@ -32,7 +32,6 @@ import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows }
 import { startChargerLive } from './live.js';
 
 const ENGINE_LABELS = { plate: '車牌', vlm: '視覺' };
-const ASSIGNED_LIMIT = 10;
 
 export function initOwner({ apiUrl }) {
   const state = {
@@ -142,14 +141,25 @@ export function initOwner({ apiUrl }) {
     return match ? match[1] : '';
   }
 
+  function recordWhen(record) {
+    return `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
+  }
+
   function makeEvidenceLink(record, { compact = false } = {}) {
     if (!record.evidenceUrl) return null;
+    const className = compact ? 'evidence-link evidence-compact' : 'evidence-link';
+    if (!/^https?:\/\//i.test(record.evidenceUrl)) {
+      const fallback = document.createElement('span');
+      fallback.className = className;
+      fallback.textContent = '查看相片';
+      return fallback;
+    }
     const link = document.createElement('a');
-    link.className = compact ? 'evidence-link evidence-compact' : 'evidence-link';
+    link.className = className;
     link.href = record.evidenceUrl;
     link.target = '_blank';
     link.rel = 'noreferrer';
-    link.setAttribute('aria-label', '查看充電紀錄相片');
+    link.setAttribute('aria-label', `查看 ${recordWhen(record)} 的充電紀錄相片`);
     const fileId = driveFileId(record.evidenceUrl);
     if (!fileId) {
       link.textContent = '查看相片';
@@ -630,6 +640,7 @@ export function initOwner({ apiUrl }) {
       adopt.type = 'button';
       adopt.className = 'owner-suggestion';
       adopt.textContent = '採用建議';
+      adopt.setAttribute('aria-label', `採用建議（${recordWhen(record)}）`);
       adopt.disabled = state.busy
         || !state.cars.some((car) => car.active && car.id === record.suggestedCar);
       adopt.addEventListener('click', () => { select.value = record.suggestedCar; });
@@ -638,6 +649,7 @@ export function initOwner({ apiUrl }) {
       suggestion = document.createElement('span');
       suggestion.className = 'suggestion-label';
       suggestion.textContent = record.suggestionStatus === 'error'
+        || record.suggestionStatus === 'rate_limited'
         ? '辨識失敗，請人手選擇'
         : '未能辨識，請人手選擇';
     }
@@ -653,6 +665,7 @@ export function initOwner({ apiUrl }) {
     ignore.type = 'button';
     ignore.className = 'owner-ignore';
     ignore.textContent = '非家中車輛（忽略）';
+    ignore.setAttribute('aria-label', `非家中車輛（忽略，${recordWhen(record)}）`);
     ignore.disabled = state.busy;
     ignore.addEventListener('click', () => { void onIgnore(record); });
     actions.append(select, assign, ignore);
@@ -802,8 +815,7 @@ export function initOwner({ apiUrl }) {
       .filter((record) => (
         record.car && record.car !== 'unassigned' && record.kWh !== null && record.source !== 'legacy'
       ))
-      .sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt))
-      .slice(0, ASSIGNED_LIMIT);
+      .sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
     els.assigned.replaceChildren();
     for (const record of assigned) els.assigned.append(makeAssignedRow(record));
     els.assignedEmpty.hidden = assigned.length > 0;
