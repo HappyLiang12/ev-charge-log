@@ -355,7 +355,7 @@ function recordFeedbackRow_(target, chosenCar, actor) {
     id: 'fb-' + target.id + '-' + Date.now(),
     recordId: target.id,
     startAt: target.teslaStartAt || target.startAt,
-    engine: target.suggestionEngine || (target.suggestedCar ? 'manual' : ''),
+    engine: target.suggestionEngine || (target.suggestedCar ? '' : 'manual'),
     suggestedCar: target.suggestedCar || '',
     chosenCar: chosenCar,
     confidence: target.suggestionConfidence,
@@ -444,6 +444,9 @@ function ignoreAction_(data) {
     throw new Error('Only unassigned sessions can be ignored');
   }
   if (record) {
+    // Deleting the Log row also deletes the dedupe key, so persist it first;
+    // otherwise the next sync re-imports the session.
+    if (record.teslaKey) appendIgnoredTeslaKey_(record.teslaKey, 'owner');
     recordAssignmentFeedback_(record, 'guest', 'owner');
   }
   var deleted = deleteLog_(String(data.id || ''));
