@@ -302,23 +302,33 @@ test('owner UI: engine labels and the manual-selection fallback', { timeout: 200
     evidenceUrl: 'https://drive.google.com/file/view',
     suggestionStatus: 'unknown',
   };
-  const sheets = defaultSheets({ records: [plate, unknown, failed, limited, fallback] });
+  const tampered = {
+    ...unassignedRecord('u-tampered', '2026-11-20T23:00:00.000Z', 'din:t'),
+    suggestedCar: 'leaf',
+    suggestionConfidence: 0.5,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'constructor',
+  };
+  const sheets = defaultSheets({ records: [plate, unknown, failed, limited, fallback, tampered] });
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
-    await waitFor(() => ui.document.querySelectorAll('#ownerPending .suggestion-label').length === 5, 12000);
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending .suggestion-label').length === 6, 12000);
     const labels = Array.from(
       ui.document.querySelectorAll('#ownerPending .suggestion-label'),
       (label) => label.textContent,
     );
     assert.ok(labels.some((text) => /建議：Leaf（98%，車牌）/.test(text)));
+    // An unknown engine string must not resolve to Object.prototype members.
+    assert.ok(labels.some((text) => /建議：Leaf（50%）/.test(text)));
+    assert.ok(labels.every((text) => !/function/.test(text)));
     assert.equal(labels.filter((text) => /未能辨識，請人手選擇/.test(text)).length, 2);
     assert.equal(labels.filter((text) => /辨識失敗，請人手選擇/.test(text)).length, 2);
     const limitedRow = Array.from(ui.document.querySelectorAll('#ownerPending > li'))
       .find((row) => row.textContent.includes('8:30 AM'));
     assert.match(limitedRow.querySelector('.suggestion-label').textContent, /辨識失敗/);
     assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 5);
-    assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 5);
+    assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 6);
     const thumbnails = Array.from(
       ui.document.querySelectorAll('#ownerPending .evidence-thumb'),
       (image) => image.getAttribute('src'),
@@ -347,7 +357,7 @@ test('owner UI: ignoring an unassigned session deletes it and records guest feed
   };
   const sheets = defaultSheets({ records: [record], feedback: [] });
   const harness = await createHarness({ sheets });
-  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1', confirm: () => true });
   try {
     await waitFor(() => ui.document.querySelector('.owner-ignore'), 12000);
     ui.document.querySelector('.owner-ignore').click();
@@ -360,6 +370,35 @@ test('owner UI: ignoring an unassigned session deletes it and records guest feed
     assert.equal(feedback[0].chosenCar, 'guest');
     assert.equal(feedback[0].actor, 'owner');
     assert.equal(ui.document.getElementById('ownerPendingEmpty').hidden, false);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: cancelling the ignore confirmation leaves the session untouched', { timeout: 20000 }, async () => {
+  const record = {
+    ...unassignedRecord('u-ignore-cancel', '2026-11-21T04:00:00.000Z', 'din:cancel'),
+    evidenceUrl: 'https://drive.google.com/file/d/file-1/view',
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.6,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'vlm',
+  };
+  const sheets = defaultSheets({ records: [record], feedback: [] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1', confirm: () => false });
+  try {
+    await waitFor(() => ui.document.querySelector('.owner-ignore'), 12000);
+    ui.document.querySelector('.owner-ignore').click();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    // No POST: the Log row survives, no Feedback is appended, no toast.
+    const records = harness.env.call('readLog_');
+    assert.equal(records.length, 1);
+    assert.equal(records[0].car, 'unassigned');
+    assert.equal(harness.env.call('readFeedback_').length, 0);
+    assert.doesNotMatch(ui.document.getElementById('ownerToast').textContent, /已標記/);
+    assert.equal(ui.document.querySelectorAll('#ownerPending > li').length, 1);
   } finally {
     ui.close();
     await harness.close();
