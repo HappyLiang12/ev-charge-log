@@ -94,6 +94,10 @@ External providers:
 
 `key`, `value`, `updatedAt`, `notes`. Non-secret tunables only. `setup()` seeds missing defaults.
 
+### Ignored
+
+`teslaKey`, `createdAt`, `actor`. Written when the owner ignores an unassigned session (chosen car `guest`). The Tesla key is retained after the Log row is deleted so the next sync does not re-import the ignored session.
+
 ### Cars (append column)
 
 - `description`: a short visual description used in VLM prompts; falls back to `name` when empty.
@@ -227,7 +231,7 @@ Every human decision appends Feedback:
 | owner assign | car id | Compare against the Log suggestion |
 | family claim | car id | Actor=`family` |
 | owner reassign | car id | Corrects an assigned record; actor=`owner` |
-| owner ignore | `guest` | Removes the Log row from billing; feedback retained |
+| owner ignore | `guest` | Removes the Log row from billing; the Tesla key is persisted in `Ignored` so later syncs skip it; feedback retained |
 
 When the record has no stored suggestion, the engine at decision time is `manual` (no prior guess is invented).
 
