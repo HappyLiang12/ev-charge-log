@@ -263,7 +263,7 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     }${formatHkTime12(endIso)}`;
     assert.ok(ui.document.getElementById('recentList').textContent.includes(endLabel));
 
-    ui.document.querySelector('#recentList li button').click();
+    ui.document.querySelector('#recentList li .delete-btn').click();
     await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 0);
     await waitFor(() => ui.document.querySelectorAll('#familyUnassigned li').length === 1);
     assert.match(ui.document.getElementById('familyUnassigned').textContent, /認領/);
