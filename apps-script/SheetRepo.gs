@@ -4,21 +4,24 @@ var LOG_COLUMNS = [
   'evidenceUrl', 'suggestedCar', 'suggestionConfidence', 'suggestionPlate',
   'suggestionStatus', 'identifiedAt', 'suggestionEngine', 'suggestionSnapshotId',
 ];
+var LOCAL_STAMP_COLUMN = '本地時間（HKT）';
 var SNAPSHOTS_COLUMNS = [
   'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
-  'bytes', 'source', 'createdAt', 'crop',
+  'bytes', 'source', 'createdAt', 'crop', LOCAL_STAMP_COLUMN,
 ];
-var PLATES_COLUMNS = ['plate', 'car', 'active', 'createdAt'];
+var PLATES_COLUMNS = ['plate', 'car', 'active', 'createdAt', LOCAL_STAMP_COLUMN];
 var FEEDBACK_COLUMNS = [
   'id', 'recordId', 'startAt', 'engine', 'suggestedCar', 'chosenCar',
   'confidence', 'plate', 'snapshotId', 'lighting', 'actor', 'createdAt',
+  LOCAL_STAMP_COLUMN,
 ];
-var IGNORED_COLUMNS = ['teslaKey', 'createdAt', 'actor'];
-var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description'];
-var CAR_PHOTOS_COLUMNS = ['carId', 'fileId', 'lighting', 'active', 'createdAt'];
+var IGNORED_COLUMNS = ['teslaKey', 'createdAt', 'actor', LOCAL_STAMP_COLUMN];
+var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description', LOCAL_STAMP_COLUMN];
+var CAR_PHOTOS_COLUMNS = ['carId', 'fileId', 'lighting', 'active', 'createdAt', LOCAL_STAMP_COLUMN];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
+  LOCAL_STAMP_COLUMN,
 ];
 
 function sheetId_() {
@@ -263,6 +266,7 @@ function readCarPhotos_() {
 
 function appendCarPhoto_(photo) {
   var sheet = sheetNamed_(openSpreadsheet_(), 'CarPhotos', CAR_PHOTOS_COLUMNS);
+  photo[LOCAL_STAMP_COLUMN] = hkStamp_(photo.createdAt);
   var row = headerRow_(sheet).map(function (column) {
     var value = photo[column];
     return value === undefined || value === null ? '' : value;
@@ -382,6 +386,7 @@ function preferRate_(current, next) {
 
 function rateValue_(rate, column) {
   if (column === 'manualOverride') return rate.manualOverride ? 'TRUE' : 'FALSE';
+  if (column === LOCAL_STAMP_COLUMN) return hkStamp_(rate.fetchedAt);
   var value = rate[column];
   return value === undefined || value === null ? '' : value;
 }
@@ -445,6 +450,7 @@ function upsertRates_(rates) {
 var BILLS_COLUMNS = [
   'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
   'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt', 'publishedAt',
+  LOCAL_STAMP_COLUMN,
 ];
 
 function validDateOnly_(value) {
@@ -567,6 +573,7 @@ function upsertBill_(bill) {
     target = i;
   }
   var row = header.map(function (column) {
+    if (column === LOCAL_STAMP_COLUMN) return hkStamp_(bill.savedAt);
     var value = bill[column];
     return value === undefined || value === null ? '' : value;
   });
@@ -619,6 +626,38 @@ function snapshotFromRow_(row) {
   };
 }
 
+function backfillLocalTimeStamps() {
+  var plan = [
+    ['Snapshots', SNAPSHOTS_COLUMNS, 'capturedAt'],
+    ['Feedback', FEEDBACK_COLUMNS, 'createdAt'],
+    ['Ignored', IGNORED_COLUMNS, 'createdAt'],
+    ['Rates', RATES_COLUMNS, 'fetchedAt'],
+    ['Bills', BILLS_COLUMNS, 'savedAt'],
+    ['Cars', CARS_COLUMNS, 'createdAt'],
+    ['CarPhotos', CAR_PHOTOS_COLUMNS, 'createdAt'],
+    ['Plates', PLATES_COLUMNS, 'createdAt'],
+  ];
+  var filled = 0;
+  for (var p = 0; p < plan.length; p += 1) {
+    var sheet = sheetNamed_(openSpreadsheet_(), plan[p][0], plan[p][1]);
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) continue;
+    var header = values[0].map(function (value) { return String(value || '').trim(); });
+    var stampCol = header.indexOf(LOCAL_STAMP_COLUMN);
+    var sourceCol = header.indexOf(plan[p][2]);
+    if (stampCol === -1 || sourceCol === -1) continue;
+    for (var i = 1; i < values.length; i += 1) {
+      if (String(values[i][stampCol] || '').trim()) continue;
+      var source = isoValue_(values[i][sourceCol]) || values[i][sourceCol];
+      var stamp = hkStamp_(source);
+      if (!stamp) continue;
+      sheet.getRange(i + 1, stampCol + 1).setValues([[stamp]]);
+      filled += 1;
+    }
+  }
+  return { ok: true, filled: filled };
+}
+
 function readSnapshots_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
   return readObjects_(sheet, SNAPSHOTS_COLUMNS).map(snapshotFromRow_)
@@ -645,6 +684,7 @@ function readLatestSnapshot_() {
 
 function appendSnapshot_(snapshot) {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Snapshots', SNAPSHOTS_COLUMNS);
+  snapshot[LOCAL_STAMP_COLUMN] = hkStamp_(snapshot.capturedAt);
   var row = headerRow_(sheet).map(function (column) {
     var value = snapshot[column];
     return value === undefined || value === null ? '' : value;
@@ -705,11 +745,13 @@ function upsertPlate_(plate, carId) {
     sheet.getRange(i + 1, 1, 1, header.length).setValues([row]);
     return true;
   }
+  var nowIso = new Date().toISOString();
   var appended = header.map(function (column) {
     if (column === 'plate') return normalized;
     if (column === 'car') return target;
     if (column === 'active') return 'TRUE';
-    if (column === 'createdAt') return new Date().toISOString();
+    if (column === 'createdAt') return nowIso;
+    if (column === LOCAL_STAMP_COLUMN) return hkStamp_(nowIso);
     return '';
   });
   sheet.appendRow(appended);
@@ -740,6 +782,7 @@ function readFeedback_() {
 
 function appendFeedback_(feedback) {
   var sheet = sheetNamed_(openSpreadsheet_(), 'Feedback', FEEDBACK_COLUMNS);
+  feedback[LOCAL_STAMP_COLUMN] = hkStamp_(feedback.createdAt);
   var row = headerRow_(sheet).map(function (column) {
     var value = feedback[column];
     return value === undefined || value === null ? '' : value;
@@ -763,7 +806,9 @@ function appendIgnoredTeslaKey_(teslaKey, actor) {
   if (!key) return false;
   if (readIgnoredTeslaKeys_()[key]) return false;
   var sheet = sheetNamed_(openSpreadsheet_(), 'Ignored', IGNORED_COLUMNS);
-  var entry = { teslaKey: key, createdAt: new Date().toISOString(), actor: String(actor || '').trim() };
+  var createdAt = new Date().toISOString();
+  var entry = { teslaKey: key, createdAt: createdAt, actor: String(actor || '').trim() };
+  entry[LOCAL_STAMP_COLUMN] = hkStamp_(createdAt);
   sheet.appendRow(headerRow_(sheet).map(function (column) {
     return Object.prototype.hasOwnProperty.call(entry, column) ? entry[column] : '';
   }));

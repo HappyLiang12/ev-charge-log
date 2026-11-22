@@ -46,6 +46,14 @@ function hkMonth_(iso) {
   return hkDateString_(iso).slice(0, 7);
 }
 
+function hkStamp_(iso) {
+  var at = Date.parse(iso);
+  if (isNaN(at)) return '';
+  var d = new Date(at + HK_OFFSET_MS_);
+  return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate())
+    + ' ' + pad2_(d.getUTCHours()) + ':' + pad2_(d.getUTCMinutes()) + ':' + pad2_(d.getUTCSeconds());
+}
+
 function lightingFor_(iso) {
   var at = Date.parse(iso);
   if (isNaN(at)) return '';

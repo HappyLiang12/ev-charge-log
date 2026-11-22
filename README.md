@@ -131,6 +131,8 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 The Google Sheet has up to nine tabs: `Log`, `Cars`, `Rates`, `Bills`, `Snapshots`, `Plates`, `Feedback`, `Ignored`, and `Config`. The script creates missing tabs on first use and appends missing `Log` columns to the right; existing rows are never moved or deleted.
 
+Every script-written tab (`Snapshots`, `Feedback`, `Ignored`, `Rates`, `Bills`, `Cars`, `CarPhotos`, `Plates`) carries a `本地時間（HKT）` column with the row's primary timestamp in Hong Kong time (`YYYY-MM-DD HH:MM:SS`). The ISO columns stay UTC with a `Z` suffix. `Log` already exposes Hong Kong time through its `日期` and `時間` columns. Run `backfillLocalTimeStamps()` once after upgrading to fill existing rows; new rows are stamped on write.
+
 ### `Log`
 
 `id`, `startAt`, `日期`, `時間`, `car`, `kWh`, `durationSec`, `teslaStartAt`, `teslaEndAt`, `peakKWh`, `offPeakKWh`, `teslaKey`, `source`, `evidenceUrl`, `suggestedCar`, `suggestionConfidence`, `suggestionPlate`, `suggestionStatus`, `identifiedAt`, `suggestionEngine`, `suggestionSnapshotId`.

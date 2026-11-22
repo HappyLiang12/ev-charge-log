@@ -628,7 +628,10 @@ test('upsertBill_ writes a Bills tab and updates by period instead of duplicatin
   assert.deepEqual(env.values('Bills')[0], [
     'periodStart', 'periodEnd', 'cutoff', 'units', 'peakKWh', 'offPeakKWh',
     'energyCharge', 'fuelCharge', 'others', 'total', 'fileName', 'savedAt', 'publishedAt',
+    '本地時間（HKT）',
   ]);
+  const billRow = env.values('Bills')[1];
+  assert.match(billRow[13], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 
   env.call('upsertBill_', env.call('normalizedBillInput_', { ...billInput, total: 1290 }));
   const rows = plain(env.call('readBills_'));
