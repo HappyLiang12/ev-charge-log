@@ -144,6 +144,28 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         }),
       };
     })(),
+    ScriptApp: (() => {
+      const triggers = [];
+      return {
+        _triggers: triggers,
+        getProjectTriggers: () => triggers.slice(),
+        deleteTrigger: (trigger) => {
+          const index = triggers.indexOf(trigger);
+          if (index >= 0) triggers.splice(index, 1);
+        },
+        newTrigger: (handler) => ({
+          timeBased: () => ({
+            everyMinutes: (minutes) => ({
+              create: () => {
+                const trigger = { getHandlerFunction: () => handler, minutes };
+                triggers.push(trigger);
+                return trigger;
+              },
+            }),
+          }),
+        }),
+      };
+    })(),
     UrlFetchApp: {
       fetch: fetchHandler || (() => { throw new Error('Unexpected UrlFetchApp.fetch'); }),
     },

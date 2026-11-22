@@ -508,6 +508,36 @@ function syncAction_(data) {
   return result;
 }
 
+var SCHEDULED_SYNC_MINUTES_ = 30;
+
+function scheduledSync() {
+  try {
+    var result = syncAction_({});
+    console.log('scheduled sync ' + JSON.stringify(result));
+    return result;
+  } catch (error) {
+    console.log('scheduled sync failed: ' + String(error.message || error));
+    return { ok: false, error: String(error.message || error) };
+  }
+}
+
+function installScheduledSync() {
+  var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === 'scheduledSync';
+  });
+  existing.forEach(function (trigger) { ScriptApp.deleteTrigger(trigger); });
+  ScriptApp.newTrigger('scheduledSync').timeBased().everyMinutes(SCHEDULED_SYNC_MINUTES_).create();
+  return { ok: true, minutes: SCHEDULED_SYNC_MINUTES_, replaced: existing.length };
+}
+
+function removeScheduledSync() {
+  var existing = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === 'scheduledSync';
+  });
+  existing.forEach(function (trigger) { ScriptApp.deleteTrigger(trigger); });
+  return { ok: true, removed: existing.length };
+}
+
 function readDriveImageBase64_(fileId) {
   return Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes());
 }
