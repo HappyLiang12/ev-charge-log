@@ -309,8 +309,10 @@ test('owner sees snapshot, engine, confidence, adopt, and ignore', { timeout: 20
 });
 
 test('owner UI: engine labels and the manual-selection fallback', { timeout: 20000 }, async () => {
+  const now = Date.now();
+  const at = (hoursAgo) => new Date(now - hoursAgo * 3600 * 1000).toISOString();
   const plate = {
-    ...unassignedRecord('u-plate', '2026-11-21T04:00:00.000Z', 'din:p'),
+    ...unassignedRecord('u-plate', at(1), 'din:p'),
     evidenceUrl: 'https://drive.google.com/file/d/file-plate/view',
     suggestedCar: 'leaf',
     suggestionConfidence: 0.98,
@@ -318,27 +320,27 @@ test('owner UI: engine labels and the manual-selection fallback', { timeout: 200
     suggestionEngine: 'plate',
   };
   const unknown = {
-    ...unassignedRecord('u-unknown', '2026-11-21T03:00:00.000Z', 'din:u'),
+    ...unassignedRecord('u-unknown', at(2), 'din:u'),
     evidenceUrl: 'https://drive.google.com/file/d/file-unknown/view',
     suggestionStatus: 'unknown',
   };
   const failed = {
-    ...unassignedRecord('u-error', '2026-11-21T02:00:00.000Z', 'din:e'),
+    ...unassignedRecord('u-error', at(3), 'din:e'),
     evidenceUrl: 'https://drive.google.com/file/d/file-error/view',
     suggestionStatus: 'error',
   };
   const limited = {
-    ...unassignedRecord('u-limited', '2026-11-21T00:30:00.000Z', 'din:r'),
+    ...unassignedRecord('u-limited', at(4), 'din:r'),
     evidenceUrl: 'https://drive.google.com/file/d/file-limited/view',
     suggestionStatus: 'rate_limited',
   };
   const fallback = {
-    ...unassignedRecord('u-fallback', '2026-11-21T01:00:00.000Z', 'din:x'),
+    ...unassignedRecord('u-fallback', at(5), 'din:x'),
     evidenceUrl: 'https://drive.google.com/file/view',
     suggestionStatus: 'unknown',
   };
   const tampered = {
-    ...unassignedRecord('u-tampered', '2026-11-20T23:00:00.000Z', 'din:t'),
+    ...unassignedRecord('u-tampered', at(6), 'din:t'),
     suggestedCar: 'leaf',
     suggestionConfidence: 0.5,
     suggestionStatus: 'matched',
@@ -360,7 +362,7 @@ test('owner UI: engine labels and the manual-selection fallback', { timeout: 200
     assert.equal(labels.filter((text) => /未能辨識，請人手選擇/.test(text)).length, 2);
     assert.equal(labels.filter((text) => /辨識失敗，請人手選擇/.test(text)).length, 2);
     const limitedRow = Array.from(ui.document.querySelectorAll('#ownerPending > li'))
-      .find((row) => row.textContent.includes('8:30 AM'));
+      .find((row) => row.textContent.includes(formatHkTime12(limited.startAt)));
     assert.match(limitedRow.querySelector('.suggestion-label').textContent, /辨識失敗/);
     assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 5);
     assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 6);
