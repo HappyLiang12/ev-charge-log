@@ -36,10 +36,20 @@
     </header>
 
     <main>
+      <div id="familyError" class="error-banner" hidden>
+        <span id="familyErrorText"></span>
+        <button id="familyErrorRetry" type="button">重試</button>
+      </div>
+
       <button id="startBtn" class="primary" type="button">⚡ 開始充電</button>
+      <div id="familyStartHint" class="start-hint" hidden>
+        <span id="familyStartHintText"></span>
+        <button id="familyStartCancel" type="button" class="link-btn">取消</button>
+      </div>
 
       <div class="actions">
-        <button id="syncBtn" class="secondary" type="button">更新充電樁</button>
+        <button id="syncBtn" class="secondary" type="button">同步紀錄</button>
+        <span id="familyUpdatedAt" class="hint updated-at"></span>
       </div>
 
       <section class="stats" aria-label="期間摘要">
@@ -70,7 +80,7 @@
           <div class="live-metric"><strong id="familyLiveKwh">—</strong><span>估算 kWh</span></div>
           <div class="live-metric"><strong id="familyLiveCost">—</strong><span>估算電費</span></div>
         </div>
-        <p id="familyLiveHint" class="hint">每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。</p>
+        <p id="familyLiveHint" class="hint">每 5 分鐘讀取充電樁狀態；估算按現時電價計算，完成後以 Tesla 紀錄為準。</p>
       </section>
 
       <section id="familyBillsPanel" class="panel" hidden>
@@ -83,7 +93,7 @@
         <h2>未配對充電樁紀錄</h2>
         <ul id="familyUnassigned" class="owner-list"></ul>
         <p id="familyUnassignedEmpty" class="empty" hidden>冇未配對充電樁紀錄。</p>
-        <p class="hint">如果係你嘅充電，按「認領」。</p>
+        <p class="hint">如果係你嘅充電，展開月份後按「認領」。</p>
       </section>
 
       <section class="panel">
@@ -117,15 +127,16 @@
         <h1>EV 充電紀錄</h1>
         <p class="subtitle">管理</p>
       </div>
+      <span id="ownerPendingCount" class="chip pending-count" hidden></span>
       <span id="ownerStatus" class="chip" data-state="idle">未設定</span>
     </header>
 
     <main>
       <div class="owner-actions">
-        <button id="ownerSyncBtn" class="secondary" type="button">更新充電樁</button>
+        <button id="ownerSyncBtn" class="secondary" type="button">同步紀錄</button>
         <button id="ownerRatesBtn" class="secondary" type="button">更新費率</button>
       </div>
-      <p class="hint">首次使用：按「更新充電樁」會匯入最近 30 天；家人開始充電後會自動配對。</p>
+      <p class="hint">首次使用：按「同步紀錄」會匯入最近 30 天；之後每 30 分鐘自動同步一次。<span id="ownerUpdatedAt" class="updated-at"></span></p>
 
       <section id="ownerSnapshotPanel" class="panel snapshot-panel" hidden>
         <div class="owner-toolbar">
@@ -136,7 +147,8 @@
           <img id="ownerSnapshotImg" class="snapshot-image" alt="充電位最新快照" />
           <span id="ownerSnapshotFallback" class="snapshot-fallback" hidden>查看相片</span>
         </a>
-        <p id="ownerSnapshotHint" class="hint">每 60 秒更新；相機每 5 分鐘拍攝一次。</p>
+        <p id="ownerSnapshotWarning" class="hint snapshot-warning" hidden></p>
+        <p id="ownerSnapshotHint" class="hint">相片透過 Google Drive 載入（需要登入）；每 60 秒更新，相機每 5 分鐘拍攝一次。</p>
       </section>
 
       <section id="ownerLivePanel" class="panel live-panel" hidden>
@@ -149,7 +161,7 @@
           <div class="live-metric"><strong id="ownerLiveKwh">—</strong><span>估算 kWh</span></div>
           <div class="live-metric"><strong id="ownerLiveCost">—</strong><span>估算電費</span></div>
         </div>
-        <p id="ownerLiveHint" class="hint">每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。</p>
+        <p id="ownerLiveHint" class="hint">每 5 分鐘讀取充電樁狀態；估算按現時電價計算，完成後以 Tesla 紀錄為準。</p>
       </section>
       <a id="ownerSheetLink" class="sheet-link" target="_blank" rel="noreferrer" hidden>打開 Google Sheet</a>
 
@@ -163,6 +175,13 @@
         </div>
         <div id="ownerCarTotals" class="owner-cards"></div>
         <p id="ownerLegacy" class="hint"></p>
+      </section>
+
+      <section class="panel">
+        <h2>待配對（全部期間）</h2>
+        <ul id="ownerPending" class="owner-list"></ul>
+        <p id="ownerPendingEmpty" class="empty" hidden>所有紀錄都已配對。</p>
+        <p class="hint">手動開始或未指定車輛嘅充電樁紀錄（全部期間）；配對完成後會計入月結。</p>
       </section>
 
       <section class="panel">
@@ -180,8 +199,8 @@
             <label>帳單期結束<input id="ownerBillEnd" type="date" /></label>
             <label>總度數<input id="ownerBillUnits" type="number" step="0.01" min="0" /></label>
             <label>應繳總額<input id="ownerBillTotal" type="number" step="0.01" min="0" /></label>
-            <label>高峯度數<input id="ownerBillPeak" type="number" step="0.01" min="0" /></label>
-            <label>非高峯度數<input id="ownerBillOff" type="number" step="0.01" min="0" /></label>
+            <label>高峰度數<input id="ownerBillPeak" type="number" step="0.01" min="0" /></label>
+            <label>非高峰度數<input id="ownerBillOff" type="number" step="0.01" min="0" /></label>
             <label class="bill-cutoff">截止時間（HKT）<input id="ownerBillCutoff" type="datetime-local" step="1" /></label>
           </div>
           <p id="ownerBillExtract" class="hint"></p>
@@ -189,19 +208,12 @@
           <button id="ownerBillSave" type="button">記錄帳單</button>
         </div>
 
-        <p class="hint">分配完此帳單期所有 charging session 後，按「發布分攤」；未發布前家人連結不會顯示應付金額。</p>
+        <p class="hint">分配完此帳單期所有充電時段後，按「發布分攤」；未發布前家人連結不會顯示應付金額。</p>
         <div id="ownerBills" class="bill-list"></div>
       </section>
 
       <section class="panel">
-        <h2>待配對</h2>
-        <ul id="ownerPending" class="owner-list"></ul>
-        <p id="ownerPendingEmpty" class="empty" hidden>所有紀錄都已配對。</p>
-        <p class="hint">手動開始或未指定車輛嘅充電樁紀錄；配對完成後會計入月結。</p>
-      </section>
-
-      <section class="panel">
-        <h2>已分配紀錄</h2>
+        <h2>已分配紀錄（所選期間）</h2>
         <ul id="ownerAssigned" class="owner-list"></ul>
         <p id="ownerAssignedEmpty" class="empty" hidden>未有已分配紀錄。</p>
         <p class="hint">如配對有誤可改派車輛。</p>

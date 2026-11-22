@@ -56,10 +56,18 @@ export function initOwner({ apiUrl }) {
     billFileName: '',
     billBusy: false,
     publishing: new Set(),
+    rowBusy: new Set(),
+    updatedAt: '',
+    lastFetchAt: 0,
+    lastLiveCharging: false,
+    liveStartRow: null,
   };
 
   const els = {
     status: byId('ownerStatus'),
+    pendingCount: byId('ownerPendingCount'),
+    updatedAt: byId('ownerUpdatedAt'),
+    snapshotWarning: byId('ownerSnapshotWarning'),
     syncBtn: byId('ownerSyncBtn'),
     ratesBtn: byId('ownerRatesBtn'),
     sheetLink: byId('ownerSheetLink'),
@@ -194,16 +202,28 @@ export function initOwner({ apiUrl }) {
 
   function renderSnapshot(snapshot) {
     if (!snapshot) {
-      els.snapshotPanel.hidden = true;
+      els.snapshotPanel.hidden = false;
+      els.snapshotLink.hidden = true;
+      els.snapshotTime.textContent = '';
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = '相機未有新相片（可能離線）。';
+      els.snapshotHint.textContent = '相片透過 Google Drive 載入（需要登入）；每 60 秒重試。';
       return;
     }
     const when = `${formatHkDate(snapshot.capturedAt)} ${formatHkTime12(snapshot.capturedAt)}`.trim();
+    const ageMinutes = Math.round((Date.now() - Date.parse(snapshot.capturedAt)) / 60000);
     els.snapshotPanel.hidden = false;
     els.snapshotLink.hidden = false;
     els.snapshotTime.textContent = when ? `拍攝於 ${when}` : '';
+    if (ageMinutes > 15) {
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = `最後相片已經 ${ageMinutes} 分鐘前（相機可能離線）。`;
+    } else {
+      els.snapshotWarning.hidden = true;
+    }
     els.snapshotHint.textContent = snapshot.crop === 'full'
-      ? '測試模式：全畫面；每 60 秒更新，相機每 5 分鐘拍攝一次。'
-      : '每 60 秒更新；相機每 5 分鐘拍攝一次。';
+      ? '測試模式：全畫面；相片透過 Google Drive 載入（需要登入），每 60 秒更新。'
+      : '相片透過 Google Drive 載入（需要登入）；每 60 秒更新，相機每 5 分鐘拍攝一次。';
     const fileId = snapshot.driveFileId || driveFileId(snapshot.driveUrl);
     els.snapshotLink.href = snapshot.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
     if (snapshot.id === renderedSnapshotId) return;
@@ -224,8 +244,8 @@ export function initOwner({ apiUrl }) {
       message = '帳單已記錄。';
     } else if (!calibration.applied) {
       message = calibration.reason === 'insufficient labeled data'
-        ? '帳單已記錄；已分配車輛嘅紀錄不足，未校準高峯係數。'
-        : '帳單已記錄；未校準高峯係數。';
+        ? '帳單已記錄；已分配車輛嘅紀錄不足，未校準高峰係數。'
+        : '帳單已記錄；未校準高峰係數。';
     } else {
       const changes = Array.isArray(calibration.updatedCars) ? calibration.updatedCars : [];
       const parts = changes.map((car) => (
@@ -233,17 +253,17 @@ export function initOwner({ apiUrl }) {
       ));
       message = changes.length
         ? `帳單已記錄；已按 ${calibration.billsUsed} 張帳單校準：${parts.join('、')}。`
-        : '帳單已記錄；估算已貼合帳單，高峯係數不變。';
+        : '帳單已記錄；估算已貼合帳單，高峰係數不變。';
     }
     const skipped = Array.isArray(calibration && calibration.skipped)
       ? calibration.skipped.find((item) => item.label === periodEnd)
       : null;
     if (skipped) {
       const reasons = {
-        'unlabeled sessions': '此帳單有未分配 session',
-        'missing sessions': '此帳單嘅 session 覆蓋不足',
-        'no peak/off-peak': '此帳單冇高峯/非高峯度數',
-        'no sessions': '此帳單期內冇 session',
+        'unlabeled sessions': '此帳單有未分配充電時段',
+        'missing sessions': '此帳單嘅充電時段覆蓋不足',
+        'no peak/off-peak': '此帳單冇高峰/非高峰度數',
+        'no sessions': '此帳單期內冇充電時段',
         'invalid period': '此帳單期無效',
       };
       message += ` ${reasons[skipped.reason] || '此帳單'}，未納入校準。`;
@@ -351,7 +371,7 @@ export function initOwner({ apiUrl }) {
     if (bill.peakKWh !== null && bill.offPeakKWh !== null) {
       const split = document.createElement('p');
       split.className = 'hint';
-      split.textContent = `帳單高峯 ${bill.peakKWh} / 非高峯 ${bill.offPeakKWh} 度；記錄按時段及車輛習慣估算 ${allocation.peakKWh.toFixed(0)} / ${allocation.offPeakKWh.toFixed(0)}（僅參考）。`;
+      split.textContent = `帳單高峰 ${bill.peakKWh} / 非高峰 ${bill.offPeakKWh} 度；記錄按時段及車輛習慣估算 ${allocation.peakKWh.toFixed(0)} / ${allocation.offPeakKWh.toFixed(0)}（僅參考）。`;
       wrap.append(split);
     }
     return wrap;
@@ -374,7 +394,7 @@ export function initOwner({ apiUrl }) {
     card.append(head);
     const meta = document.createElement('p');
     meta.className = 'hint';
-    meta.textContent = `${bill.units} 度 · 高峯 ${bill.peakKWh === null ? '—' : bill.peakKWh} / 非高峯 ${bill.offPeakKWh === null ? '—' : bill.offPeakKWh} · 截止 ${formatHkDate(bill.cutoff)} ${formatHkTime12(bill.cutoff)}${bill.fileName ? ` · ${bill.fileName}` : ''}`;
+    meta.textContent = `${bill.units} 度 · 高峰 ${bill.peakKWh === null ? '—' : bill.peakKWh} / 非高峰 ${bill.offPeakKWh === null ? '—' : bill.offPeakKWh} · 截止 ${formatHkDate(bill.cutoff)} ${formatHkTime12(bill.cutoff)}${bill.fileName ? ` · ${bill.fileName}` : ''}`;
     card.append(meta);
     const components = billComponentText(bill);
     if (components) {
@@ -474,7 +494,7 @@ export function initOwner({ apiUrl }) {
   async function onSaveBill() {
     const bill = readBillForm();
     if (!bill) {
-      setBillStatus('請檢查帳單期、度數、總額、高峯/非高峯及截止時間。');
+      setBillStatus('請檢查帳單期、度數、總額、高峰/非高峰及截止時間。');
       renderBillPreview();
       return;
     }
@@ -491,7 +511,7 @@ export function initOwner({ apiUrl }) {
       });
       const message = billCalibrationMessage(saved.calibration, bill.periodEnd);
       showToast(els.toast, message);
-      setBillStatus(`${message} 可按「更新充電樁」後再核對。`);
+      setBillStatus(`${message} 可按「同步紀錄」後再核對。`);
       els.billForm.hidden = true;
       state.billExtras = {};
       state.billFileName = '';
@@ -543,12 +563,12 @@ export function initOwner({ apiUrl }) {
     total.textContent = summary.cost === null ? '—' : `$${summary.cost.toFixed(2)}`;
     head.append(title, total);
     card.append(head);
-    card.append(textRow('次數 / 已配對', `${summary.count} / ${summary.matched}`));
+    card.append(textRow('紀錄', `總數 ${summary.count} · 已配對 ${summary.matched}`));
     card.append(textRow('kWh', summary.kWh.toFixed(1)));
     card.append(textRow('非高峰 / 高峰', `${summary.offPeakKWh.toFixed(1)} / ${summary.peakKWh.toFixed(1)} kWh`));
     const peakFactor = Number(car.peakFactor);
     if (Number.isFinite(peakFactor) && peakFactor < 0.995) {
-      card.append(textRow('高峯係數', `${peakFactor.toFixed(2)}（按帳單校準）`));
+      card.append(textRow('高峰係數', `${peakFactor.toFixed(2)}（按帳單校準）`));
     }
     if (summary.pending > 0) card.append(textRow('待配對', String(summary.pending)));
     if (summary.missingRate > 0) card.append(textRow('缺少費率', `${summary.missingRate} 筆`));
@@ -659,6 +679,7 @@ export function initOwner({ apiUrl }) {
 
     // Manual rows have no Tesla session to claim; only removing them makes sense.
     const manual = !record.teslaKey;
+    const rowBusy = state.busy || state.rowBusy.has(record.id);
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
@@ -674,7 +695,7 @@ export function initOwner({ apiUrl }) {
       const select = document.createElement('select');
       select.setAttribute('aria-label', '分配車輛');
       fillCarOptions(select, { placeholder: '選擇車輛' });
-      select.disabled = state.busy;
+      select.disabled = rowBusy;
 
       let suggestion = null;
       if (record.suggestedCar && record.suggestionStatus === 'matched') {
@@ -688,7 +709,7 @@ export function initOwner({ apiUrl }) {
         adopt.className = 'owner-suggestion';
         adopt.textContent = '採用建議';
         adopt.setAttribute('aria-label', `採用建議（${recordWhen(record)}）`);
-        adopt.disabled = state.busy
+        adopt.disabled = rowBusy
           || !state.cars.some((car) => car.active && car.id === record.suggestedCar);
         adopt.addEventListener('click', () => { select.value = record.suggestedCar; });
         suggestion.append(label, adopt);
@@ -704,7 +725,7 @@ export function initOwner({ apiUrl }) {
       const assign = document.createElement('button');
       assign.type = 'button';
       assign.textContent = '分配';
-      assign.disabled = state.busy;
+      assign.disabled = rowBusy;
       assign.addEventListener('click', () => { void onAssign(record, select); });
       actions.append(select, assign);
       li.append(head, meta);
@@ -726,7 +747,7 @@ export function initOwner({ apiUrl }) {
     ignore.setAttribute('aria-label', manual
       ? `刪除 ${recordWhen(record)} 的手動開始紀錄`
       : `非家中車輛（忽略，${recordWhen(record)}）`);
-    ignore.disabled = state.busy;
+    ignore.disabled = rowBusy;
     ignore.addEventListener('click', () => { void onIgnore(record); });
     actions.append(ignore);
     li.append(actions);
@@ -751,12 +772,13 @@ export function initOwner({ apiUrl }) {
     const select = document.createElement('select');
     select.setAttribute('aria-label', `改派 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的車輛`);
     fillCarOptions(select, { current: record.car });
-    select.disabled = state.busy;
+    const rowBusy = state.busy || state.rowBusy.has(record.id);
+    select.disabled = rowBusy;
     const reassign = document.createElement('button');
     reassign.type = 'button';
     reassign.className = 'owner-reassign';
     reassign.textContent = '改派';
-    reassign.disabled = state.busy;
+    reassign.disabled = rowBusy;
     reassign.addEventListener('click', () => { void onReassign(record, select); });
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
@@ -789,7 +811,7 @@ export function initOwner({ apiUrl }) {
     cancel.className = 'owner-ignore';
     cancel.textContent = '取消開始';
     cancel.setAttribute('aria-label', `取消 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的手動開始紀錄`);
-    cancel.disabled = state.busy;
+    cancel.disabled = state.busy || state.rowBusy.has(record.id);
     cancel.addEventListener('click', () => { void onCancelPending(record); });
     actions.append(cancel);
     li.append(head, meta, actions);
@@ -805,7 +827,8 @@ export function initOwner({ apiUrl }) {
           ? '離線'
           : '已連接';
     setStatus(els.status, status);
-    setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新充電樁');
+    els.updatedAt.textContent = state.updatedAt ? `資料更新於 ${formatHkTime12(state.updatedAt)}` : '';
+    setBusy(els.syncBtn, state.loading || state.busy || !apiUrl, '更新中…', '同步紀錄');
     setBusy(els.ratesBtn, state.loading || state.busy || !apiUrl, '更新中…', '更新費率');
     if (state.sheetUrl) {
       els.sheetLink.href = state.sheetUrl;
@@ -851,7 +874,9 @@ export function initOwner({ apiUrl }) {
     const activeCars = state.cars.filter((car) => car.active);
     els.carTotals.replaceChildren();
     if (activeCars.length === 0) {
-      els.carTotals.append(emptyLabel('未有車輛；請在 Google Sheet 的 Cars 工作表加入。'));
+      els.carTotals.append(emptyLabel(state.loading
+        ? '載入中…'
+        : '未有車輛；請在 Google Sheet 的 Cars 工作表加入。'));
     } else {
       for (const car of activeCars) {
         els.carTotals.append(makeCarCard(car, filtered.filter((record) => record.car === car.id)));
@@ -873,8 +898,15 @@ export function initOwner({ apiUrl }) {
       Date.now(),
       state.openPending,
     );
-    els.pendingEmpty.hidden = pending.length > 0;
-    els.pendingEmpty.textContent = '所有紀錄都已配對。';
+    els.pendingCount.hidden = pending.length === 0;
+    els.pendingCount.textContent = `待配對 ${pending.length}`;
+    if (state.loading && state.records.length === 0) {
+      els.pendingEmpty.hidden = false;
+      els.pendingEmpty.textContent = '載入中…';
+    } else {
+      els.pendingEmpty.hidden = pending.length > 0;
+      els.pendingEmpty.textContent = '所有紀錄都已配對。';
+    }
 
     const assigned = filtered
       .filter((record) => (
@@ -883,7 +915,12 @@ export function initOwner({ apiUrl }) {
       .sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
     els.assigned.replaceChildren();
     for (const record of assigned) els.assigned.append(makeAssignedRow(record));
-    els.assignedEmpty.hidden = assigned.length > 0;
+    if (state.loading && state.records.length === 0) {
+      els.assignedEmpty.hidden = false;
+      els.assignedEmpty.textContent = '載入中…';
+    } else {
+      els.assignedEmpty.hidden = assigned.length > 0;
+    }
 
     els.rates.replaceChildren();
     renderRateCards(els.rates, state.rates, '未有費率；請按「更新費率」。');
@@ -909,6 +946,8 @@ export function initOwner({ apiUrl }) {
     state.bills = data.bills || [];
     state.sheetUrl = data.sheetUrl;
     state.offline = false;
+    state.updatedAt = new Date().toISOString();
+    state.lastFetchAt = Date.now();
   }
 
   async function refreshOrWarn(message) {
@@ -981,8 +1020,8 @@ export function initOwner({ apiUrl }) {
       showToast(els.toast, '請先選擇車輛。');
       return;
     }
-    if (!apiUrl || state.busy) return;
-    state.busy = true;
+    if (!apiUrl || state.busy || state.rowBusy.has(record.id)) return;
+    state.rowBusy.add(record.id);
     render();
     try {
       await assignSession(apiUrl, record.id, car);
@@ -992,17 +1031,17 @@ export function initOwner({ apiUrl }) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '分配失敗，請檢查網絡後重試。'));
     } finally {
-      state.busy = false;
+      state.rowBusy.delete(record.id);
       render();
     }
   }
 
   async function onIgnore(record) {
-    if (!apiUrl || state.busy) return;
+    if (!apiUrl || state.busy || state.rowBusy.has(record.id)) return;
     // Ignore deletes the Log row and persists the ignored key; recovery needs a
     // manual Sheet edit, so require an explicit confirmation.
     if (!window.confirm('忽略此非家中車輛紀錄？紀錄會從帳單移除，且無法復原。')) return;
-    state.busy = true;
+    state.rowBusy.add(record.id);
     render();
     try {
       await ignoreSession(apiUrl, record.id);
@@ -1012,15 +1051,15 @@ export function initOwner({ apiUrl }) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '忽略失敗，請檢查網絡後重試。'));
     } finally {
-      state.busy = false;
+      state.rowBusy.delete(record.id);
       render();
     }
   }
 
   async function onCancelPending(record) {
-    if (!apiUrl || state.busy) return;
+    if (!apiUrl || state.busy || state.rowBusy.has(record.id)) return;
     if (!window.confirm('取消呢次手動開始？紀錄會刪除。')) return;
-    state.busy = true;
+    state.rowBusy.add(record.id);
     render();
     try {
       await deleteRecord(apiUrl, record.id, { car: record.car });
@@ -1030,7 +1069,7 @@ export function initOwner({ apiUrl }) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '取消失敗，請檢查網絡後重試。'));
     } finally {
-      state.busy = false;
+      state.rowBusy.delete(record.id);
       render();
     }
   }
@@ -1045,8 +1084,8 @@ export function initOwner({ apiUrl }) {
       showToast(els.toast, '請選擇其他車輛。');
       return;
     }
-    if (!apiUrl || state.busy) return;
-    state.busy = true;
+    if (!apiUrl || state.busy || state.rowBusy.has(record.id)) return;
+    state.rowBusy.add(record.id);
     render();
     try {
       await reassignSession(apiUrl, record.id, car);
@@ -1056,7 +1095,7 @@ export function initOwner({ apiUrl }) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '改派失敗，請檢查網絡後重試。'));
     } finally {
-      state.busy = false;
+      state.rowBusy.delete(record.id);
       render();
     }
   }
@@ -1084,20 +1123,42 @@ export function initOwner({ apiUrl }) {
   }
 
   function renderLive(live) {
+    const wasCharging = state.lastLiveCharging;
     if (!live) {
       els.livePanel.hidden = true;
+      state.lastLiveCharging = false;
       return;
     }
     els.livePanel.hidden = false;
     const charging = live.available && live.charging;
+    state.lastLiveCharging = charging;
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
-    els.liveState.dataset.state = charging ? 'charging' : 'idle';
-    els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.active ? live.kWh.toFixed(3) : '—';
-    els.liveCost.textContent = live.active && live.cost !== null ? `$${live.cost.toFixed(3)}` : '—';
-    els.liveHint.textContent = live.active
-      ? '每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。'
-      : '充電樁充電中；完成後會自動配對，唔需要按開始。';
+    els.liveState.dataset.state = !live.available ? 'warn' : charging ? 'charging' : 'idle';
+    els.livePower.textContent = live.available && live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
+    els.liveKwh.textContent = live.active ? `≈ ${live.kWh.toFixed(2)}` : '—';
+    els.liveCost.textContent = live.active && live.cost !== null ? `≈$${live.cost.toFixed(2)}` : '—';
+    const parts = [];
+    if (!live.available) parts.push('暫時讀取唔到充電樁狀態，會自動重試。');
+    else if (live.active) {
+      const row = state.liveStartRow;
+      const car = row ? state.cars.find((item) => item.id === row.car) : null;
+      const label = row ? `（${car ? car.name : row.car} · ${formatHkTime12(row.startAt)} 開始）` : '';
+      parts.push(`估算按現時電價計算${label}，完成後以 Tesla 紀錄為準。`);
+    } else if (charging) parts.push('充電樁充電中；完成後會自動配對。');
+    else parts.push('充電樁而家未充電。');
+    if (live.sampledAt) parts.push(`最後取樣 ${formatHkTime12(live.sampledAt)}`);
+    els.liveHint.textContent = parts.join(' ');
+    if (wasCharging && !charging && live.available) void refreshRecords();
+  }
+
+  async function refreshRecords() {
+    if (!apiUrl) return;
+    try {
+      await refreshData();
+      render();
+    } catch {
+      // keep the last good data until the next visibility refresh
+    }
   }
 
   function onExport() {
@@ -1148,10 +1209,10 @@ export function initOwner({ apiUrl }) {
     startSnapshotPolling({
       apiUrl,
       onSnapshot: renderSnapshot,
-      onError: () => {
-        if (!els.snapshotPanel.hidden) {
-          els.snapshotHint.textContent = '更新失敗，顯示上一張；每分鐘重試。';
-        }
+      onError: (error) => {
+        els.snapshotPanel.hidden = false;
+        els.snapshotWarning.hidden = false;
+        els.snapshotWarning.textContent = `相片更新失敗（${friendlyError(error, '可能係網絡或 Drive 登入問題')}）；每分鐘重試。`;
       },
     });
     startChargerLive({
@@ -1161,10 +1222,16 @@ export function initOwner({ apiUrl }) {
           record.source === 'manual' && record.car && record.car !== 'unassigned'
           && record.kWh === null && !record.teslaKey
         ));
+        state.liveStartRow = row || null;
         return row ? row.startAt : null;
       },
       getRates: () => state.rates,
       onChange: renderLive,
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - state.lastFetchAt < 60000) return;
+      void load();
     });
   }
   void load();

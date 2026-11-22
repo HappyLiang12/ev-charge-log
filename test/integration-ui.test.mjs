@@ -100,6 +100,85 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   }
 });
 
+test('family UI: QR start is refused while the charger is charging', { timeout: 20000 }, async () => {
+  const harness = await createHarness({ livePowerW: 7200 });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
+  try {
+    await waitFor(() => /充電樁而家充緊電/.test(ui.document.getElementById('familyToast').textContent), 12000);
+    assert.equal(harness.env.call('readLog_').length, 0);
+    assert.equal(ui.document.getElementById('startBtn').disabled, true);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: pending count chip and data freshness are visible', { timeout: 20000 }, async () => {
+  const now = Date.now();
+  const sheets = defaultSheets({
+    records: [
+      { id: 'manual-pending', car: 'model3', startAt: new Date(now - 10 * 60000).toISOString(), kWh: null, source: 'manual' },
+    ],
+  });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerPendingCount').hidden === false, 12000);
+    assert.match(ui.document.getElementById('ownerPendingCount').textContent, /待配對 1/);
+    assert.match(ui.document.getElementById('ownerUpdatedAt').textContent, /資料更新於/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('owner UI: no snapshot shows a camera placeholder instead of hiding the panel', { timeout: 20000 }, async () => {
+  const harness = await createHarness();
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  try {
+    await waitFor(() => ui.document.getElementById('ownerSnapshotWarning').hidden === false, 12000);
+    assert.match(ui.document.getElementById('ownerSnapshotWarning').textContent, /相機未有新相片/);
+    assert.equal(ui.document.getElementById('ownerSnapshotPanel').hidden, false);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family UI: suggested unassigned groups open by default', { timeout: 20000 }, async () => {
+  const startAt = new Date(Date.now() - 10 * 86400000).toISOString();
+  const record = {
+    ...unassignedRecord('u-matched', startAt, 'din:matched'),
+    suggestedCar: 'model3',
+    suggestionConfidence: 0.9,
+    suggestionStatus: 'matched',
+    suggestionEngine: 'vlm',
+  };
+  const sheets = defaultSheets({ records: [record] });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.querySelector('#familyUnassigned details[open]'), 12000);
+    assert.match(ui.document.getElementById('familyUnassigned').textContent, /認領/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family UI: an invalid link shows a persistent error with retry', { timeout: 20000 }, async () => {
+  const harness = await createHarness();
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=unknown' });
+  try {
+    await waitFor(() => ui.document.getElementById('familyError').hidden === false, 12000);
+    assert.match(ui.document.getElementById('familyErrorText').textContent, /車輛連結無效/);
+    assert.equal(ui.document.getElementById('familyStatus').textContent, '錯誤');
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('family UI: start=1 does not duplicate an existing pending start', { timeout: 20000 }, async () => {
   const startAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const sheets = defaultSheets({
@@ -108,8 +187,9 @@ test('family UI: start=1 does not duplicate an existing pending start', { timeou
   const harness = await createHarness({ sheets });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
   try {
-    await waitFor(() => ui.document.getElementById('startBtn').disabled, 12000);
-    assert.equal(ui.document.getElementById('startBtn').textContent, '已記錄開始時間');
+    await waitFor(() => ui.document.getElementById('startBtn').textContent === '已記錄開始時間', 12000);
+    assert.equal(ui.document.getElementById('startBtn').disabled, true);
+    assert.match(ui.document.getElementById('familyStartHintText').textContent, /開始 · 配對後自動恢復 · 24 小時後失效/);
     await waitFor(() => !new URL(ui.window.location.href).searchParams.has('start'), 12000);
     assert.match(ui.document.getElementById('familyToast').textContent, /已經記錄咗開始時間/);
     assert.equal(harness.env.call('readLog_').length, 1);
@@ -126,7 +206,7 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
   try {
     await waitFor(() => ui.document.getElementById('familyStatus').textContent === '已連接');
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);
-    assert.equal(ui.document.getElementById('syncBtn').textContent, '更新充電樁');
+    assert.equal(ui.document.getElementById('syncBtn').textContent, '同步紀錄');
     assert.ok(
       Array.from(ui.document.querySelectorAll('#familyView h2'))
         .some((heading) => /充電樁紀錄/.test(heading.textContent)),
@@ -608,7 +688,7 @@ test('owner UI: dedupe rates, refresh CLP, source links, assign, and CSV', { tim
   try {
     await waitFor(() => ui.document.getElementById('ownerStatus').textContent === '已連接');
     await waitFor(() => ui.document.querySelectorAll('#ownerRates .owner-card').length === 11);
-    assert.equal(ui.document.getElementById('ownerSyncBtn').textContent, '更新充電樁');
+    assert.equal(ui.document.getElementById('ownerSyncBtn').textContent, '同步紀錄');
     const details = ui.document.querySelector('#ownerRates details');
     assert.ok(details);
     assert.equal(details.open, false);
@@ -692,11 +772,12 @@ test('owner UI: one pending list includes manual starts and unassigned charger s
     assert.equal(ui.document.querySelectorAll('#ownerPending select').length, 1);
     await waitFor(() => ui.document.getElementById('ownerLiveState').textContent === '充電中');
     assert.equal(ui.document.getElementById('ownerLivePower').textContent, '7.2 kW');
-    await waitFor(() => Number(ui.document.getElementById('ownerLiveKwh').textContent) > 0, 12000);
-    const firstKwh = Number(ui.document.getElementById('ownerLiveKwh').textContent);
+    const liveKwh = () => Number(ui.document.getElementById('ownerLiveKwh').textContent.replace(/[^0-9.]/g, ''));
+    await waitFor(() => liveKwh() > 0, 12000);
+    const firstKwh = liveKwh();
     assert.ok(firstKwh > 0);
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    assert.ok(Number(ui.document.getElementById('ownerLiveKwh').textContent) > firstKwh);
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    assert.ok(liveKwh() > firstKwh);
   } finally {
     ui.close();
     await harness.close();
@@ -818,7 +899,7 @@ test('owner UI: saved bill shows per-car amounts by kWh share and manual entry s
     assert.match(card.textContent, /\$960\.00/);
     assert.match(card.textContent, /\$320\.00/);
     assert.match(card.textContent, /800\.0 度 vs 帳單 886 度/);
-    assert.match(card.textContent, /帳單高峯 77 \/ 非高峯 809/);
+    assert.match(card.textContent, /帳單高峰 77 \/ 非高峰 809/);
 
     ui.document.getElementById('ownerBillManualBtn').click();
     const set = (id, value) => {
@@ -889,7 +970,7 @@ test('owner UI: saving a bill learns per-car peak factors', { timeout: 25000 }, 
     const model3Card = Array.from(ui.document.querySelectorAll('#ownerCarTotals .owner-card'))
       .find((card) => card.textContent.includes('Model 3'));
     assert.ok(model3Card);
-    assert.ok(model3Card.textContent.includes('高峯係數'));
+    assert.ok(model3Card.textContent.includes('高峰係數'));
     assert.ok(model3Card.textContent.includes('0.00（按帳單校準）'));
     const model3 = harness.env.call('readLog_').find((record) => record.id === 'm3-oct');
     assert.equal(model3.peakKWh, 0);

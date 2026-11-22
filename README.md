@@ -18,7 +18,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 - Each car has its own family URL: `https://<your-user>.github.io/ev-charge-log/?car=<car-id>`.
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet. A pending start disables the button until it is matched or deleted.
-- The owner opens the owner URL (`?owner`), presses `更新充電樁`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
+- The owner opens the owner URL (`?owner`), presses `同步紀錄`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
 - A Raspberry Pi relay crops the charging slot from the Tapo CCTV stream and uploads only that crop every 5 minutes. The owner view shows the crop and a plate/vision suggestion; the family view sees only a suggestion hint, never the image.
 - Capture settings live in the Sheet's `Config` tab. The Pi pulls them every cycle, so interval, crop, quality, queue cap, and cleanup cadence are tuned remotely without SSH or a restart.
@@ -119,7 +119,7 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 ### Scheduled sync
 
-`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `更新充電樁` button, so a completed session imports and auto-assigns without a manual press. Each run costs one Tesla charging-history request (about 1,440/month, inside the $10 monthly discount for normal use); plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
+`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. Each run costs one Tesla charging-history request (about 1,440/month, inside the $10 monthly discount for normal use); plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
 
 ### Retention and cleanup
 
@@ -288,7 +288,7 @@ npm run auth:tesla
 3. Authorize the app in the browser. The token is saved to `tools/.tesla-refresh-token.local` with mode 600.
 4. Copy the token value into the `TESLA_REFRESH_TOKEN` Script Property. Do not print it, paste it into chat, or commit it.
 
-The owner `更新充電樁` verification happens in the owner setup step, after the frontend is deployed.
+The owner `同步紀錄` verification happens in the owner setup step, after the frontend is deployed.
 
 Rotate the Tesla client secret after development and deployment are complete. Update `TESLA_CLIENT_SECRET` in Script Properties, then verify one sync.
 
@@ -309,7 +309,7 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 1. Add one row per car to `Cars`: `id`, `name`, `active`, `createdAt`. Use `TRUE` for active. Leave `peakFactor` blank (defaults to 1); bill calibration fills it.
 2. Open the owner URL on the deployed site: `https://<your-user>.github.io/ev-charge-log/?owner=1`.
 3. Press `更新費率`; confirm the current month appears and the peak window is 16:00–23:00. If CLP changes the page format, enter or correct the row in `Rates` and set `manualOverride=TRUE`.
-4. Run one owner `更新充電樁` and confirm the Wall Connector site is discovered.
+4. Run one owner `同步紀錄` and confirm the Wall Connector site is discovered.
 5. Copy each family link from the owner view and send it to that car's driver.
 6. Keep the owner URL private. The owner mode has no key or login; anyone with the URL can manage.
 
@@ -319,7 +319,7 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `DEEPSEEK_API_KEY` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
 3. **Config seeding:** run `setup()` once from the Apps Script editor to seed the Config defaults. Set `relay.crop` to the ROI; use `full` only for the test camera. Leave `snapshot.retentionDays=30` unless a different retention is intended.
 4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then confirm success with observable evidence rather than a log line (the relay logs config errors, capture/cleanup errors, a one-time `crop required` warning, and the cleanup `deleted`/`failed` counts; use these to diagnose, but verify the artifacts): `systemctl status ev-relay` shows the service running, `/var/lib/ev-relay/config.json` exists and its modification time advances after the first cycle (the Pi rewrites it only after a successful signed config response), and a cropped snapshot appears in the owner view (or the private Drive snapshot folder) at the next `relay.intervalSeconds`. After the first scheduled cleanup, the Pi log shows `cleanup deleted: <n> failed: <m>`; `failed` must stay 0, and a nonzero count or a `cleanup warning` line means Drive trash is failing and retention is stalling. Later tuning needs no SSH.
-5. **Verify:** after plates and the Vision key are set, run one owner `更新充電樁` and confirm plate OCR on one session. Enable the VLM only after the DeepSeek provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
+5. **Verify:** after plates and the Vision key are set, run one owner `同步紀錄` and confirm plate OCR on one session. Enable the VLM only after the DeepSeek provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
 6. **Physical and evaluation:** install/aim the camera, capture day and night frames, set the ROI, and confirm the guest car stays outside the crop. Run at least 20 real sessions covering day/night and a guest car, review precision and unknown rates, and keep human confirmation. A 95% precision threshold is a future auto-assign gate, not enabled now.
 
 ## Local development
@@ -395,7 +395,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Cloud Vision's free tier and the paid DeepSeek API can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
 - Old `evidenceUrl` links become stale after snapshot retention; the Log row and Feedback remain.
 - If trashing a Drive file fails transiently (rate limit or service error), its `Snapshots` row is kept and retried at the next cleanup run; a file is only orphaned if it is missing permissions or the row is removed by hand. A partial failure appears in the Apps Script execution log and in the Pi log as `cleanup deleted: N failed: M` plus one `cleanup warning` line.
-- `更新充電樁` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
+- `同步紀錄` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
 
