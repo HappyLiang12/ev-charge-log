@@ -90,8 +90,7 @@ export function initOwner({ apiUrl }) {
     liveHint: byId('ownerLiveHint'),
     liveState: byId('ownerLiveState'),
     livePower: byId('ownerLivePower'),
-    liveKwh: byId('ownerLiveKwh'),
-    liveCost: byId('ownerLiveCost'),
+    liveSample: byId('ownerLiveSample'),
     billFile: byId('ownerBillFile'),
     billManualBtn: byId('ownerBillManualBtn'),
     billStatus: byId('ownerBillStatus'),
@@ -1156,18 +1155,24 @@ export function initOwner({ apiUrl }) {
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
     els.liveState.dataset.state = !live.available ? 'warn' : charging ? 'charging' : 'idle';
     els.livePower.textContent = live.available && live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.active ? `≈ ${live.kWh.toFixed(2)}` : '—';
-    els.liveCost.textContent = live.active && live.cost !== null ? `≈$${live.cost.toFixed(2)}` : '—';
+    els.liveSample.textContent = live.sampledAt ? formatHkTime12(live.sampledAt) : '—';
+    const liveClaim = state.records.find((record) => (
+      record.source === 'live' && record.car && record.car !== 'unassigned'
+      && record.kWh === null && !record.teslaKey
+    ));
+    const manualRow = state.liveStartRow;
     const parts = [];
     if (!live.available) parts.push('暫時讀取唔到充電樁狀態，會自動重試。');
-    else if (live.active) {
-      const row = state.liveStartRow;
-      const car = row ? state.cars.find((item) => item.id === row.car) : null;
-      const label = row ? `（${car ? car.name : row.car} · ${formatHkTime12(row.startAt)} 開始）` : '';
-      parts.push(`估算按現時電價計算${label}，完成後以 Tesla 紀錄為準。`);
-    } else if (charging) parts.push('充電樁充電中；完成後會自動配對。');
-    else parts.push('充電樁而家未充電。');
-    if (live.sampledAt) parts.push(`最後取樣 ${formatHkTime12(live.sampledAt)}`);
+    else if (charging) {
+      const row = liveClaim || manualRow;
+      if (row) {
+        const car = state.cars.find((item) => item.id === row.car);
+        const kind = liveClaim ? '已自動認領' : '手動開始';
+        parts.push(`${kind}（${car ? car.name : row.car} · ${formatHkTime12(row.startAt)}）；充電完成後以 Tesla 紀錄為準。`);
+      } else {
+        parts.push('充電樁充電中；完成後會自動配對。');
+      }
+    } else parts.push('充電樁而家未充電。');
     els.liveHint.textContent = parts.join(' ');
     if (wasCharging && !charging && live.available) void refreshRecords();
   }
