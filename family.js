@@ -89,6 +89,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     syncedOnce: false,
     connecting: Boolean(apiUrl),
     syncing: false,
+    recentLimit: 5,
     starting: false,
     autoStarted: false,
     claiming: new Set(),
@@ -134,6 +135,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     bills: byId('familyBills'),
     billsPanel: byId('familyBillsPanel'),
     recentList: byId('recentList'),
+    more: byId('familyMore'),
+    syncNow: byId('familySyncNow'),
     empty: byId('familyEmpty'),
     monthSelect: byId('monthSelect'),
     exportBtn: byId('exportBtn'),
@@ -379,7 +382,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.carName.textContent = state.car.name || carId;
     const status = !apiUrl
       ? '未設定'
-      : state.connecting || state.syncing
+      : state.connecting
         ? '連線中'
         : state.loadError
           ? '錯誤'
@@ -392,6 +395,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.errorBanner.hidden = !state.loadError;
     els.errorText.textContent = state.loadError || '';
     els.updatedAt.textContent = state.updatedAt ? `資料更新於 ${formatHkTime12(state.updatedAt)}` : '';
+    setBusy(els.syncNow, state.syncing || !apiUrl, '更新中…', '更新');
     const records = mergeRecords(state.server, state.pending);
     const pendingStart = pendingStartRecord(records);
     updateStartButton(pendingStart);
@@ -437,7 +441,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     for (const bill of bills) els.bills.append(makeBillShareCard(bill));
 
     els.recentList.replaceChildren();
-    for (const record of records.slice(0, 5)) els.recentList.append(makeRow(record));
+    for (const record of records.slice(0, state.recentLimit)) els.recentList.append(makeRow(record));
+    els.more.hidden = records.length <= state.recentLimit;
     if (!state.syncedOnce && state.connecting) {
       els.empty.hidden = false;
       els.empty.textContent = '載入中…';
@@ -505,8 +510,10 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.syncing = true;
     render();
     try {
-      await syncTesla(apiUrl, { family: true });
+      const result = await syncTesla(apiUrl, { family: true, manual: true });
       await fetchData();
+      const matched = Number(result && result.matched) || 0;
+      showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電時段。` : '冇新嘅充電時段。');
     } catch (error) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '充電樁同步失敗，請檢查網絡後重試。'));
@@ -679,7 +686,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       render();
       void maybeClaimLive();
       await maybeAutoStart();
-      if (!state.offline) void runSync();
     } catch (error) {
       state.connecting = false;
       state.loadError = friendlyError(error, '未能連接，請檢查網絡後重試。');
@@ -878,6 +884,11 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   }
 
   els.startBtn.addEventListener('click', onStart);
+  els.syncNow.addEventListener('click', () => { void runSync(); });
+  els.more.addEventListener('click', () => {
+    state.recentLimit += 5;
+    render();
+  });
   els.exportBtn.addEventListener('click', onExport);
   els.errorRetry.addEventListener('click', () => { if (apiUrl) void load(); });
   els.startCancel.addEventListener('click', () => {

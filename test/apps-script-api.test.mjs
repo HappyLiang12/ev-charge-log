@@ -2977,3 +2977,37 @@ test('family sync skips within five minutes of a full sync', () => {
   assert.equal(ran.ok, true);
   assert.equal(teslaCalls, 1);
 });
+
+test('identify only considers records inside the snapshot coverage', () => {
+  const snapAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const env = setup({
+    sheets: {
+      Log: [
+        LOG_HEADER,
+        row({ 0: 'old-1', 1: '2026-04-22T10:50:43.000Z', 4: 'unassigned', 11: 'din:old', 12: 'tesla' }),
+        row({ 0: 'new-1', 1: snapAt, 7: snapAt, 4: 'unassigned', 11: 'din:new', 12: 'tesla' }),
+      ],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-now', snapAt, 'file-now')],
+    },
+  });
+  const seen = [];
+  env.context.identifySession_ = (record) => {
+    seen.push(record.id);
+    return { status: 'unknown' };
+  };
+  env.call('identifyPending_');
+  assert.deepEqual(seen, ['new-1']);
+});
+
+test('a manual family sync bypasses the recent-sync gate', () => {
+  const env = setup();
+  env.props.LAST_SYNC_AT = new Date().toISOString();
+  let teslaCalls = 0;
+  env.context.syncTesla_ = () => {
+    teslaCalls += 1;
+    return { skipped: false };
+  };
+  const result = send(env, { action: 'sync', family: true, manual: true });
+  assert.equal(result.ok, true);
+  assert.equal(teslaCalls, 1);
+});

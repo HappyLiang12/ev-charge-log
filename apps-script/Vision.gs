@@ -381,9 +381,17 @@ function identifyPending_() {
     var engine = visionEngine_();
     if (engine === 'off') return { engine: engine, candidates: [] };
     var max = configInt_(readConfigMap_().values, 'vision.maxPerSync', 5);
+    var coverage = snapshotCoverage_();
+    var fromMs = coverage && coverage.from ? Date.parse(coverage.from) : NaN;
+    var toMs = coverage && coverage.to ? Date.parse(coverage.to) : NaN;
+    var windowMs = (coverage ? coverage.windowMinutes : 10) * 60000;
     var nowMs = Date.now();
     var candidates = readLog_().filter(function (record) {
-      return isIdentifyCandidate_(record, nowMs);
+      if (!isIdentifyCandidate_(record, nowMs)) return false;
+      // A record outside the camera history can never have candidate evidence.
+      if (isNaN(fromMs) || isNaN(toMs)) return false;
+      var at = Date.parse(record.teslaStartAt || record.startAt);
+      return !isNaN(at) && at >= fromMs - windowMs && at <= toMs + windowMs;
     }).sort(function (a, b) { return Date.parse(b.startAt) - Date.parse(a.startAt); }).slice(0, max);
     return { engine: engine, candidates: candidates };
   });

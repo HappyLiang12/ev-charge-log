@@ -680,7 +680,7 @@ function syncAction_(data) {
   var params = data || {};
   var carScoped = Boolean(params.car);
   var familyTriggered = params.family === true;
-  if (familyTriggered) {
+  if (familyTriggered && params.manual !== true) {
     var lastSync = Date.parse(PropertiesService.getScriptProperties().getProperty('LAST_SYNC_AT') || '');
     if (!isNaN(lastSync) && Date.now() - lastSync < FAMILY_SYNC_MIN_MS_) {
       return { skipped: true, reason: 'recent', lastSyncAt: new Date(lastSync).toISOString() };

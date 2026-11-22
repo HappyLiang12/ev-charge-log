@@ -27,7 +27,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 ## Features
 
 - One-tap start recording with a per-car URL; no login and no car picker. While a manual start is pending, the start button is disabled and a QR auto-start does not create a second record. It re-enables after the session is matched or the pending record is deleted.
-- Owner on-demand Tesla sync plus a 30-minute scheduled background sync. The family page runs the same full sync (Tesla import and identification) once when it loads, has no sync button, and pushes the next scheduled run out by the same 30 minutes.
+- Owner on-demand Tesla sync plus a 30-minute scheduled background sync. The family page loads data without a background sync and exposes a small `更新` action that runs the same import and identification on demand; the scheduled trigger still covers the background.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
@@ -119,7 +119,7 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 ### Scheduled sync
 
-`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. A family page load runs that same full path at most once per five minutes, so opening the page imports and identifies completed sessions without repeating a 50-second sync on every reload; it still does not open the initial 30-day window. Every full sync stamps `LAST_SYNC_AT`; a family-triggered sync skips while that stamp is younger than five minutes, and the scheduled trigger uses the same stamp with a 30-minute window. Each full sync costs one Tesla charging-history request; plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
+`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. The family page no longer syncs when it loads; its `更新` action runs the same full path once on demand (`manual` bypasses the repeated-sync guard), and the page opens without waiting for a 50-second sync. Family syncs do not open the initial 30-day window. Every full sync stamps `LAST_SYNC_AT`; non-manual family syncs skip while that stamp is younger than five minutes, and the scheduled trigger uses the same stamp with a 30-minute window. Each full sync costs one Tesla charging-history request; plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
 
 ### Live claim and family snapshot
 
