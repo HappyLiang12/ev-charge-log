@@ -784,6 +784,7 @@ var CONFIG_DEFAULTS = {
   'snapshot.retentionDays': '30',
   'snapshot.windowMinutes': '10',
   'snapshot.candidateCount': '3',
+  'manual.pendingMaxAgeHours': '24',
   'vision.engine': 'plate',
   'vision.minConfidence': '0.8',
   'vision.maxPerSync': '5',

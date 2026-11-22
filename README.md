@@ -81,6 +81,7 @@ The `Config` tab (`key`, `value`, `updatedAt`, `notes`) is the single source of 
 | `snapshot.retentionDays` | Apps Script | `30` | 1–365 | Drive files and `Snapshots` rows older than this are deleted |
 | `snapshot.windowMinutes` | Apps Script | `10` | 1–60 | Snapshot search window around a session |
 | `snapshot.candidateCount` | Apps Script | `3` | 1–5 | Max snapshots inspected per identification |
+| `manual.pendingMaxAgeHours` | Apps Script | `24` | 6–72 | Pending manual starts older than this are pruned on the next start or sync |
 | `vision.engine` | Apps Script | `plate` | `off`, `plate`, `plate+vlm` | Identification pipeline |
 | `vision.minConfidence` | Apps Script | `0.8` | 0.5–0.99 | Minimum VLM confidence for a suggestion |
 | `vision.maxPerSync` | Apps Script | `5` | 0–20 | Max sessions identified per owner sync |
@@ -108,6 +109,13 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 - A plate correction (the suggestion had a plate and the chosen car differs) immediately upserts `Plates[plate] = chosenCar`, but only for an owner action. Plate-map tuning is owner-only: a family claim records its feedback row and never rewrites the OCR plate map. Guest/ignore choices never pollute the plate map.
 - Ignore is only for unassigned sessions and asks for confirmation first, because it deletes the Log row and cannot be undone from the UI. It appends `guest` feedback, deletes the Log row from billing, and stores the Tesla session key in `Ignored` (`teslaKey`, `createdAt`, `actor`). Sync treats persisted keys as already seen, so the ignored session is not re-imported.
 - Reassign is owner-only and only for assigned records. It updates the Log car, recomputes the peak/off-peak split with the new car's `peakFactor`, and records Feedback comparing the original suggestion with the chosen car. A wrong family claim is corrected the same way.
+
+### Manual starts
+
+- A start is accepted only when `startAt` is at most 24 hours old and no more than 5 minutes in the future; the family offline queue retries the same id, so a delayed upload still works.
+- A second start for the same car within 30 minutes returns the existing pending record instead of creating a duplicate.
+- Pending manual starts (`source=manual`, empty kWh, no Tesla key) expire after `manual.pendingMaxAgeHours` (default 24, range 6–72). They are pruned when that car's next start is recorded and, after the session merge phase, on every sync; a session inside the pending window still fills the row before pruning.
+- The owner view has a `取消開始` button on pending rows. An unassigned leftover manual row can also be deleted or ignored; neither path writes Feedback.
 
 ### Retention and cleanup
 

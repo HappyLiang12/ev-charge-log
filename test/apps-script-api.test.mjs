@@ -62,6 +62,141 @@ const send = (env, body) => JSON.parse(env.call('doPost', {
 }).getContent());
 const receive = (env, parameter) => JSON.parse(env.call('doGet', { parameter }).getContent());
 
+const hkParts = (iso) => {
+  const d = new Date(Date.parse(iso) + 8 * 3600 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
+    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
+  };
+};
+
+const appendBody = (id, startIso, car = 'model3') => {
+  const parts = hkParts(startIso);
+  return { action: 'append', id, car, startAt: startIso, date: parts.date, time: parts.time };
+};
+
+const pendingLogRow = (id, car, startIso) => {
+  const parts = hkParts(startIso);
+  return [id, startIso, parts.date, parts.time, car, '', '', '', '', '', '', '', 'manual'];
+};
+
+const rateRowFor = (iso) => {
+  const parts = hkParts(iso);
+  return [parts.date.slice(0, 7), 94.5, 137.5, 47.4, 0, '16:00', '23:00', 'clp', iso, 'FALSE'];
+};
+
+test('append dedupes a pending start for the same car inside the window', () => {
+  const env = setup({ sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] } });
+  const now = Date.now();
+  const first = new Date(now - 5 * 60000).toISOString();
+  const second = new Date(now - 60000).toISOString();
+  const created = send(env, appendBody('a-1', first));
+  assert.equal(created.ok, true);
+  const duplicate = send(env, appendBody('a-2', second));
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.existing, true);
+  assert.equal(plain(duplicate.record).id, 'a-1');
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'a-1');
+});
+
+test('append rejects start times outside the accepted window', () => {
+  const env = setup({ sheets: { Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']] } });
+  const old = send(env, appendBody('w-1', new Date(Date.now() - 25 * 3600 * 1000).toISOString()));
+  assert.equal(old.ok, false);
+  assert.match(old.error, /window/);
+  const future = send(env, appendBody('w-2', new Date(Date.now() + 10 * 60000).toISOString()));
+  assert.equal(future.ok, false);
+  assert.match(future.error, /window/);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('append prunes stale pending starts for the car', () => {
+  const now = Date.now();
+  const stale = new Date(now - 48 * 3600 * 1000).toISOString();
+  const recent = new Date(now - 3600 * 1000).toISOString();
+  const env = setup({ sheets: {
+    Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+    Log: [LOG_HEADER, pendingLogRow('old-model3', 'model3', stale), pendingLogRow('recent-ix3', 'ix3', recent)],
+  } });
+  const result = send(env, appendBody('new-model3', new Date(now).toISOString()));
+  assert.equal(result.ok, true);
+  const ids = plain(env.call('readLog_')).map((record) => record.id).sort();
+  assert.deepEqual(ids, ['new-model3', 'recent-ix3']);
+});
+
+test('delete removes an unassigned manual start', () => {
+  const env = setup({ sheets: {
+    Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    Log: [LOG_HEADER, pendingLogRow('m-1', 'unassigned', new Date(Date.now() - 3600 * 1000).toISOString())],
+  } });
+  const result = send(env, { action: 'delete', id: 'm-1', car: 'unassigned' });
+  assert.equal(result.ok, true);
+  assert.equal(result.deleted, true);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('ignoring an unassigned manual start deletes it without feedback', () => {
+  const env = setup({ sheets: {
+    Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    Log: [LOG_HEADER, pendingLogRow('m-2', 'unassigned', new Date(Date.now() - 3600 * 1000).toISOString())],
+  } });
+  const result = send(env, { action: 'ignore', id: 'm-2' });
+  assert.equal(result.ok, true);
+  assert.equal(result.ignored, true);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+  assert.deepEqual(env.values('Feedback').slice(1), []);
+});
+
+test('sync prunes pending starts older than the configured age', () => {
+  const now = Date.now();
+  const stale = new Date(now - 48 * 3600 * 1000).toISOString();
+  const env = setup({ sheets: {
+    Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    Log: [LOG_HEADER, pendingLogRow('stale-1', 'model3', stale)],
+    Rates: [RATES_HEADER, rateRowFor(stale)],
+    Snapshots: [SNAPSHOTS_HEADER],
+  } });
+  const result = plain(env.call('syncApply_', [], new Date(now).toISOString()));
+  assert.equal(result.pendingPruned, 1);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('sync merges a session into an old pending start before pruning', () => {
+  const now = Date.now();
+  const start = new Date(now - 30 * 3600 * 1000).toISOString();
+  const session = {
+    startAt: start,
+    endAt: new Date(Date.parse(start) + 3600 * 1000).toISOString(),
+    kWh: 10,
+    durationSec: 3600,
+    teslaKey: 'k-1',
+  };
+  const env = setup({ sheets: {
+    Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    Log: [LOG_HEADER, pendingLogRow('pend-1', 'model3', start)],
+    Rates: [RATES_HEADER, rateRowFor(start)],
+    Snapshots: [SNAPSHOTS_HEADER],
+  } });
+  const result = plain(env.call('syncApply_', [session], new Date(now).toISOString()));
+  assert.equal(result.matched, 1);
+  assert.equal(result.pendingPruned, 0);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'pend-1');
+  assert.equal(records[0].car, 'model3');
+  assert.equal(records[0].kWh, 10);
+});
+
+test('pending max age config clamps to the accepted range', () => {
+  const env = setup();
+  assert.equal(env.call('configInt_', { 'manual.pendingMaxAgeHours': '100' }, 'manual.pendingMaxAgeHours', 24), 72);
+  assert.equal(env.call('configInt_', { 'manual.pendingMaxAgeHours': '1' }, 'manual.pendingMaxAgeHours', 24), 6);
+  assert.equal(env.call('configInt_', {}, 'manual.pendingMaxAgeHours', 24), 24);
+});
+
 test('setup creates all three tabs and reports counts', () => {
   const env = setup();
   const result = plain(env.call('setup'));
@@ -242,12 +377,14 @@ test('append is idempotent and rejects a Hong Kong date/time mismatch', () => {
       Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
     },
   });
+  const startIso = new Date(Date.now() - 5 * 60000).toISOString();
+  const parts = hkParts(startIso);
   const body = {
     id: 'new-1',
     car: 'model3',
-    startAt: '2026-11-14T05:00:00.000Z',
-    date: '2026-11-14',
-    time: '13:00',
+    startAt: startIso,
+    date: parts.date,
+    time: parts.time,
   };
   const first = send(env, body);
   assert.equal(first.ok, true);
@@ -255,7 +392,8 @@ test('append is idempotent and rejects a Hong Kong date/time mismatch', () => {
   const second = send(env, body);
   assert.equal(second.ok, true);
   assert.equal(plain(env.call('readLog_')).filter((record) => record.id === 'new-1').length, 1);
-  const mismatch = send(env, { ...body, id: 'new-2', time: '00:00' });
+  const wrongTime = parts.time === '00:00' ? '01:00' : '00:00';
+  const mismatch = send(env, { ...body, id: 'new-2', time: wrongTime });
   assert.equal(mismatch.ok, false);
   assert.match(mismatch.error, /Date\/time mismatch/);
 });

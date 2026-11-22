@@ -2,6 +2,9 @@ var MAX_BODY_BYTES_ = 16384;
 var MAX_SNAPSHOT_BODY_BYTES_ = 1300000;
 var MAX_SNAPSHOT_IMAGE_BYTES_ = 900000;
 var SNAPSHOT_MAX_AGE_MS_ = 10 * 60 * 1000;
+var PENDING_DUPLICATE_WINDOW_MS_ = 30 * 60 * 1000;
+var PENDING_START_LOOKBACK_MS_ = 24 * 60 * 60 * 1000;
+var PENDING_START_FUTURE_MS_ = 5 * 60 * 1000;
 
 function doGet(e) {
   try {
@@ -382,6 +385,29 @@ function chargerStatusPayload_() {
   return merge_({ ok: true }, chargerLiveStatus_());
 }
 
+function isPendingManual_(record) {
+  return Boolean(record) && record.source === 'manual' && record.kWh === null && !record.teslaKey;
+}
+
+function pendingMaxAgeMs_() {
+  return configInt_(readConfigMap_().values, 'manual.pendingMaxAgeHours', 24) * 3600 * 1000;
+}
+
+function prunePendingStarts_(nowMs, carId) {
+  var maxAge = pendingMaxAgeMs_();
+  var records = readLog_();
+  var removed = 0;
+  for (var i = 0; i < records.length; i += 1) {
+    var record = records[i];
+    if (!isPendingManual_(record)) continue;
+    if (carId && record.car !== carId) continue;
+    var start = Date.parse(record.startAt);
+    if (isNaN(start) || nowMs - start <= maxAge) continue;
+    if (deleteLog_(record.id)) removed += 1;
+  }
+  return removed;
+}
+
 function appendAction_(data) {
   if (!validCarId_(data.car)) throw new Error('Invalid car');
   var car = findCar_(data.car);
@@ -397,6 +423,22 @@ function appendAction_(data) {
     if (records[i].car !== car.id) throw new Error('Record does not belong to this car');
     return { record: records[i] };
   }
+  var nowMs = Date.now();
+  var startMs = Date.parse(data.startAt);
+  if (startMs > nowMs + PENDING_START_FUTURE_MS_ || startMs < nowMs - PENDING_START_LOOKBACK_MS_) {
+    throw new Error('Start time outside the accepted window');
+  }
+  prunePendingStarts_(nowMs, car.id);
+  records = readLog_();
+  var duplicate = null;
+  for (var j = 0; j < records.length; j += 1) {
+    if (!isPendingManual_(records[j]) || records[j].car !== car.id) continue;
+    var otherStart = Date.parse(records[j].startAt);
+    if (isNaN(otherStart) || Math.abs(otherStart - startMs) > PENDING_DUPLICATE_WINDOW_MS_) continue;
+    duplicate = records[j];
+    break;
+  }
+  if (duplicate) return { record: duplicate, existing: true };
   var record = {
     id: String(data.id),
     car: car.id,
@@ -418,15 +460,24 @@ function appendAction_(data) {
 
 function deleteAction_(data) {
   if (!data.id) throw new Error('Invalid id');
-  if (!validCarId_(data.car)) throw new Error('Invalid car id');
-  var car = findCar_(data.car);
-  if (!car) throw new Error('Unknown car: ' + data.car);
   var records = readLog_();
   var target = null;
   for (var i = 0; i < records.length; i += 1) {
     if (records[i].id === String(data.id)) target = records[i];
   }
   if (!target) return { deleted: false, released: false };
+  // Manual starts have no Tesla key, and an unassigned leftover has no car
+  // page to delete it from, so any car context may clear it.
+  if (target.source === 'manual' && !target.teslaKey) {
+    if (target.car !== 'unassigned' && target.car !== String(data.car || '')) {
+      throw new Error('Record does not belong to this car');
+    }
+    deleteLog_(target.id);
+    return { deleted: true, released: false };
+  }
+  if (!validCarId_(data.car)) throw new Error('Invalid car id');
+  var car = findCar_(data.car);
+  if (!car) throw new Error('Unknown car: ' + data.car);
   if (target.car !== data.car) {
     if (target.car === 'unassigned' && target.source === 'tesla' && target.teslaKey) {
       return { deleted: true, released: true, alreadyReleased: true };
@@ -584,6 +635,9 @@ function ignoreAction_(data) {
   if (record.car !== 'unassigned') {
     throw new Error('Only unassigned sessions can be ignored');
   }
+  // A pending manual start is not a guest decision; deleting it must not
+  // train the feedback gate.
+  if (isPendingManual_(record)) return { ignored: deleteLog_(record.id) };
   // Deleting the Log row also deletes the dedupe key, so persist it first;
   // otherwise the next sync re-imports the session.
   if (record.teslaKey) appendIgnoredTeslaKey_(record.teslaKey, 'owner');
@@ -675,6 +729,7 @@ var CONFIG_INT_LIMITS_ = {
   'snapshot.retentionDays': [1, 365],
   'snapshot.windowMinutes': [1, 60],
   'snapshot.candidateCount': [1, 5],
+  'manual.pendingMaxAgeHours': [6, 72],
   'vision.maxPerSync': [0, 20],
   'policy.minSamples': [1, 50],
 };
