@@ -243,11 +243,11 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(harness.env.call('readLog_').length, 1);
 
-    // The family page syncs on load; reopening it picks up the completed session.
-    harness.env.props.LAST_SYNC_AT = new Date(Date.now() - 6 * 60 * 1000).toISOString();
-    ui.close();
-    ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
-    await waitFor(() => ui.document.getElementById('familyKwh').textContent === '12.0');
+    // The family page syncs on demand; the update button imports the session.
+    assert.equal(harness.counts.sync, 0);
+    ui.document.getElementById('familySyncNow').click();
+    await waitFor(() => harness.counts.sync === 1, 12000);
+    await waitFor(() => ui.document.getElementById('familyKwh').textContent === '12.0', 12000);
     assert.equal(ui.document.getElementById('familyCount').textContent, '1');
     assert.match(ui.document.getElementById('recentList').textContent, /12\.00 kWh/);
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);

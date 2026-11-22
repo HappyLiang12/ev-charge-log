@@ -190,12 +190,20 @@ export async function createHarness({ sheets, teslaSessions = [], fuel = fuelPag
   env.run = (source) => vm.runInContext(source, env.context);
   env.run(codeSource);
 
-  const counts = { recordImage: 0 };
+  const counts = { recordImage: 0, sync: 0 };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (req.method === 'GET' && url.searchParams.has('recordImage')) counts.recordImage += 1;
     let body = '';
     for await (const chunk of req) body += chunk;
+    if (body) {
+      try {
+        const data = JSON.parse(body);
+        if (data && data.action === 'sync') counts.sync += 1;
+      } catch {
+        // ignore malformed bodies; the action handler reports them
+      }
+    }
     let result;
     try {
       result = req.method === 'GET'
