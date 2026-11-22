@@ -526,9 +526,17 @@ function deleteAction_(data) {
 }
 
 function syncAction_(data) {
-  var result = syncTesla_(!data || !data.car);
-  if (!data || !data.car) {
+  var params = data || {};
+  var carScoped = Boolean(params.car);
+  // A family page runs the full path but must not open the 30-day history window.
+  var result = syncTesla_(!carScoped && params.family !== true);
+  if (!carScoped && !result.skipped) {
     try { result.vision = identifyPending_(); } catch (error) { result.vision = { error: String(error.message || error) }; }
+    try {
+      PropertiesService.getScriptProperties().setProperty('LAST_SYNC_AT', new Date().toISOString());
+    } catch (error) {
+      result.lastSyncStored = false;
+    }
   }
   return result;
 }
@@ -537,6 +545,11 @@ var SCHEDULED_SYNC_MINUTES_ = 30;
 
 function scheduledSync() {
   try {
+    var last = Date.parse(PropertiesService.getScriptProperties().getProperty('LAST_SYNC_AT') || '');
+    if (!isNaN(last) && Date.now() - last < SCHEDULED_SYNC_MINUTES_ * 60 * 1000) {
+      console.log('scheduled sync skipped: last sync at ' + new Date(last).toISOString());
+      return { ok: true, skipped: 'recent' };
+    }
     var result = syncAction_({});
     console.log('scheduled sync ' + JSON.stringify(result));
     return result;

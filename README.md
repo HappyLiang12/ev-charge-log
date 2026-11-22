@@ -27,7 +27,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 ## Features
 
 - One-tap start recording with a per-car URL; no login and no car picker. While a manual start is pending, the start button is disabled and a QR auto-start does not create a second record. It re-enables after the session is matched or the pending record is deleted.
-- Owner on-demand Tesla sync plus a 30-minute scheduled background sync. The family page syncs once when it loads and has no sync button; reopening the page refreshes it.
+- Owner on-demand Tesla sync plus a 30-minute scheduled background sync. The family page runs the same full sync (Tesla import and identification) once when it loads, has no sync button, and pushes the next scheduled run out by the same 30 minutes.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.
@@ -119,7 +119,7 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 ### Scheduled sync
 
-`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. Each run costs one Tesla charging-history request (about 1,440/month, inside the $10 monthly discount for normal use); plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
+`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. A family page load runs that same full path once, so opening the page imports and identifies completed sessions immediately; it still does not open the initial 30-day window. Every full sync stamps `LAST_SYNC_AT`, and the scheduled trigger skips when that stamp is younger than 30 minutes, so a family load restarts the scheduled window instead of adding an extra background run. Each full sync costs one Tesla charging-history request; plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
 
 ### Live claim and family snapshot
 
@@ -403,7 +403,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - Cloud Vision's free tier and the paid DeepSeek API can be rate-limited or unavailable in Hong Kong; plate OCR and manual selection keep working without the VLM. No automatic assignment is enabled.
 - Old `evidenceUrl` links become stale after snapshot retention; the Log row and Feedback remain.
 - If trashing a Drive file fails transiently (rate limit or service error), its `Snapshots` row is kept and retried at the next cleanup run; a file is only orphaned if it is missing permissions or the row is removed by hand. A partial failure appears in the Apps Script execution log and in the Pi log as `cleanup deleted: N failed: M` plus one `cleanup warning` line.
-- `同步紀錄` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
+- `同步紀錄` on the owner view initializes the last 30 days as unassigned sessions when there is no cursor, `SYNC_FROM`, or manual start. Family page loads run identify but do not initialize that window. Each sync is one Tesla telemetry request, not one request per session.
 - CSV is a snapshot; refresh it after new records.
 - CSV content is unit-tested; the owner export button and toast were smoke-tested in WKWebView. File delivery in a normal browser is unverified until a live end-to-end run.
 

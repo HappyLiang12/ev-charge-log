@@ -436,7 +436,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.syncing = true;
     render();
     try {
-      await syncTesla(apiUrl, { car: carId });
+      await syncTesla(apiUrl, { family: true });
       await fetchData();
     } catch (error) {
       state.offline = true;
