@@ -233,8 +233,10 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       buildActions: (close) => buildRecordActions(record, close),
     });
     if (photo) li.append(photo);
-    const main = document.createElement('span');
-    main.className = 'record-main';
+    const content = document.createElement('div');
+    content.className = 'record-content';
+    const head = document.createElement('div');
+    head.className = 'record-head';
     const date = document.createElement('span');
     date.className = 'record-date';
     date.textContent = formatHkDate(record.startAt);
@@ -242,24 +244,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     weekday.className = 'record-weekday';
     weekday.textContent = formatHkWeekday(record.startAt);
     date.append(weekday);
-    const info = recordMeta(record);
-    const meta = document.createElement('span');
-    meta.className = info.pending ? 'record-meta pending' : 'record-meta';
-    meta.textContent = info.text;
-    main.append(date, meta);
-    const endIso = sessionEndIso(record);
-    if (endIso) {
-      const end = document.createElement('span');
-      end.className = 'record-end';
-      const sameDay = formatHkDate(endIso) === formatHkDate(record.startAt);
-      end.textContent = sameDay
-        ? `至 ${formatHkTime12(endIso)}`
-        : `至 ${formatHkDate(endIso).slice(5)} ${formatHkTime12(endIso)}`;
-      main.append(end);
-    }
-
-    const right = document.createElement('span');
-    right.className = 'record-right';
     const time = document.createElement('span');
     time.className = 'record-time';
     time.textContent = formatHkTime12(record.startAt);
@@ -278,8 +262,26 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
         : `刪除 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 紀錄`,
     );
     remove.addEventListener('click', () => onDelete(record));
-    right.append(time, remove);
-    li.append(main, right);
+    head.append(date, time, remove);
+    const info = recordMeta(record);
+    const meta = document.createElement('span');
+    meta.className = info.pending ? 'record-meta pending' : 'record-meta';
+    meta.textContent = info.text;
+    const body = document.createElement('div');
+    body.className = 'record-body';
+    body.append(meta);
+    const endIso = sessionEndIso(record);
+    if (endIso) {
+      const end = document.createElement('span');
+      end.className = 'record-end';
+      const sameDay = formatHkDate(endIso) === formatHkDate(record.startAt);
+      end.textContent = sameDay
+        ? `至 ${formatHkTime12(endIso)}`
+        : `至 ${formatHkDate(endIso).slice(5)} ${formatHkTime12(endIso)}`;
+      body.append(end);
+    }
+    content.append(head, body);
+    li.append(content);
     return li;
   }
 

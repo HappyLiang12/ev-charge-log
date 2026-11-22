@@ -145,7 +145,7 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 
 .records li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 12px 4px;
   border-bottom: 1px solid #16211d;
@@ -153,25 +153,23 @@ button:focus-visible, select:focus-visible, a:focus-visible {
 }
 
 .records li:last-child { border-bottom: 0; }
-.record-date { color: var(--text); }
-.record-weekday { color: var(--muted); font-size: 13px; margin-left: 6px; }
-.record-main { display: block; flex: 1; min-width: 0; }
-.record-meta {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+.records .record-photo-button { width: 48px; height: 48px; flex: none; }
+.record-content { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.record-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.record-date { color: var(--text); white-space: nowrap; }
+.record-weekday { color: var(--muted); font-size: 13px; margin-left: 6px; white-space: nowrap; }
+.record-time {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
+.record-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.record-meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .record-meta.pending { color: var(--warn); }
-.record-time { color: var(--accent); font-weight: 600; }
-.record-end {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.record-right { display: flex; align-items: center; gap: 8px; }
+.record-end { color: var(--muted); font-size: 13px; }
 .delete-btn {
   width: 44px;
   height: 44px;
@@ -584,6 +582,8 @@ select, #exportBtn {
   .live-metric { padding: 8px; }
   .record-date { font-size: 14px; }
   .record-weekday { font-size: 11px; margin-left: 4px; }
+  .record-time { font-size: 15px; }
+  .records .record-photo-button { width: 44px; height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -596,6 +596,7 @@ select, #exportBtn {
     border-top-color: currentColor;
     opacity: 0.5;
   }
+  .record-photo-button.loading::after { animation: none; opacity: 0.6; }
 }
 
 .bill-upload {
@@ -769,7 +770,20 @@ select, #exportBtn {
   cursor: pointer;
 }
 .record-photo-button[hidden] { display: none; }
-.record-photo-button.loading { opacity: 0.45; }
+.record-photo-button { position: relative; }
+.record-photo-button.loading { opacity: 0.55; }
+.record-photo-button.loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
 .record-photo-button img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .photo-overlay {
