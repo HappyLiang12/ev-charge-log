@@ -168,7 +168,14 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   }
 
   function recordMeta(record) {
-    if (record.kWh === null) return { text: '待配對 · —', pending: true };
+    if (record.kWh === null) {
+      return {
+        text: record.source === 'live'
+          ? '已自動認領 · 等待充電完成'
+          : '已記錄開始 · 等待充電完成',
+        pending: true,
+      };
+    }
     const picked = rateFor(record);
     const cost = picked.rate ? computeCost(record, picked.rate) : null;
     return {
@@ -537,8 +544,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       els.startHint.hidden = false;
       els.startCancel.hidden = false;
       els.startHintText.textContent = live
-        ? `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 自動認領 · 完成後自動入帳 · 24 小時後失效`
-        : `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 開始 · 配對後自動恢復 · 24 小時後失效`;
+        ? `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 已自動認領（相片配對）· 充電完成後自動配對入帳 · 24 小時後失效`
+        : `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 已記錄開始 · 充電完成後自動配對 · 24 小時後失效`;
       return;
     }
     if (state.connecting && state.live === null) {
