@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_URL="${RELAY_SOURCE_URL:-https://raw.githubusercontent.com/HappyLiang12/ev-charge-log/main/tools/relay/tapo_relay.py}"
+DEST="${RELAY_DEST:-/opt/ev-relay/tapo_relay.py}"
+
+run_privileged() {
+  if [[ ${EUID} -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# A fresh mktemp avoids /tmp/protected_regular when a stale file is owned by
+# another user (root cannot overwrite it even with sudo).
+tmp="$(mktemp /tmp/ev-relay-update.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+
+curl -fsSL --max-time 60 "$SOURCE_URL" -o "$tmp"
+[[ -s "$tmp" ]]
+python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$tmp"
+
+run_privileged install -m 755 -o evrelay -g evrelay "$tmp" "$DEST"
+run_privileged systemctl restart ev-relay
+sleep 1
+systemctl --no-pager --full status ev-relay | sed -n '1,8p'
