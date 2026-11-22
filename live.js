@@ -3,6 +3,7 @@ import { costForKwh } from './logic.js';
 
 export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollMs = 300000 }) {
   let stopped = false;
+  let responded = false;
   let lastSampleAt = null;
   let lastPowerW = 0;
   let accumulatedKwh = 0;
@@ -31,8 +32,12 @@ export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollM
   }
 
   function snapshot(now = Date.now()) {
-    if (!startedFor) return live.charging ? neutralSnapshot() : null;
-    const hours = lastSampleAt === null ? 0 : Math.max(0, now - lastSampleAt) / 3600000;
+    if (!responded) return null;
+    if (!startedFor) return neutralSnapshot();
+    // A failed read freezes the estimate instead of billing the stale power.
+    const hours = live.available && lastSampleAt !== null
+      ? Math.max(0, now - lastSampleAt) / 3600000
+      : 0;
     const kwh = accumulatedKwh + lastPowerW * hours / 1000;
     return {
       active: true,
@@ -86,6 +91,7 @@ export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollM
       live = { ...live, available: false };
     } finally {
       polling = false;
+      responded = true;
       emit();
     }
   }

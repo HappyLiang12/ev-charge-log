@@ -73,6 +73,10 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     bills: [],
     unassigned: [],
     live: null,
+    lastLiveCharging: false,
+    updatedAt: '',
+    loadError: '',
+    lastFetchAt: 0,
     syncedOnce: false,
     connecting: Boolean(apiUrl),
     syncing: false,
@@ -88,6 +92,13 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   const els = {
     startBtn: byId('startBtn'),
+    startHint: byId('familyStartHint'),
+    startHintText: byId('familyStartHintText'),
+    startCancel: byId('familyStartCancel'),
+    errorBanner: byId('familyError'),
+    errorText: byId('familyErrorText'),
+    errorRetry: byId('familyErrorRetry'),
+    updatedAt: byId('familyUpdatedAt'),
     syncBtn: byId('syncBtn'),
     status: byId('familyStatus'),
     carName: byId('familyCarName'),
@@ -292,16 +303,21 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       ? '未設定'
       : state.connecting || state.syncing
         ? '連線中'
-        : state.offline
-          ? '離線'
-          : state.pending.length > 0 || !state.syncedOnce
-            ? '未同步'
-            : '已連接';
+        : state.loadError
+          ? '錯誤'
+          : state.offline
+            ? '離線'
+            : state.pending.length > 0 || !state.syncedOnce
+              ? '未同步'
+              : '已連接';
     setStatus(els.status, status);
+    els.errorBanner.hidden = !state.loadError;
+    els.errorText.textContent = state.loadError || '';
+    els.updatedAt.textContent = state.updatedAt ? `資料更新於 ${formatHkTime12(state.updatedAt)}` : '';
     const records = mergeRecords(state.server, state.pending);
     const pendingStart = pendingStartRecord(records);
     updateStartButton(pendingStart);
-    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新充電樁');
+    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '同步紀錄');
 
     const bills = state.bills;
     const months = monthsWithRecords(records);
@@ -328,7 +344,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.count.textContent = String(summary.count);
     els.split.textContent = summary.matched > 0
       ? `非高峰 ${summary.offPeakKWh.toFixed(1)} kWh · 高峰 ${summary.peakKWh.toFixed(1)} kWh（按時段及車輛習慣估算）`
-      : '所選期間未有已配對嘅充電 session。';
+      : '所選期間未有已配對嘅充電時段。';
 
     const current = monthKey(new Date().toISOString());
     const picked = selectRate(current, state.rates);
@@ -345,18 +361,28 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
     els.recentList.replaceChildren();
     for (const record of records.slice(0, 5)) els.recentList.append(makeRow(record));
-    els.empty.hidden = records.length > 0;
-    els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
+    if (!state.syncedOnce && state.connecting) {
+      els.empty.hidden = false;
+      els.empty.textContent = '載入中…';
+    } else {
+      els.empty.hidden = records.length > 0;
+      els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
+    }
 
     const recentUnassigned = recentRecords(state.unassigned, 30);
     els.unassigned.replaceChildren();
     appendPendingRows(els.unassigned, recentUnassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
-    els.unassignedEmpty.hidden = recentUnassigned.length > 0;
-    els.unassignedEmpty.textContent = !apiUrl
-      ? '未設定 Google Sheet。'
-      : state.unassigned.length > recentUnassigned.length
-        ? '最近 30 日冇未配對紀錄；更早嘅由車主處理。'
-        : '冇未配對充電樁紀錄。';
+    if (!state.syncedOnce && state.connecting) {
+      els.unassignedEmpty.hidden = false;
+      els.unassignedEmpty.textContent = '載入中…';
+    } else {
+      els.unassignedEmpty.hidden = recentUnassigned.length > 0;
+      els.unassignedEmpty.textContent = !apiUrl
+        ? '未設定 Google Sheet。'
+        : state.unassigned.length > recentUnassigned.length
+          ? '最近 30 日冇未配對紀錄；更早嘅由車主處理。'
+          : '冇未配對充電樁紀錄。';
+    }
   }
 
   async function retryPending() {
@@ -386,6 +412,9 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.unassigned = mergeRecords(data.unassigned, []);
     state.pending = dropSyncedPending(state.pending, state.server);
     state.offline = false;
+    state.updatedAt = new Date().toISOString();
+    state.lastFetchAt = Date.now();
+    state.loadError = '';
     state.syncedOnce = true;
     await retryPending();
     persist();
@@ -401,7 +430,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       await fetchData();
       if (!auto) {
         const matched = Number(result.matched) || 0;
-        showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電 session。` : '冇新嘅充電 session。');
+        showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電時段。` : '冇新嘅充電時段。');
       }
     } catch (error) {
       state.offline = true;
@@ -422,8 +451,17 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       els.startBtn.disabled = true;
       els.startBtn.textContent = '已記錄開始時間';
       els.startBtn.title = '';
+      els.startHint.hidden = false;
+      els.startHintText.textContent = `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 開始 · 配對後自動恢復 · 24 小時後失效`;
       return;
     }
+    if (state.connecting && state.live === null) {
+      els.startBtn.disabled = true;
+      els.startBtn.textContent = '檢查充電樁…';
+      els.startBtn.title = '';
+      return;
+    }
+    els.startHint.hidden = true;
     if (state.live && state.live.available && state.live.charging) {
       els.startBtn.disabled = true;
       els.startBtn.textContent = '充電樁充電中…';
@@ -434,22 +472,40 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   }
 
   function renderLive(live) {
+    const wasCharging = state.lastLiveCharging;
     state.live = live;
     updateStartButton();
     if (!live) {
       els.livePanel.hidden = true;
+      state.lastLiveCharging = false;
       return;
     }
     els.livePanel.hidden = false;
     const charging = live.available && live.charging;
+    state.lastLiveCharging = charging;
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
-    els.liveState.dataset.state = charging ? 'charging' : 'idle';
-    els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.active ? live.kWh.toFixed(3) : '—';
-    els.liveCost.textContent = live.active && live.cost !== null ? `$${live.cost.toFixed(3)}` : '—';
-    els.liveHint.textContent = live.active
-      ? '每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。'
-      : '充電樁充電中；完成後會自動配對，唔需要按開始。';
+    els.liveState.dataset.state = !live.available ? 'warn' : charging ? 'charging' : 'idle';
+    els.livePower.textContent = live.available && live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
+    els.liveKwh.textContent = live.active ? `≈ ${live.kWh.toFixed(2)}` : '—';
+    els.liveCost.textContent = live.active && live.cost !== null ? `≈$${live.cost.toFixed(2)}` : '—';
+    const parts = [];
+    if (!live.available) parts.push('暫時讀取唔到充電樁狀態，會自動重試。');
+    else if (live.active) parts.push('估算按現時電價計算，完成後以 Tesla 紀錄為準。');
+    else if (charging) parts.push('充電樁充電中；完成後會自動配對，唔需要按開始。');
+    else parts.push('充電樁而家未充電。');
+    if (live.sampledAt) parts.push(`最後取樣 ${formatHkTime12(live.sampledAt)}`);
+    els.liveHint.textContent = parts.join(' ');
+    if (wasCharging && !charging && live.available) void refreshRecords();
+  }
+
+  async function refreshRecords() {
+    if (!apiUrl) return;
+    try {
+      await fetchData();
+      render();
+    } catch {
+      // keep the last good data until the next visibility refresh
+    }
   }
 
   async function load() {
@@ -467,10 +523,9 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       await maybeAutoStart();
       if (!state.offline) void runSync(true);
     } catch (error) {
-      state.offline = true;
       state.connecting = false;
+      state.loadError = friendlyError(error, '未能連接，請檢查網絡後重試。');
       render();
-      showToast(els.toast, friendlyError(error, '未能連接，請檢查網絡後重試。'));
       await maybeAutoStart();
     }
   }
@@ -478,6 +533,12 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   async function maybeAutoStart() {
     if (!autoStart || state.autoStarted) return;
     state.autoStarted = true;
+    // Give the first live read a moment so a QR start cannot join a session
+    // that is already charging.
+    const deadline = Date.now() + 2500;
+    while (state.live === null && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     await onStart();
     try {
       const url = new URL(window.location.href);
@@ -500,6 +561,10 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     }
     if (isRecentDuplicate(records[0]?.startAt, Date.now())) {
       showToast(els.toast, '已經記錄咗，請稍等 2 秒再試。');
+      return;
+    }
+    if (state.live && state.live.available && state.live.charging) {
+      showToast(els.toast, '充電樁而家充緊電；完成後會自動配對，唔需要按開始。');
       return;
     }
     const record = {
@@ -640,6 +705,11 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   els.startBtn.addEventListener('click', onStart);
   els.syncBtn.addEventListener('click', () => { void runSync(false); });
   els.exportBtn.addEventListener('click', onExport);
+  els.errorRetry.addEventListener('click', () => { if (apiUrl) void load(); });
+  els.startCancel.addEventListener('click', () => {
+    const row = pendingStartRecord(mergeRecords(state.server, state.pending));
+    if (row) void onDelete(row);
+  });
   els.monthSelect.addEventListener('change', () => {
     state.monthTouched = true;
     state.selectedMonth = els.monthSelect.value;
@@ -650,6 +720,13 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.offline = false;
     void load();
   });
+  if (apiUrl) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - state.lastFetchAt < 60000) return;
+      void load();
+    });
+  }
 
   if (cached.corrupt || queued.corrupt) showToast(els.toast, '本機紀錄格式有誤，已忽略。');
   if (cachedRates.corrupt) showToast(els.toast, '費率快取格式有誤，已忽略。');

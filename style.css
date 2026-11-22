@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #070b0a;
   --surface: #101715;
   --surface-2: #16211d;
@@ -277,6 +278,63 @@ select, #exportBtn {
 .owner-toolbar-actions button:disabled { opacity: 0.4; cursor: default; }
 
 .owner-cards { display: grid; gap: 10px; }
+
+.error-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  border: 1px solid #5b2b2b;
+  background: #2a1414;
+  color: #fecaca;
+  font-size: 14px;
+}
+
+.error-banner button {
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid #7f3a3a;
+  background: transparent;
+  color: #fecaca;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.start-hint {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.start-hint .link-btn {
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.updated-at { color: var(--muted); font-size: 12px; }
+
+.pending-count {
+  background: #2a2312;
+  border: 1px solid #4a3a12;
+  color: var(--warn);
+}
+
+.pending-count[hidden] { display: none; }
+
+.snapshot-warning { color: var(--warn); }
 #familyRates { margin-top: 16px; }
 
 .live-title-row {
@@ -320,7 +378,7 @@ select, #exportBtn {
 
 .live-metric span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .rate-more {
@@ -429,10 +487,10 @@ select, #exportBtn {
 }
 
 .owner-row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.owner-row-actions select { min-height: 40px; flex: 1; min-width: 120px; }
+.owner-row-actions select { min-height: 44px; flex: 1; min-width: 120px; }
 
 .owner-row-actions button {
-  min-height: 40px;
+  min-height: 44px;
   border-radius: 10px;
   border: 1px solid #24322c;
   background: transparent;
@@ -489,7 +547,7 @@ select, #exportBtn {
 }
 
 .owner-link button {
-  min-height: 40px;
+  min-height: 44px;
   border-radius: 10px;
   border: 1px solid #24322c;
   background: transparent;
@@ -553,7 +611,7 @@ select, #exportBtn {
 .bill-file {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -691,15 +749,15 @@ select, #exportBtn {
 
 .evidence-thumb {
   display: block;
-  width: min(100%, 320px);
-  max-width: 100%;
-  height: auto;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--surface);
 }
 
-.evidence-thumb-small { width: min(100%, 120px); }
+.evidence-thumb-small { width: 96px; height: 96px; }
 
 .snapshot-panel .owner-toolbar { margin-bottom: 0; }
 .snapshot-panel .owner-toolbar h2 { flex: 1 1 auto; }
@@ -714,7 +772,7 @@ select, #exportBtn {
 .snapshot-image {
   display: block;
   width: 100%;
-  max-height: 360px;
+  max-height: 180px;
   object-fit: cover;
 }
 .snapshot-fallback {

@@ -14,7 +14,10 @@ export function appendPendingRows(list, records, makeRow, now = Date.now(), open
     li.className = 'unassigned-month';
     const details = document.createElement('details');
     const monthKey = `month:${month.month}`;
-    details.open = openKeys.has(monthKey);
+    const monthHasMatch = month.days.some((day) => day.records.some((record) => (
+      record.suggestionStatus === 'matched'
+    )));
+    details.open = openKeys.has(monthKey) || monthHasMatch;
     details.addEventListener('toggle', () => {
       if (details.open) openKeys.add(monthKey);
       else openKeys.delete(monthKey);
@@ -30,7 +33,8 @@ export function appendPendingRows(list, records, makeRow, now = Date.now(), open
       dayLi.className = 'unassigned-day';
       const dayDetails = document.createElement('details');
       const dayKey = `day:${day.day}`;
-      dayDetails.open = openKeys.has(dayKey);
+      const dayHasMatch = day.records.some((record) => record.suggestionStatus === 'matched');
+      dayDetails.open = openKeys.has(dayKey) || dayHasMatch;
       dayDetails.addEventListener('toggle', () => {
         if (dayDetails.open) openKeys.add(dayKey);
         else openKeys.delete(dayKey);
