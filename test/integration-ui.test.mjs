@@ -611,7 +611,7 @@ test('owner UI: record photos open the revote overlay and reassign', { timeout: 
   harness.env.driveFiles.push({ id: 'file-photo', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
-    await waitFor(() => ui.document.querySelector('#ownerAssigned .record-photo-button:not([hidden])'), 12000);
+    await waitFor(() => ui.document.querySelector('#ownerAssigned .record-photo-button:not(.loading)'), 12000);
     const photo = ui.document.querySelector('#ownerAssigned .record-photo-button');
     assert.match(photo.querySelector('img').src, /^data:image\/jpeg;base64,/);
     photo.click();
@@ -685,7 +685,7 @@ test('family UI: record photos open the revote overlay and reassign with family 
   harness.env.driveFiles.push({ id: 'file-fam', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
-    await waitFor(() => ui.document.querySelector('#recentList .record-photo-button:not([hidden])'), 12000);
+    await waitFor(() => ui.document.querySelector('#recentList .record-photo-button:not(.loading)'), 12000);
     ui.document.querySelector('#recentList .record-photo-button').click();
     const overlay = ui.document.querySelector('.photo-overlay');
     assert.ok(overlay);

@@ -48,11 +48,12 @@ export function createRecordPhoto({ apiUrl, record, when, buildActions }) {
   if (!apiUrl || !record || !record.id) return null;
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'record-photo-button';
-  button.hidden = true;
+  button.className = 'record-photo-button loading';
   button.setAttribute('aria-label', `${when} 的充電位相片`);
+  button.setAttribute('aria-busy', 'true');
   const image = document.createElement('img');
   image.alt = '';
+  image.hidden = true;
   button.append(image);
   function start() {
     loadRecordPhoto(apiUrl, record.id).then((photo) => {
@@ -61,7 +62,9 @@ export function createRecordPhoto({ apiUrl, record, when, buildActions }) {
         return;
       }
       image.src = `data:image/jpeg;base64,${photo.image}`;
-      button.hidden = false;
+      image.hidden = false;
+      button.classList.remove('loading');
+      button.setAttribute('aria-busy', 'false');
     });
   }
   const Observer = typeof window !== 'undefined' ? window.IntersectionObserver : undefined;
