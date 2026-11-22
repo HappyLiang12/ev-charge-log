@@ -77,13 +77,24 @@ ScriptApp trigger.
 3. `sudo useradd --system --home /var/lib/ev-relay --shell /usr/sbin/nologin evrelay`
 4. `sudo install -d -o evrelay -g evrelay /var/lib/ev-relay/queue`
 5. `sudo install -d -o evrelay -g evrelay /opt/ev-relay`
-6. Copy `tapo_relay.py` to `/opt/ev-relay/` (or run the Pi's
-   `sudo ev-relay-update`).
+6. Copy `tapo_relay.py` to `/opt/ev-relay/`, or install the tracked update
+   helper
+   (`sudo install -m 755 ev-relay-update /usr/local/bin/ev-relay-update`)
+   and run `sudo ev-relay-update`.
 7. `sudo install -d /etc/ev-relay`
 8. Create `/etc/ev-relay/relay.env` from `relay.env.example`:
    `sudo chown root:evrelay /etc/ev-relay/relay.env && sudo chmod 600 /etc/ev-relay/relay.env`
 9. `sudo cp ev-relay.service /etc/systemd/system/ && sudo systemctl daemon-reload`
 10. `sudo systemctl enable --now ev-relay`
+
+## Updates
+
+`ev-relay-update` fetches the latest `tapo_relay.py` from this repository's
+`main` branch into a fresh `mktemp` file (so a stale `/tmp` file owned by
+another user cannot trigger `protected_regular`), checks its Python syntax,
+installs it as `evrelay:evrelay` mode 755, and restarts `ev-relay`. It never
+reads or writes `relay.env` or any credential. Set `RELAY_SOURCE_URL` to use a
+fork and `RELAY_DEST` for a non-default install path.
 
 ## Camera
 
