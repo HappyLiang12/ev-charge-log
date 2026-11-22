@@ -109,8 +109,9 @@ test('family UI: a live claim shows the auto-claim state', { timeout: 20000 }, a
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
     await waitFor(() => ui.document.getElementById('startBtn').textContent === '已自動認領', 12000);
+    assert.match(ui.document.getElementById('recentList').textContent, /已自動認領 · 等待充電完成/);
     assert.equal(ui.document.getElementById('startBtn').disabled, true);
-    assert.match(ui.document.getElementById('familyStartHintText').textContent, /自動認領 · 完成後自動入帳 · 24 小時後失效/);
+    assert.match(ui.document.getElementById('familyStartHintText').textContent, /已自動認領（相片配對）· 充電完成後自動配對入帳 · 24 小時後失效/);
   } finally {
     ui.close();
     await harness.close();
@@ -206,7 +207,7 @@ test('family UI: start=1 does not duplicate an existing pending start', { timeou
   try {
     await waitFor(() => ui.document.getElementById('startBtn').textContent === '已記錄開始時間', 12000);
     assert.equal(ui.document.getElementById('startBtn').disabled, true);
-    assert.match(ui.document.getElementById('familyStartHintText').textContent, /開始 · 配對後自動恢復 · 24 小時後失效/);
+    assert.match(ui.document.getElementById('familyStartHintText').textContent, /已記錄開始 · 充電完成後自動配對 · 24 小時後失效/);
     await waitFor(() => !new URL(ui.window.location.href).searchParams.has('start'), 12000);
     assert.match(ui.document.getElementById('familyToast').textContent, /已經記錄咗開始時間/);
     assert.equal(harness.env.call('readLog_').length, 1);
