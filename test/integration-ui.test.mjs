@@ -244,6 +244,7 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     assert.equal(harness.env.call('readLog_').length, 1);
 
     // The family page syncs on load; reopening it picks up the completed session.
+    harness.env.props.LAST_SYNC_AT = new Date(Date.now() - 6 * 60 * 1000).toISOString();
     ui.close();
     ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
     await waitFor(() => ui.document.getElementById('familyKwh').textContent === '12.0');
@@ -1129,6 +1130,40 @@ test('family UI: published bill period drives the summary and shows the payable 
     assert.match(text, /應付 \$320\.00/);
     assert.match(text, /你 200\.0 度 · 佔 25\.0%/);
     assert.match(text, /帳單 \$1280\.00/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family UI: photos are only requested for records inside snapshot coverage', { timeout: 20000 }, async () => {
+  const snapshotsHeader = [
+    'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
+    'bytes', 'source', 'createdAt', 'crop',
+  ];
+  const sheets = {
+    ...defaultSheets({
+      records: [
+        assignedRecord('old-photo', '2026-04-22T04:00:00.000Z'),
+        assignedRecord('new-photo', '2026-11-22T05:00:00.000Z'),
+      ],
+    }),
+    Snapshots: [
+      snapshotsHeader,
+      ['snap-cover', '2026-11-22T05:02:00.000Z', 'file-cover',
+        'https://drive.google.com/file/d/file-cover/view', 960, 750, 100, 'pi',
+        '2026-11-22T05:02:05.000Z', '0:550:960:750'],
+    ],
+  };
+  const harness = await createHarness({ sheets });
+  harness.env.driveFiles.push({ id: 'file-cover', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.querySelectorAll('#recentList li').length === 2, 12000);
+    await waitFor(() => harness.counts.recordImage === 1, 12000);
+    assert.equal(ui.document.querySelectorAll('#recentList .record-photo-button').length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(harness.counts.recordImage, 1);
   } finally {
     ui.close();
     await harness.close();

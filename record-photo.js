@@ -1,5 +1,5 @@
 import { fetchRecordSnapshot } from './api.js';
-import { formatHkDate, formatHkTime12 } from './logic.js';
+import { formatHkDate, formatHkTime12, withinSnapshotCoverage } from './logic.js';
 
 const cache = new Map();
 const pending = new Map();
@@ -44,8 +44,9 @@ export function loadRecordPhoto(apiUrl, recordId) {
   return promise;
 }
 
-export function createRecordPhoto({ apiUrl, record, when, buildActions }) {
+export function createRecordPhoto({ apiUrl, record, when, buildActions, coverage }) {
   if (!apiUrl || !record || !record.id) return null;
+  if (coverage !== undefined && !withinSnapshotCoverage(record, coverage)) return null;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'record-photo-button loading';

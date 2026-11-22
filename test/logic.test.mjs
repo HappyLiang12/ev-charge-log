@@ -19,6 +19,8 @@ import {
   parseChargerStatus,
   costForKwh,
   normalizeCars,
+  normalizeSnapshotCoverage,
+  withinSnapshotCoverage,
   parseServerRecords,
   parseFamilyPayload,
   parseOwnerPayload,
@@ -435,4 +437,29 @@ test('recentRecords keeps only records inside the day window', () => {
     { id: 'bad', startAt: '' },
   ];
   assert.deepEqual(recentRecords(records, 30, now).map((record) => record.id), ['edge', 'new']);
+});
+
+
+test('snapshot coverage gates record photo requests', () => {
+  const coverage = normalizeSnapshotCoverage({
+    from: '2026-11-22T04:00:00.000Z',
+    to: '2026-11-22T05:00:00.000Z',
+    windowMinutes: 10,
+  });
+  assert.deepEqual(coverage, {
+    from: '2026-11-22T04:00:00.000Z',
+    to: '2026-11-22T05:00:00.000Z',
+    windowMinutes: 10,
+  });
+  assert.equal(withinSnapshotCoverage({ startAt: '2026-11-22T04:08:00.000Z' }, coverage), true);
+  assert.equal(withinSnapshotCoverage({ startAt: '2026-11-22T03:40:00.000Z' }, coverage), false);
+  assert.equal(withinSnapshotCoverage({ startAt: '2026-11-22T04:08:00.000Z' }, null), false);
+  assert.equal(withinSnapshotCoverage({ startAt: '2026-11-22T04:08:00.000Z' }, undefined), true);
+  const parsed = parseFamilyPayload({
+    ok: true,
+    car: { id: 'model3', name: 'Model 3', active: true },
+    records: [],
+    snapshotCoverage: coverage,
+  });
+  assert.deepEqual(parsed.coverage, coverage);
 });

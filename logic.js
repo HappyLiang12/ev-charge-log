@@ -220,6 +220,29 @@ export function normalizeCars(list) {
   return Array.isArray(list) ? list.map(normalizeCar).filter(Boolean) : [];
 }
 
+export function normalizeSnapshotCoverage(value) {
+  if (!value || typeof value !== 'object') return null;
+  const from = typeof value.from === 'string' && !Number.isNaN(Date.parse(value.from)) ? value.from : '';
+  const to = typeof value.to === 'string' && !Number.isNaN(Date.parse(value.to)) ? value.to : '';
+  const windowMinutes = Number(value.windowMinutes);
+  return {
+    from,
+    to,
+    windowMinutes: Number.isFinite(windowMinutes) && windowMinutes > 0 ? windowMinutes : 10,
+  };
+}
+
+export function withinSnapshotCoverage(record, coverage) {
+  if (coverage === undefined) return true;
+  if (!coverage || !coverage.from || !coverage.to) return false;
+  const at = Date.parse(record && (record.teslaStartAt || record.startAt));
+  const from = Date.parse(coverage.from);
+  const to = Date.parse(coverage.to);
+  if (!Number.isFinite(at) || !Number.isFinite(from) || !Number.isFinite(to)) return false;
+  const windowMs = (Number(coverage.windowMinutes) || 10) * 60000;
+  return at >= from - windowMs && at <= to + windowMs;
+}
+
 export function parseServerRecords(payload) {
   if (!payload || payload.ok !== true || !Array.isArray(payload.records)) {
     throw new Error('Invalid API response');
@@ -236,6 +259,7 @@ export function parseFamilyPayload(payload) {
   return {
     car,
     cars: normalizeCars(payload.cars),
+    coverage: normalizeSnapshotCoverage(payload.snapshotCoverage),
     records: normalizeRecords(payload.records),
     unassigned: normalizeRecords(payload.unassigned),
     rates: normalizeRates(payload.rates),
@@ -249,6 +273,7 @@ export function parseOwnerPayload(payload) {
   }
   return {
     cars: normalizeCars(payload.cars),
+    coverage: normalizeSnapshotCoverage(payload.snapshotCoverage),
     records: normalizeRecords(payload.records),
     rates: normalizeRates(payload.rates),
     bills: Array.isArray(payload.bills) ? payload.bills : [],

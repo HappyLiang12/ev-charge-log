@@ -295,6 +295,7 @@ function familyPayload_(carId) {
     ok: true,
     car: car,
     cars: readCars_(),
+    snapshotCoverage: snapshotCoverage_(),
     records: stripFamilyRecord_(records.filter(function (record) { return record.car === car.id; })),
     unassigned: stripFamilyRecord_(records.filter(function (record) { return record.car === 'unassigned'; })),
     rates: readRates_(),
@@ -396,6 +397,9 @@ function latestImagePayload_() {
 
 var RECORD_THUMB_SIZE_ = 480;
 var RECORD_THUMB_CACHE_SECONDS_ = 6 * 3600;
+var RECORD_IMAGE_CACHE_SECONDS_ = 3600;
+var SNAPSHOT_COVERAGE_CACHE_SECONDS_ = 5 * 60;
+var FAMILY_SYNC_MIN_MS_ = 5 * 60 * 1000;
 
 // The Drive thumbnail endpoint serves a private file without a browser session;
 // the full crop stays in Drive and the browser never needs a Google login.
@@ -464,31 +468,85 @@ function resolveRecordSnapshot_(record, snapshots) {
 }
 
 function recordImagePayload_(recordId) {
-  var record = findRecord_(readLog_(), String(recordId || ''));
-  if (!record) throw new Error('Unknown record');
-  var snapshot = resolveRecordSnapshot_(record, readSnapshots_());
-  if (!snapshot || !snapshot.driveFileId) {
-    return { ok: true, recordId: record.id, snapshot: null };
+  var id = String(recordId || '');
+  if (!id) throw new Error('Unknown record');
+  var cacheKey = 'recordImg:v1:' + id;
+  var cache = null;
+  var resolved = null;
+  try {
+    cache = CacheService.getScriptCache();
+    var raw = cache.get(cacheKey);
+    if (raw) resolved = JSON.parse(raw);
+  } catch (error) {
+    cache = null;
   }
-  var image = driveThumbnailBase64_(snapshot.driveFileId);
-  return {
-    ok: true,
-    recordId: record.id,
-    snapshot: {
+  if (!resolved) {
+    var record = findRecord_(readLog_(), id);
+    if (!record) throw new Error('Unknown record');
+    var snapshot = resolveRecordSnapshot_(record, readSnapshots_());
+    resolved = snapshot ? {
       id: snapshot.id,
       capturedAt: snapshot.capturedAt,
+      driveFileId: snapshot.driveFileId,
       width: snapshot.width,
       height: snapshot.height,
       crop: snapshot.crop,
+    } : { id: '' };
+    try {
+      if (cache) cache.put(cacheKey, JSON.stringify(resolved), RECORD_IMAGE_CACHE_SECONDS_);
+    } catch (error) { /* not cacheable */ }
+  }
+  if (!resolved.id) return { ok: true, recordId: id, snapshot: null };
+  var image = driveThumbnailBase64_(resolved.driveFileId);
+  return {
+    ok: true,
+    recordId: id,
+    snapshot: {
+      id: resolved.id,
+      capturedAt: resolved.capturedAt,
+      width: resolved.width,
+      height: resolved.height,
+      crop: resolved.crop,
     },
     image: image || '',
   };
+}
+
+function snapshotCoverage_() {
+  var cacheKey = 'snapshotCoverage:v1';
+  var cache = null;
+  try {
+    cache = CacheService.getScriptCache();
+    var cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (error) {
+    cache = null;
+  }
+  var snapshots = readSnapshots_();
+  var from = null;
+  var to = null;
+  for (var i = 0; i < snapshots.length; i += 1) {
+    var at = Date.parse(snapshots[i].capturedAt);
+    if (isNaN(at)) continue;
+    if (from === null || at < from) from = at;
+    if (to === null || at > to) to = at;
+  }
+  var coverage = {
+    from: from === null ? '' : new Date(from).toISOString(),
+    to: to === null ? '' : new Date(to).toISOString(),
+    windowMinutes: configInt_(readConfigMap_().values, 'snapshot.windowMinutes', 10),
+  };
+  try {
+    if (cache) cache.put(cacheKey, JSON.stringify(coverage), SNAPSHOT_COVERAGE_CACHE_SECONDS_);
+  } catch (error) { /* not cacheable */ }
+  return coverage;
 }
 
 function ownerPayload_() {
   return {
     ok: true,
     cars: readCars_(),
+    snapshotCoverage: snapshotCoverage_(),
     records: readLog_(),
     rates: readRates_(),
     bills: readBills_(),
@@ -621,8 +679,15 @@ function deleteAction_(data) {
 function syncAction_(data) {
   var params = data || {};
   var carScoped = Boolean(params.car);
+  var familyTriggered = params.family === true;
+  if (familyTriggered) {
+    var lastSync = Date.parse(PropertiesService.getScriptProperties().getProperty('LAST_SYNC_AT') || '');
+    if (!isNaN(lastSync) && Date.now() - lastSync < FAMILY_SYNC_MIN_MS_) {
+      return { skipped: true, reason: 'recent', lastSyncAt: new Date(lastSync).toISOString() };
+    }
+  }
   // A family page runs the full path but must not open the 30-day history window.
-  var result = syncTesla_(!carScoped && params.family !== true);
+  var result = syncTesla_(!carScoped && !familyTriggered);
   if (!carScoped && !result.skipped) {
     try { result.vision = identifyPending_(); } catch (error) { result.vision = { error: String(error.message || error) }; }
     try {

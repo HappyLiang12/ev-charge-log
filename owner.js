@@ -44,6 +44,7 @@ ENGINE_LABELS.vlm = '視覺';
 export function initOwner({ apiUrl }) {
   const state = {
     cars: [],
+    coverage: null,
     records: [],
     rates: [],
     bills: [],
@@ -702,6 +703,7 @@ export function initOwner({ apiUrl }) {
       apiUrl,
       record,
       when: recordWhen(record),
+      coverage: state.coverage,
       buildActions: (close) => {
         if (manual) {
           const remove = document.createElement('button');
@@ -772,6 +774,7 @@ export function initOwner({ apiUrl }) {
       apiUrl,
       record,
       when: recordWhen(record),
+      coverage: state.coverage,
       buildActions: (close) => {
         const picker = document.createElement('select');
         picker.setAttribute('aria-label', '改派車輛');
@@ -819,6 +822,7 @@ export function initOwner({ apiUrl }) {
       apiUrl,
       record,
       when: recordWhen(record),
+      coverage: state.coverage,
       buildActions: (close) => {
         const stop = document.createElement('button');
         stop.type = 'button';
@@ -957,6 +961,7 @@ export function initOwner({ apiUrl }) {
   async function refreshData() {
     const data = await fetchOwnerData(apiUrl);
     state.cars = data.cars;
+    state.coverage = data.coverage;
     state.records = data.records;
     state.rates = data.rates;
     state.bills = data.bills || [];
