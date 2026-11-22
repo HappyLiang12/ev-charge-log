@@ -27,11 +27,14 @@ import {
 } from './logic.js';
 import {
   fetchFamilyData,
+  fetchLatestSnapshotImage,
   postRecord,
   deleteRecord,
   syncTesla,
   claimSession,
+  liveClaim,
 } from './api.js';
+import { startSnapshotPolling } from './snapshot.js';
 import { renderRateCards } from './rate-view.js';
 import { normalizeBillShares } from './bill.js';
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
@@ -77,6 +80,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     updatedAt: '',
     loadError: '',
     lastFetchAt: 0,
+    claimAttempted: false,
+    claimError: '',
     syncedOnce: false,
     connecting: Boolean(apiUrl),
     syncing: false,
@@ -89,6 +94,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     selectedMonth: null,
     monthTouched: false,
   };
+
+  let renderedSnapshotId = '';
 
   const els = {
     startBtn: byId('startBtn'),
@@ -115,6 +122,11 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
     liveHint: byId('familyLiveHint'),
+    snapshotPanel: byId('familySnapshotPanel'),
+    snapshotImg: byId('familySnapshotImg'),
+    snapshotTime: byId('familySnapshotTime'),
+    snapshotWarning: byId('familySnapshotWarning'),
+    snapshotHint: byId('familySnapshotHint'),
     bills: byId('familyBills'),
     billsPanel: byId('familyBillsPanel'),
     recentList: byId('recentList'),
@@ -160,7 +172,8 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   function pendingStartRecord(records) {
     return records.find((record) => (
-      record.car === carId && record.source === 'manual' && record.kWh === null && !record.teslaKey
+      record.car === carId && (record.source === 'manual' || record.source === 'live')
+        && record.kWh === null && !record.teslaKey
     )) || null;
   }
 
@@ -448,11 +461,15 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
     if (state.starting) return;
     if (pending) {
+      const live = pending.source === 'live';
       els.startBtn.disabled = true;
-      els.startBtn.textContent = '已記錄開始時間';
+      els.startBtn.textContent = live ? '已自動認領' : '已記錄開始時間';
       els.startBtn.title = '';
       els.startHint.hidden = false;
-      els.startHintText.textContent = `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 開始 · 配對後自動恢復 · 24 小時後失效`;
+      els.startCancel.hidden = false;
+      els.startHintText.textContent = live
+        ? `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 自動認領 · 完成後自動入帳 · 24 小時後失效`
+        : `${formatHkDate(pending.startAt)} ${formatHkTime12(pending.startAt)} 開始 · 配對後自動恢復 · 24 小時後失效`;
       return;
     }
     if (state.connecting && state.live === null) {
@@ -461,14 +478,91 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       els.startBtn.title = '';
       return;
     }
-    els.startHint.hidden = true;
     if (state.live && state.live.available && state.live.charging) {
       els.startBtn.disabled = true;
       els.startBtn.textContent = '充電樁充電中…';
       els.startBtn.title = '充電樁而家充緊電；完成後會自動配對，唔需要按開始。';
+      if (state.claimError) {
+        els.startHint.hidden = false;
+        els.startCancel.hidden = true;
+        els.startHintText.textContent = `未能自動認領（${state.claimError}）；完成後可手動認領。`;
+      } else {
+        els.startHint.hidden = true;
+      }
       return;
     }
+    els.startHint.hidden = true;
     els.startBtn.title = '';
+  }
+
+  function claimErrorLabel(result) {
+    const status = result && result.status;
+    if (status === 'not_charging') return '';
+    if (status === 'no_snapshot') return '未有快照';
+    if (status === 'unavailable') return '讀取唔到充電樁';
+    if (status === 'other_car') return '相中係另一部車';
+    if (status === 'policy_blocked') return '回饋規則暫停';
+    return result && result.reason ? String(result.reason).slice(0, 40) : '未能辨識';
+  }
+
+  async function maybeClaimLive() {
+    if (!apiUrl || state.claimAttempted) return;
+    if (!state.syncedOnce || !state.live || !state.live.available || !state.live.charging) return;
+    const records = mergeRecords(state.server, state.pending);
+    if (pendingStartRecord(records)) return;
+    state.claimAttempted = true;
+    try {
+      const result = await liveClaim(apiUrl, carId);
+      if (result && result.status === 'claimed') {
+        const percent = result.confidence === null || result.confidence === undefined
+          ? null
+          : Math.round(Number(result.confidence) * 100);
+        showToast(els.toast, `已自動認領 ${state.car.name || carId}${percent === null ? '' : `（${percent}%）`}；完成後自動入帳。`);
+        state.claimError = '';
+        await refreshRecords();
+      } else {
+        state.claimError = claimErrorLabel(result);
+        render();
+      }
+    } catch (error) {
+      state.claimError = friendlyError(error, '自動認領失敗');
+      render();
+    }
+  }
+
+  async function renderFamilySnapshot(snapshot) {
+    if (!snapshot) {
+      els.snapshotPanel.hidden = false;
+      els.snapshotImg.hidden = true;
+      els.snapshotTime.textContent = '';
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = '相機未有新相片（可能離線）。';
+      return;
+    }
+    els.snapshotPanel.hidden = false;
+    els.snapshotTime.textContent = `拍攝於 ${formatHkDate(snapshot.capturedAt)} ${formatHkTime12(snapshot.capturedAt)}`;
+    const ageMinutes = Math.round((Date.now() - Date.parse(snapshot.capturedAt)) / 60000);
+    if (ageMinutes > 15) {
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = `最後相片已經 ${ageMinutes} 分鐘前（相機可能離線）。`;
+    } else {
+      els.snapshotWarning.hidden = true;
+    }
+    if (snapshot.id === renderedSnapshotId) return;
+    renderedSnapshotId = snapshot.id;
+    try {
+      const data = await fetchLatestSnapshotImage(apiUrl);
+      if (!data || !data.image) throw new Error('no image');
+      els.snapshotImg.src = `data:image/jpeg;base64,${data.image}`;
+      els.snapshotImg.hidden = false;
+      els.snapshotHint.textContent = data.snapshot && data.snapshot.crop === 'full'
+        ? '測試模式：全畫面；每 60 秒更新，相機每 5 分鐘拍攝一次。'
+        : '每 60 秒更新；相機每 5 分鐘拍攝一次。';
+    } catch {
+      els.snapshotImg.hidden = true;
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = '快照載入失敗；每分鐘重試。';
+    }
   }
 
   function renderLive(live) {
@@ -496,6 +590,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     if (live.sampledAt) parts.push(`最後取樣 ${formatHkTime12(live.sampledAt)}`);
     els.liveHint.textContent = parts.join(' ');
     if (wasCharging && !charging && live.available) void refreshRecords();
+    if (charging) void maybeClaimLive();
   }
 
   async function refreshRecords() {
@@ -520,6 +615,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       await fetchData();
       state.connecting = false;
       render();
+      void maybeClaimLive();
       await maybeAutoStart();
       if (!state.offline) void runSync(true);
     } catch (error) {
@@ -741,6 +837,15 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       },
       getRates: () => state.rates,
       onChange: renderLive,
+    });
+    startSnapshotPolling({
+      apiUrl,
+      onSnapshot: (snapshot) => { void renderFamilySnapshot(snapshot); },
+      onError: () => {
+        els.snapshotPanel.hidden = false;
+        els.snapshotWarning.hidden = false;
+        els.snapshotWarning.textContent = '快照更新失敗；每分鐘重試。';
+      },
     });
   }
   void load();

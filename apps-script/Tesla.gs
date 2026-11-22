@@ -358,6 +358,10 @@ function syncApply_(sessions, nowIso) {
   return withScriptLock_(function () {
     var records = readLog_();
     var manualRows = manualSyncRows_(records);
+    var liveRows = records.filter(function (record) {
+      return record.source === 'live' && record.car && record.car !== 'unassigned'
+        && record.kWh === null && !record.teslaKey;
+    });
     var carFactors = carPeakFactorMap_(readCars_());
     var rates = readRates_();
     var snapshots = readSnapshots_();
@@ -437,6 +441,51 @@ function syncApply_(sessions, nowIso) {
       var rate = selectRateRow_(hkMonth_(session.startAt), rates);
       var peakStart = rate ? rate.peakStart : DEFAULT_PEAK_START_;
       var peakEnd = rate ? rate.peakEnd : DEFAULT_PEAK_END_;
+      // A live claim is evidence-backed at the charger and may predate the
+      // session start; match it when the claim time falls inside the session.
+      var liveClaim = null;
+      var sessionStartMs = Date.parse(session.startAt);
+      var sessionEndMs = Date.parse(session.endAt);
+      for (var l = 0; l < liveRows.length; l += 1) {
+        var claimAt = Date.parse(liveRows[l].startAt);
+        if (isNaN(claimAt) || isNaN(sessionStartMs) || isNaN(sessionEndMs)) continue;
+        if (claimAt >= sessionStartMs && claimAt <= sessionEndMs) {
+          liveClaim = liveRows[l];
+          break;
+        }
+      }
+      if (liveClaim) {
+        var liveSplit = splitPeakKwh_(
+          session.startAt,
+          session.durationSec,
+          session.kWh,
+          peakStart,
+          peakEnd,
+          peakFactorFor_(carFactors, liveClaim.car),
+        );
+        var liveFilled = updateLog_(liveClaim.id, {
+          startAt: session.startAt,
+          date: hkDateString_(session.startAt),
+          time: hkTimeString_(session.startAt),
+          kWh: session.kWh,
+          durationSec: session.durationSec,
+          teslaStartAt: session.startAt,
+          teslaEndAt: session.endAt,
+          peakKWh: liveSplit.peakKWh,
+          offPeakKWh: liveSplit.offPeakKWh,
+          teslaKey: session.teslaKey,
+          source: 'tesla+live',
+        });
+        if (liveFilled) {
+          knownKeys[session.teslaKey] = true;
+          var liveIndex = liveRows.indexOf(liveClaim);
+          if (liveIndex >= 0) liveRows.splice(liveIndex, 1);
+          var recordIndex = records.indexOf(liveClaim);
+          if (recordIndex >= 0) records.splice(recordIndex, 1);
+          matched += 1;
+          continue;
+        }
+      }
       var manual = closestManualCandidate_(session.startAt, manualRows, windowMs);
       if (manual) {
         var manualSplit = splitPeakKwh_(

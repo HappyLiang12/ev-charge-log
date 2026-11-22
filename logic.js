@@ -7,7 +7,7 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const WEEKDAYS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
-const SOURCES = new Set(['manual', 'tesla', 'tesla+manual', 'legacy']);
+const SOURCES = new Set(['manual', 'live', 'tesla', 'tesla+manual', 'tesla+live', 'legacy']);
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const text = (value) => (typeof value === 'string' ? value : '');

@@ -801,16 +801,19 @@ export function initOwner({ apiUrl }) {
     const title = document.createElement('strong');
     title.textContent = car ? car.name : record.car;
     head.append(when, title);
+    const live = record.source === 'live';
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
-    meta.textContent = '手動開始紀錄，等待充電樁紀錄配對。';
+    meta.textContent = live
+      ? '自動認領紀錄（相片配對），等待充電完成配對。'
+      : '手動開始紀錄，等待充電樁紀錄配對。';
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'owner-ignore';
-    cancel.textContent = '取消開始';
-    cancel.setAttribute('aria-label', `取消 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的手動開始紀錄`);
+    cancel.textContent = live ? '取消認領' : '取消開始';
+    cancel.setAttribute('aria-label', `取消 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的${live ? '自動認領' : '手動開始'}紀錄`);
     cancel.disabled = state.busy || state.rowBusy.has(record.id);
     cancel.addEventListener('click', () => { void onCancelPending(record); });
     actions.append(cancel);

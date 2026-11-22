@@ -71,6 +71,14 @@ export async function fetchLatestSnapshot(apiUrl, fetchImpl = fetch) {
   };
 }
 
+export async function fetchLatestSnapshotImage(apiUrl, fetchImpl = fetch) {
+  return apiGet(apiUrl, { latestImage: '1' }, fetchImpl);
+}
+
+export async function liveClaim(apiUrl, car, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'liveClaim', car }, fetchImpl);
+}
+
 export async function fetchChargerStatus(apiUrl, fetchImpl = fetch) {
   return parseChargerStatus(await apiGet(apiUrl, { status: '1' }, fetchImpl));
 }
