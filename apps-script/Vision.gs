@@ -355,14 +355,27 @@ function identifySession_(record, force) {
   return result;
 }
 
+// A provider outage must not turn a frequent sync into an unbounded retry
+// loop; manual identify still retries immediately.
+var IDENTIFY_ERROR_RETRY_MS_ = 6 * 3600 * 1000;
+
+function isIdentifyCandidate_(record, nowMs) {
+  if (!record || record.car !== 'unassigned' || !record.teslaKey) return false;
+  if (record.suggestionStatus === 'matched' || record.suggestionStatus === 'unknown') return false;
+  if (record.suggestionStatus !== 'error' && record.suggestionStatus !== 'rate_limited') return true;
+  var at = Date.parse(record.identifiedAt || '');
+  if (isNaN(at)) return true;
+  return nowMs - at >= IDENTIFY_ERROR_RETRY_MS_;
+}
+
 function identifyPending_() {
   var state = withScriptLock_(function () {
     var engine = visionEngine_();
     if (engine === 'off') return { engine: engine, candidates: [] };
     var max = configInt_(readConfigMap_().values, 'vision.maxPerSync', 5);
+    var nowMs = Date.now();
     var candidates = readLog_().filter(function (record) {
-      return record.car === 'unassigned' && record.teslaKey
-        && record.suggestionStatus !== 'matched' && record.suggestionStatus !== 'unknown';
+      return isIdentifyCandidate_(record, nowMs);
     }).sort(function (a, b) { return Date.parse(b.startAt) - Date.parse(a.startAt); }).slice(0, max);
     return { engine: engine, candidates: candidates };
   });

@@ -249,6 +249,49 @@ test('charger status returns live power and charging state', () => {
   assert.equal(waits, 0);
 });
 
+test('charger status is cached across concurrent polls', () => {
+  let statusCalls = 0;
+  const env = setup({
+    fetch: (url) => {
+      if (url === TOKEN_URL) {
+        return response(200, JSON.stringify({ access_token: 'access-1', expires_in: 3600 }));
+      }
+      if (url.includes('/charger_live_status')) {
+        statusCalls += 1;
+        return response(200, JSON.stringify({
+          response: { wall_connectors: [{ wall_connector_state: 1, wall_connector_power: 7200 }] },
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  const first = receive(env, { status: '1' });
+  const second = receive(env, { status: '1' });
+  assert.equal(first.charging, true);
+  assert.equal(statusCalls, 1);
+  assert.equal(first.sampledAt, second.sampledAt);
+});
+
+test('identify candidates retry provider errors only after the cooldown', () => {
+  const env = setup();
+  const now = Date.now();
+  const base = { car: 'unassigned', teslaKey: 'k', suggestionStatus: 'error' };
+  assert.equal(env.call('isIdentifyCandidate_', {
+    ...base, identifiedAt: new Date(now - 3600 * 1000).toISOString(),
+  }, now), false);
+  assert.equal(env.call('isIdentifyCandidate_', {
+    ...base, identifiedAt: new Date(now - 7 * 3600 * 1000).toISOString(),
+  }, now), true);
+  assert.equal(env.call('isIdentifyCandidate_', {
+    ...base, suggestionStatus: 'rate_limited', identifiedAt: new Date(now).toISOString(),
+  }, now), false);
+  assert.equal(env.call('isIdentifyCandidate_', {
+    ...base, suggestionStatus: 'matched', identifiedAt: new Date(now).toISOString(),
+  }, now), false);
+  assert.equal(env.call('isIdentifyCandidate_', { ...base, suggestionStatus: '', identifiedAt: null }, now), true);
+  assert.equal(env.call('isIdentifyCandidate_', { car: 'model3', teslaKey: 'k', suggestionStatus: '' }, now), false);
+});
+
 test('doGet returns only the requested car records and the owner returns all records', () => {
   const env = setup({
     sheets: {

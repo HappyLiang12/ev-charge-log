@@ -134,6 +134,16 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
       ],
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    CacheService: (() => {
+      const store = new Map();
+      return {
+        getScriptCache: () => ({
+          get: (key) => (store.has(String(key)) ? store.get(String(key)) : null),
+          put: (key, value) => { store.set(String(key), String(value)); },
+          remove: (key) => { store.delete(String(key)); },
+        }),
+      };
+    })(),
     UrlFetchApp: {
       fetch: fetchHandler || (() => { throw new Error('Unexpected UrlFetchApp.fetch'); }),
     },
