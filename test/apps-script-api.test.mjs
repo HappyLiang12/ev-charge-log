@@ -249,6 +249,45 @@ test('charger status returns live power and charging state', () => {
   assert.equal(waits, 0);
 });
 
+test('hkStamp_ converts UTC into Hong Kong local time', () => {
+  const env = setup();
+  assert.equal(env.call('hkStamp_', '2026-11-22T09:33:20.000Z'), '2026-11-22 17:33:20');
+  assert.equal(env.call('hkStamp_', 'not-a-date'), '');
+});
+
+test('snapshots store a Hong Kong local stamp column', () => {
+  const env = setup();
+  env.call('appendSnapshot_', {
+    id: 'snap-1',
+    capturedAt: '2026-11-22T09:33:20.000Z',
+    driveFileId: 'f',
+    driveUrl: 'u',
+    width: 960,
+    height: 750,
+    bytes: 1,
+    source: 'pi',
+    createdAt: '2026-11-22T09:33:32.534Z',
+    crop: '0:550:960:750',
+  });
+  const rows = env.values('Snapshots');
+  const header = rows[0];
+  assert.equal(rows[1][header.indexOf('本地時間（HKT）')], '2026-11-22 17:33:20');
+});
+
+test('backfillLocalTimeStamps fills missing local stamps', () => {
+  const env = setup({ sheets: {
+    Snapshots: [
+      ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'],
+      ['snap-1', '2026-11-22T09:33:20.000Z', 'f', 'u', 960, 750, 1, 'pi', '2026-11-22T09:33:32.534Z', ''],
+    ],
+  } });
+  const result = plain(env.call('backfillLocalTimeStamps'));
+  assert.ok(result.filled >= 1);
+  const rows = env.values('Snapshots');
+  const header = rows[0];
+  assert.equal(rows[1][header.indexOf('本地時間（HKT）')], '2026-11-22 17:33:20');
+});
+
 test('scheduled sync installs one idempotent trigger and can be removed', () => {
   const env = setup();
   const first = plain(env.call('installScheduledSync'));
