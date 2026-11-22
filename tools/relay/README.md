@@ -122,6 +122,17 @@ With `API_URL` empty the service is capture-only: frames accumulate under
 bootstrap default until the first Config fetch). Set `API_URL` and
 `RELAY_HMAC_SECRET` once the Apps Script endpoint is deployed.
 
+## Pending uploads
+
+A failed snapshot upload leaves `pending-<epoch>.jpg` under `QUEUE_DIR`. The
+relay retries it immediately (5/15/30 s backoff) and drains pending files at
+the start of every cycle. Retries rebuild the payload from the filename epoch
+so the snapshot id, `capturedAt`, and HMAC stay stable; Apps Script's
+idempotent `existing: true` response removes a file whose first response timed
+out. Files older than 9 minutes (the server accepts 10) are moved to
+`<QUEUE_DIR>/../expired/` instead of retried. Snapshot POSTs use a 60-second
+timeout.
+
 ## Time
 
 The Pi 3 B has no RTC. The relay timestamps and HMAC payloads assume the clock
