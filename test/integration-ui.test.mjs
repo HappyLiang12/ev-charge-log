@@ -110,6 +110,7 @@ test('family UI: a live claim shows the auto-claim state', { timeout: 20000 }, a
   try {
     await waitFor(() => ui.document.getElementById('startBtn').textContent === '已自動認領', 12000);
     assert.match(ui.document.getElementById('recentList').textContent, /已自動認領 · 等待充電完成/);
+    await waitFor(() => /已自動認領（.*）；充電完成後會自動配對/.test(ui.document.getElementById('familyLiveHint').textContent), 12000);
     assert.equal(ui.document.getElementById('startBtn').disabled, true);
     assert.match(ui.document.getElementById('familyStartHintText').textContent, /已自動認領（相片配對）· 充電完成後自動配對入帳 · 24 小時後失效/);
   } finally {
@@ -343,7 +344,9 @@ test('family UI: charging without a manual start shows the live panel and blocks
     await waitFor(() => ui.document.getElementById('familyLivePanel').hidden === false, 12000);
     assert.match(ui.document.getElementById('familyLiveState').textContent, /充電中/);
     assert.match(ui.document.getElementById('familyLivePower').textContent, /6\.5 kW/);
-    assert.equal(ui.document.getElementById('familyLiveKwh').textContent, '—');
+    assert.ok(ui.document.getElementById('familyLiveSample'));
+    assert.equal(ui.document.getElementById('familyLiveKwh'), null);
+    assert.equal(ui.document.getElementById('familyLiveCost'), null);
     assert.match(ui.document.getElementById('familyLiveHint').textContent, /完成後會自動配對/);
     const start = ui.document.getElementById('startBtn');
     assert.equal(start.disabled, true);
@@ -804,12 +807,10 @@ test('owner UI: one pending list includes manual starts and unassigned charger s
     assert.equal(ui.document.querySelectorAll('#ownerPending select').length, 1);
     await waitFor(() => ui.document.getElementById('ownerLiveState').textContent === '充電中');
     assert.equal(ui.document.getElementById('ownerLivePower').textContent, '7.2 kW');
-    const liveKwh = () => Number(ui.document.getElementById('ownerLiveKwh').textContent.replace(/[^0-9.]/g, ''));
-    await waitFor(() => liveKwh() > 0, 12000);
-    const firstKwh = liveKwh();
-    assert.ok(firstKwh > 0);
-    await new Promise((resolve) => setTimeout(resolve, 6000));
-    assert.ok(liveKwh() > firstKwh);
+    assert.ok(ui.document.getElementById('ownerLiveSample'));
+    assert.equal(ui.document.getElementById('ownerLiveKwh'), null);
+    assert.equal(ui.document.getElementById('ownerLiveCost'), null);
+    await waitFor(() => /手動開始/.test(ui.document.getElementById('ownerLiveHint').textContent), 12000);
   } finally {
     ui.close();
     await harness.close();

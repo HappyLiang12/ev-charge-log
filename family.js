@@ -122,8 +122,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     livePanel: byId('familyLivePanel'),
     liveState: byId('familyLiveState'),
     livePower: byId('familyLivePower'),
-    liveKwh: byId('familyLiveKwh'),
-    liveCost: byId('familyLiveCost'),
+    liveSample: byId('familyLiveSample'),
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
     liveHint: byId('familyLiveHint'),
@@ -656,14 +655,19 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
     els.liveState.dataset.state = !live.available ? 'warn' : charging ? 'charging' : 'idle';
     els.livePower.textContent = live.available && live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.active ? `≈ ${live.kWh.toFixed(2)}` : '—';
-    els.liveCost.textContent = live.active && live.cost !== null ? `≈$${live.cost.toFixed(2)}` : '—';
+    els.liveSample.textContent = live.sampledAt ? formatHkTime12(live.sampledAt) : '—';
+    const pending = pendingStartRecord(mergeRecords(state.server, state.pending));
     const parts = [];
     if (!live.available) parts.push('暫時讀取唔到充電樁狀態，會自動重試。');
-    else if (live.active) parts.push('估算按現時電價計算，完成後以 Tesla 紀錄為準。');
-    else if (charging) parts.push('充電樁充電中；完成後會自動配對，唔需要按開始。');
-    else parts.push('充電樁而家未充電。');
-    if (live.sampledAt) parts.push(`最後取樣 ${formatHkTime12(live.sampledAt)}`);
+    else if (charging) {
+      if (pending && pending.source === 'live') {
+        parts.push(`已自動認領（${formatHkTime12(pending.startAt)}）；充電完成後會自動配對。`);
+      } else if (pending) {
+        parts.push(`手動開始（${formatHkTime12(pending.startAt)}）；完成後以 Tesla 紀錄為準。`);
+      } else {
+        parts.push('充電樁充電中；完成後會自動配對，唔需要按開始。');
+      }
+    } else parts.push('充電樁而家未充電。');
     els.liveHint.textContent = parts.join(' ');
     if (wasCharging && !charging && live.available) void refreshRecords();
     if (charging) void maybeClaimLive();
