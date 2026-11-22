@@ -16,6 +16,7 @@ function doGet(e) {
     lock.waitLock(30000);
     try {
       if (params.latestImage !== undefined) return json_(latestImagePayload_());
+      if (params.recordImage !== undefined) return json_(recordImagePayload_(params.recordImage));
       if (params.latest !== undefined) return json_(latestSnapshotPayload_());
       if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
@@ -293,6 +294,7 @@ function familyPayload_(carId) {
   return {
     ok: true,
     car: car,
+    cars: readCars_(),
     records: stripFamilyRecord_(records.filter(function (record) { return record.car === car.id; })),
     unassigned: stripFamilyRecord_(records.filter(function (record) { return record.car === 'unassigned'; })),
     rates: readRates_(),
@@ -389,6 +391,97 @@ function latestImagePayload_() {
       crop: snapshot.crop,
     },
     image: Utilities.base64Encode(bytes),
+  };
+}
+
+var RECORD_THUMB_SIZE_ = 480;
+var RECORD_THUMB_CACHE_SECONDS_ = 6 * 3600;
+
+// The Drive thumbnail endpoint serves a private file without a browser session;
+// the full crop stays in Drive and the browser never needs a Google login.
+function driveThumbnailBase64_(fileId) {
+  var id = String(fileId || '');
+  if (!id) return null;
+  var key = 'thumb:' + id + ':' + RECORD_THUMB_SIZE_;
+  var cache = null;
+  try {
+    cache = CacheService.getScriptCache();
+    var cached = cache.get(key);
+    if (cached) return cached;
+  } catch (error) {
+    cache = null;
+  }
+  var bytes = null;
+  try {
+    var meta = UrlFetchApp.fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?fields=thumbnailLink',
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }
+    );
+    if (meta.getResponseCode() === 200) {
+      var link = '';
+      try { link = String(JSON.parse(meta.getContentText()).thumbnailLink || ''); } catch (error) { link = ''; }
+      if (link) {
+        var href = link.replace(/=s\d+.*$/, '=s' + RECORD_THUMB_SIZE_);
+        var image = UrlFetchApp.fetch(href, { muteHttpExceptions: true });
+        if (image.getResponseCode() === 200) bytes = image.getBlob().getBytes();
+      }
+    }
+  } catch (error) {
+    bytes = null;
+  }
+  if (!bytes || !bytes.length) {
+    try { bytes = DriveApp.getFileById(id).getBlob().getBytes(); } catch (error) { bytes = null; }
+  }
+  if (!bytes || !bytes.length) return null;
+  var base64 = Utilities.base64Encode(bytes);
+  // A full-size fallback can exceed the per-key cache limit; returning it uncached is fine.
+  try { if (cache) cache.put(key, base64, RECORD_THUMB_CACHE_SECONDS_); } catch (error) { /* not cacheable */ }
+  return base64;
+}
+
+function resolveRecordSnapshot_(record, snapshots) {
+  var rows = snapshots || [];
+  var evidenceId = String(record.suggestionSnapshotId || '');
+  if (evidenceId) {
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i].id === evidenceId) return rows[i];
+    }
+  }
+  var target = Date.parse(record.teslaStartAt || record.startAt);
+  if (isNaN(target)) return null;
+  var windowMs = configInt_(readConfigMap_().values, 'snapshot.windowMinutes', 10) * 60 * 1000;
+  var best = null;
+  var bestDelta = Infinity;
+  for (var j = 0; j < rows.length; j += 1) {
+    var at = Date.parse(rows[j].capturedAt);
+    if (isNaN(at)) continue;
+    var delta = Math.abs(at - target);
+    if (delta > windowMs || delta >= bestDelta) continue;
+    best = rows[j];
+    bestDelta = delta;
+  }
+  return best;
+}
+
+function recordImagePayload_(recordId) {
+  var record = findRecord_(readLog_(), String(recordId || ''));
+  if (!record) throw new Error('Unknown record');
+  var snapshot = resolveRecordSnapshot_(record, readSnapshots_());
+  if (!snapshot || !snapshot.driveFileId) {
+    return { ok: true, recordId: record.id, snapshot: null };
+  }
+  var image = driveThumbnailBase64_(snapshot.driveFileId);
+  return {
+    ok: true,
+    recordId: record.id,
+    snapshot: {
+      id: snapshot.id,
+      capturedAt: snapshot.capturedAt,
+      width: snapshot.width,
+      height: snapshot.height,
+      crop: snapshot.crop,
+    },
+    image: image || '',
   };
 }
 
@@ -725,8 +818,8 @@ function recordAssignmentFeedback_(target, chosenCar, actor) {
   recordFeedbackRow_(target, chosenCar, actor);
 }
 
-function recordCorrectionFeedback_(target, chosenCar) {
-  recordFeedbackRow_(target, chosenCar, 'owner');
+function recordCorrectionFeedback_(target, chosenCar, actor) {
+  recordFeedbackRow_(target, chosenCar, actor || 'owner');
 }
 
 function recordFeedbackRow_(target, chosenCar, actor) {
@@ -862,7 +955,7 @@ function reassignAction_(data) {
         car.peakFactor,
       )
     : null;
-  recordCorrectionFeedback_(record, car.id);
+  recordCorrectionFeedback_(record, car.id, data.actor === 'family' ? 'family' : 'owner');
   var patch = { car: car.id, source: record.source };
   if (split) { patch.peakKWh = split.peakKWh; patch.offPeakKWh = split.offPeakKWh; }
   var updated = updateLog_(record.id, patch);

@@ -148,6 +148,7 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
       const triggers = [];
       return {
         _triggers: triggers,
+        getOAuthToken: () => 'token-1',
         getProjectTriggers: () => triggers.slice(),
         deleteTrigger: (trigger) => {
           const index = triggers.indexOf(trigger);

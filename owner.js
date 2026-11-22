@@ -21,6 +21,7 @@ import {
   reassignSession,
   saveBill,
   publishBill,
+  fetchLatestSnapshotImage,
 } from './api.js';
 import {
   parseBillLines,
@@ -32,6 +33,7 @@ import {
 import { byId, showToast, setStatus, setBusy, friendlyError, appendPendingRows } from './ui.js';
 import { startChargerLive } from './live.js';
 import { startSnapshotPolling } from './snapshot.js';
+import { createRecordPhoto } from './record-photo.js';
 
 // Null prototype: a tampered engine string must never resolve to an
 // Object.prototype member and render function source.
@@ -106,10 +108,8 @@ export function initOwner({ apiUrl }) {
     bills: byId('ownerBills'),
     snapshotPanel: byId('ownerSnapshotPanel'),
     snapshotImg: byId('ownerSnapshotImg'),
-    snapshotLink: byId('ownerSnapshotLink'),
     snapshotTime: byId('ownerSnapshotTime'),
     snapshotHint: byId('ownerSnapshotHint'),
-    snapshotFallback: byId('ownerSnapshotFallback'),
   };
   let renderedSnapshotId = '';
 
@@ -157,63 +157,23 @@ export function initOwner({ apiUrl }) {
       : `建議：${carLabel(record.suggestedCar)}`;
   }
 
-  function driveFileId(url) {
-    const value = String(url || '');
-    const match = value.match(/\/d\/([^/?#]+)/) || value.match(/[?&]id=([^&#]+)/);
-    return match ? match[1] : '';
-  }
-
   function recordWhen(record) {
     return `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
   }
 
-  function makeEvidenceLink(record, { compact = false } = {}) {
-    if (!record.evidenceUrl) return null;
-    const className = compact ? 'evidence-link evidence-compact' : 'evidence-link';
-    if (!/^https?:\/\//i.test(record.evidenceUrl)) {
-      const fallback = document.createElement('span');
-      fallback.className = className;
-      fallback.textContent = '查看相片';
-      return fallback;
-    }
-    const link = document.createElement('a');
-    link.className = className;
-    link.href = record.evidenceUrl;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.setAttribute('aria-label', `查看 ${recordWhen(record)} 的充電紀錄相片`);
-    const fileId = driveFileId(record.evidenceUrl);
-    if (!fileId) {
-      link.textContent = '查看相片';
-      return link;
-    }
-    const image = document.createElement('img');
-    image.className = compact ? 'evidence-thumb evidence-thumb-small' : 'evidence-thumb';
-    image.loading = 'lazy';
-    image.alt = '';
-    image.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w480`;
-    image.addEventListener('error', () => {
-      image.remove();
-      if (!link.textContent) link.textContent = '查看相片';
-    });
-    link.append(image);
-    return link;
-  }
-
-  function renderSnapshot(snapshot) {
+  async function renderSnapshot(snapshot) {
     if (!snapshot) {
       els.snapshotPanel.hidden = false;
-      els.snapshotLink.hidden = true;
+      els.snapshotImg.hidden = true;
       els.snapshotTime.textContent = '';
       els.snapshotWarning.hidden = false;
       els.snapshotWarning.textContent = '相機未有新相片（可能離線）。';
-      els.snapshotHint.textContent = '相片透過 Google Drive 載入（需要登入）；每 60 秒重試。';
+      els.snapshotHint.textContent = '每 60 秒重試。';
       return;
     }
     const when = `${formatHkDate(snapshot.capturedAt)} ${formatHkTime12(snapshot.capturedAt)}`.trim();
     const ageMinutes = Math.round((Date.now() - Date.parse(snapshot.capturedAt)) / 60000);
     els.snapshotPanel.hidden = false;
-    els.snapshotLink.hidden = false;
     els.snapshotTime.textContent = when ? `拍攝於 ${when}` : '';
     if (ageMinutes > 15) {
       els.snapshotWarning.hidden = false;
@@ -222,19 +182,19 @@ export function initOwner({ apiUrl }) {
       els.snapshotWarning.hidden = true;
     }
     els.snapshotHint.textContent = snapshot.crop === 'full'
-      ? '測試模式：全畫面；相片透過 Google Drive 載入（需要登入），每 60 秒更新。'
-      : '相片透過 Google Drive 載入（需要登入）；每 60 秒更新，相機每 5 分鐘拍攝一次。';
-    const fileId = snapshot.driveFileId || driveFileId(snapshot.driveUrl);
-    els.snapshotLink.href = snapshot.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+      ? '測試模式：全畫面；每 60 秒更新，相機每 5 分鐘拍攝一次。'
+      : '每 60 秒更新；相機每 5 分鐘拍攝一次。';
     if (snapshot.id === renderedSnapshotId) return;
     renderedSnapshotId = snapshot.id;
-    els.snapshotImg.hidden = false;
-    els.snapshotFallback.hidden = true;
-    if (fileId) {
-      els.snapshotImg.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w960`;
-    } else {
+    try {
+      const data = await fetchLatestSnapshotImage(apiUrl);
+      if (!data || !data.image) throw new Error('no image');
+      els.snapshotImg.src = `data:image/jpeg;base64,${data.image}`;
+      els.snapshotImg.hidden = false;
+    } catch {
       els.snapshotImg.hidden = true;
-      els.snapshotFallback.hidden = false;
+      els.snapshotWarning.hidden = false;
+      els.snapshotWarning.textContent = '快照載入失敗；每分鐘重試。';
     }
   }
 
@@ -738,8 +698,31 @@ export function initOwner({ apiUrl }) {
       li.append(note);
     }
 
-    const evidence = makeEvidenceLink(record);
-    if (evidence) li.append(evidence);
+    const photo = createRecordPhoto({
+      apiUrl,
+      record,
+      when: recordWhen(record),
+      buildActions: (close) => {
+        if (manual) {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'secondary';
+          remove.textContent = '刪除此紀錄';
+          remove.addEventListener('click', () => { close(); void onIgnore(record); });
+          return [remove];
+        }
+        const picker = document.createElement('select');
+        picker.setAttribute('aria-label', '分配車輛');
+        fillCarOptions(picker, { placeholder: '選擇車輛' });
+        const assign = document.createElement('button');
+        assign.type = 'button';
+        assign.className = 'secondary';
+        assign.textContent = '分配';
+        assign.addEventListener('click', () => { close(); void onAssign(record, picker); });
+        return [picker, assign];
+      },
+    });
+    if (photo) li.append(photo);
     const ignore = document.createElement('button');
     ignore.type = 'button';
     ignore.className = 'owner-ignore';
@@ -785,8 +768,23 @@ export function initOwner({ apiUrl }) {
     actions.append(select, reassign);
 
     li.append(head, meta);
-    const evidence = makeEvidenceLink(record, { compact: true });
-    if (evidence) li.append(evidence);
+    const photo = createRecordPhoto({
+      apiUrl,
+      record,
+      when: recordWhen(record),
+      buildActions: (close) => {
+        const picker = document.createElement('select');
+        picker.setAttribute('aria-label', '改派車輛');
+        fillCarOptions(picker, { current: record.car });
+        const move = document.createElement('button');
+        move.type = 'button';
+        move.className = 'secondary';
+        move.textContent = '改派';
+        move.addEventListener('click', () => { close(); void onReassign(record, picker); });
+        return [picker, move];
+      },
+    });
+    if (photo) li.append(photo);
     li.append(actions);
     return li;
   }
@@ -817,7 +815,22 @@ export function initOwner({ apiUrl }) {
     cancel.disabled = state.busy || state.rowBusy.has(record.id);
     cancel.addEventListener('click', () => { void onCancelPending(record); });
     actions.append(cancel);
-    li.append(head, meta, actions);
+    const photo = createRecordPhoto({
+      apiUrl,
+      record,
+      when: recordWhen(record),
+      buildActions: (close) => {
+        const stop = document.createElement('button');
+        stop.type = 'button';
+        stop.className = 'secondary';
+        stop.textContent = live ? '取消認領' : '取消開始';
+        stop.addEventListener('click', () => { close(); void onCancelPending(record); });
+        return [stop];
+      },
+    });
+    li.append(head, meta);
+    if (photo) li.append(photo);
+    li.append(actions);
     return li;
   }
 
@@ -1189,10 +1202,6 @@ export function initOwner({ apiUrl }) {
   els.exportBtn.addEventListener('click', onExport);
   els.syncBtn.addEventListener('click', () => { void onSync(); });
   els.ratesBtn.addEventListener('click', () => { void onRates(); });
-  els.snapshotImg.addEventListener('error', () => {
-    els.snapshotImg.hidden = true;
-    els.snapshotFallback.hidden = false;
-  });
   els.billFile.addEventListener('change', () => { void onBillFile(); });
   els.billManualBtn.addEventListener('click', () => {
     els.billForm.hidden = false;
@@ -1215,7 +1224,7 @@ export function initOwner({ apiUrl }) {
       onError: (error) => {
         els.snapshotPanel.hidden = false;
         els.snapshotWarning.hidden = false;
-        els.snapshotWarning.textContent = `相片更新失敗（${friendlyError(error, '可能係網絡或 Drive 登入問題')}）；每分鐘重試。`;
+        els.snapshotWarning.textContent = `相片更新失敗（${friendlyError(error, '可能係網絡問題')}）；每分鐘重試。`;
       },
     });
     startChargerLive({

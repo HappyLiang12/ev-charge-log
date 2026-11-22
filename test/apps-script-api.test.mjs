@@ -2738,3 +2738,159 @@ test('family claim records its feedback but never rewrites the plate map', () =>
   // The owner-only plate map is untouched by the family claim.
   assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'model3', active: true }]);
 });
+
+const imageBytes = [0xff, 0xd8, 0xff, 0xd9];
+const imageResponse = () => ({
+  getResponseCode: () => 200,
+  getContentText: () => '',
+  getBlob: () => ({ getBytes: () => [...imageBytes] }),
+});
+const imageRecordRow = () => suggestionRow('rec-img', {
+  car: 'model3',
+  confidence: 0.9,
+  status: 'matched',
+  identifiedAt: SESSION_START,
+  engine: 'vlm',
+  snapshotId: 'snap-evidence',
+}, { car: 'model3' });
+
+test('record image prefers the stored suggestion snapshot', () => {
+  const env = setup({
+    sheets: {
+      Log: [IDENTIFY_HEADER, imageRecordRow()],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('snap-near', '2026-11-14T05:05:00.000Z', 'file-near'),
+        snapshotRow('snap-evidence', '2026-11-14T05:08:00.000Z', 'file-evidence'),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url.indexOf('/drive/v3/files/file-evidence?') !== -1) {
+        return response(200, JSON.stringify({ thumbnailLink: 'https://lh3.googleusercontent.com/d/file-evidence=s220' }));
+      }
+      if (url === 'https://lh3.googleusercontent.com/d/file-evidence=s480') return imageResponse();
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-near'), snapshotDriveFile('file-evidence'));
+  const result = receive(env, { recordImage: 'rec-img' });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.id, 'snap-evidence');
+  assert.equal(result.image, Buffer.from(imageBytes).toString('base64'));
+});
+
+test('record image falls back to the nearest snapshot inside the window', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-near', 4: 'model3', 11: 'din:near', 12: 'tesla' })],
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('snap-far', '2026-11-14T05:40:00.000Z', 'file-far'),
+        snapshotRow('snap-best', '2026-11-14T05:03:00.000Z', 'file-best'),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url.indexOf('/drive/v3/files/file-best?') !== -1) {
+        return response(200, JSON.stringify({ thumbnailLink: 'https://lh3.googleusercontent.com/d/file-best=s220' }));
+      }
+      if (url === 'https://lh3.googleusercontent.com/d/file-best=s480') return imageResponse();
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-best'));
+  const result = receive(env, { recordImage: 'rec-near' });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.id, 'snap-best');
+});
+
+test('record image reports no snapshot when none is inside the window', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-none', 4: 'model3', 11: 'din:none', 12: 'tesla' })],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-far', '2026-11-14T06:00:00.000Z', 'file-far')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const result = receive(env, { recordImage: 'rec-none' });
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot, null);
+});
+
+test('record image falls back to the full file when the thumbnail path fails', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-full', 4: 'model3', 11: 'din:full', 12: 'tesla' })],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-full', '2026-11-14T05:03:00.000Z', 'file-full')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      throw new Error(`Offline: ${url}`);
+    },
+  });
+  env.driveFiles.push({ id: 'file-full', getBlob: () => ({ getBytes: () => [1, 2, 3, 4] }) });
+  const result = receive(env, { recordImage: 'rec-full' });
+  assert.equal(result.ok, true);
+  assert.equal(result.image, Buffer.from([1, 2, 3, 4]).toString('base64'));
+});
+
+test('record image is cached by snapshot id and size', () => {
+  let thumbCalls = 0;
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-cache', 4: 'model3', 11: 'din:cache', 12: 'tesla' })],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-cache', '2026-11-14T05:03:00.000Z', 'file-cache')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url.indexOf('/drive/v3/files/file-cache?') !== -1) {
+        return response(200, JSON.stringify({ thumbnailLink: 'https://lh3.googleusercontent.com/d/file-cache=s220' }));
+      }
+      if (url === 'https://lh3.googleusercontent.com/d/file-cache=s480') {
+        thumbCalls += 1;
+        return imageResponse();
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-cache'));
+  const first = receive(env, { recordImage: 'rec-cache' });
+  env.context.UrlFetchApp.fetch = () => { throw new Error('cache miss'); };
+  const second = receive(env, { recordImage: 'rec-cache' });
+  assert.equal(thumbCalls, 1);
+  assert.equal(first.image, second.image);
+});
+
+test('family payload includes cars for the reassign picker', () => {
+  const env = setup({
+    sheets: {
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+    },
+  });
+  const family = receive(env, { car: 'model3' });
+  assert.deepEqual(family.cars.map((car) => car.id).sort(), ['ix3', 'model3']);
+});
+
+test('family reassign records family feedback and leaves the plate map alone', () => {
+  const env = setup({
+    sheets: {
+      Log: [
+        IDENTIFY_HEADER,
+        suggestionRow('rec-fam', {
+          car: 'model3', confidence: 0.9, plate: 'AB-12 34', status: 'matched',
+          identifiedAt: SESSION_START, engine: 'plate', snapshotId: 'snap-1',
+        }, { 4: 'model3' }),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x'], ['ix3', 'iX3', 'TRUE', 'x']],
+      Rates: [RATES_HEADER, RATE_ROW],
+      Plates: [['plate', 'car', 'active', 'createdAt'], ['AB1234', 'model3', 'TRUE', '']],
+    },
+  });
+  const result = send(env, { action: 'reassign', id: 'rec-fam', car: 'ix3', actor: 'family' });
+  assert.equal(result.ok, true, result.error);
+  const feedback = plain(env.call('readFeedback_'));
+  assert.equal(feedback[0].actor, 'family');
+  assert.equal(feedback[0].chosenCar, 'ix3');
+  assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'model3', active: true }]);
+});

@@ -33,7 +33,9 @@ import {
   syncTesla,
   claimSession,
   liveClaim,
+  reassignSession,
 } from './api.js';
+import { createRecordPhoto } from './record-photo.js';
 import { startSnapshotPolling } from './snapshot.js';
 import { renderRateCards } from './rate-view.js';
 import { normalizeBillShares } from './bill.js';
@@ -70,6 +72,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   const state = {
     car: { id: carId, name: carId, active: true },
+    cars: [],
     server: normalizeRecords(cached.value),
     pending: normalizeRecords(queued.value),
     rates: normalizeRates(cachedRates.value),
@@ -89,6 +92,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     autoStarted: false,
     claiming: new Set(),
     deleting: new Set(),
+    reassigning: new Set(),
     openUnassigned: new Set(),
     offline: false,
     selectedMonth: null,
@@ -176,8 +180,59 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     )) || null;
   }
 
+  function buildRecordActions(record, close) {
+    if (record.car === 'unassigned') {
+      const claim = document.createElement('button');
+      claim.type = 'button';
+      claim.className = 'secondary';
+      claim.textContent = '認領呢個時段';
+      claim.addEventListener('click', () => { close(); void onClaim(record); });
+      return [claim];
+    }
+    const others = state.cars.filter((car) => car.active && car.id !== record.car);
+    if (!others.length) return [];
+    const picker = document.createElement('select');
+    picker.setAttribute('aria-label', '改派車輛');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '改派到…';
+    picker.append(placeholder);
+    for (const car of others) {
+      const option = document.createElement('option');
+      option.value = car.id;
+      option.textContent = car.name;
+      picker.append(option);
+    }
+    const move = document.createElement('button');
+    move.type = 'button';
+    move.className = 'secondary';
+    move.textContent = '改派';
+    move.addEventListener('click', () => {
+      const car = picker.value;
+      if (!car) {
+        showToast(els.toast, '請先選擇車輛。');
+        return;
+      }
+      close();
+      void onReassign(record, car);
+    });
+    const release = document.createElement('button');
+    release.type = 'button';
+    release.className = 'secondary';
+    release.textContent = '放回未配對';
+    release.addEventListener('click', () => { close(); void onDelete(record); });
+    return [picker, move, release];
+  }
+
   function makeRow(record) {
     const li = document.createElement('li');
+    const photo = createRecordPhoto({
+      apiUrl,
+      record,
+      when: `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`,
+      buildActions: (close) => buildRecordActions(record, close),
+    });
+    if (photo) li.append(photo);
     const main = document.createElement('span');
     main.className = 'record-main';
     const date = document.createElement('span');
@@ -237,6 +292,13 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     const kwh = document.createElement('strong');
     kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
     head.append(when, kwh);
+    const photo = createRecordPhoto({
+      apiUrl,
+      record,
+      when: `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`,
+      buildActions: (close) => buildRecordActions(record, close),
+    });
+    if (photo) head.prepend(photo);
 
     const manual = !record.teslaKey;
     const meta = document.createElement('div');
@@ -417,6 +479,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     if (data.car.active === false) throw new Error('inactive car');
     state.server = data.records.filter((record) => !state.deleting.has(record.id));
     state.car = data.car;
+    if (data.cars.length) state.cars = data.cars;
     state.rates = data.rates;
     state.bills = normalizeBillShares(data.bills);
     state.unassigned = mergeRecords(data.unassigned, []);
@@ -737,6 +800,23 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       showToast(els.toast, friendlyError(error, '刪除失敗，請檢查網絡後重試。'));
     } finally {
       state.deleting.delete(record.id);
+      render();
+    }
+  }
+
+  async function onReassign(record, car) {
+    if (!apiUrl || !car || car === record.car || state.reassigning.has(record.id)) return;
+    state.reassigning.add(record.id);
+    render();
+    try {
+      await reassignSession(apiUrl, record.id, car, { actor: 'family' });
+      await fetchData();
+      showToast(els.toast, '已改派。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '改派失敗，請檢查網絡後重試。'));
+    } finally {
+      state.reassigning.delete(record.id);
       render();
     }
   }

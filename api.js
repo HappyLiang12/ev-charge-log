@@ -109,8 +109,12 @@ export async function ignoreSession(apiUrl, id, fetchImpl = fetch) {
   return apiPost(apiUrl, { action: 'ignore', id }, fetchImpl);
 }
 
-export async function reassignSession(apiUrl, id, car, fetchImpl = fetch) {
-  return apiPost(apiUrl, { action: 'reassign', id, car }, fetchImpl);
+export async function reassignSession(apiUrl, id, car, auth = {}, fetchImpl = fetch) {
+  return apiPost(apiUrl, { action: 'reassign', id, car, ...auth }, fetchImpl);
+}
+
+export async function fetchRecordSnapshot(apiUrl, recordId, fetchImpl = fetch) {
+  return apiGet(apiUrl, { recordImage: recordId }, fetchImpl);
 }
 
 export async function claimSession(apiUrl, car, id, fetchImpl = fetch) {
