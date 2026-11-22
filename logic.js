@@ -235,6 +235,7 @@ export function parseFamilyPayload(payload) {
   if (!car) throw new Error('Invalid car payload');
   return {
     car,
+    cars: normalizeCars(payload.cars),
     records: normalizeRecords(payload.records),
     unassigned: normalizeRecords(payload.unassigned),
     rates: normalizeRates(payload.rates),

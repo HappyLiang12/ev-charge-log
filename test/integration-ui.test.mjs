@@ -392,17 +392,15 @@ test('owner sees the latest snapshot card with capture time and mode', { timeout
     ],
   };
   const harness = await createHarness({ sheets });
+  harness.env.driveFiles.push({ id: 'file-new', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
     await waitFor(() => ui.document.getElementById('ownerSnapshotPanel').hidden === false, 12000);
     const img = ui.document.getElementById('ownerSnapshotImg');
-    assert.match(img.src, /thumbnail\?id=file-new/);
+    await waitFor(() => /^data:image\/jpeg;base64,/.test(img.src), 12000);
     assert.match(ui.document.getElementById('ownerSnapshotTime').textContent, /拍攝於/);
     assert.match(ui.document.getElementById('ownerSnapshotHint').textContent, /全畫面/);
-    assert.equal(
-      ui.document.getElementById('ownerSnapshotLink').href,
-      'https://drive.google.com/file/d/file-new/view',
-    );
+    assert.equal(ui.document.querySelector('#ownerSnapshotPanel a'), null);
   } finally {
     ui.close();
     await harness.close();
@@ -426,9 +424,6 @@ test('owner sees snapshot, engine, confidence, adopt, and ignore', { timeout: 20
     const when = `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`;
     assert.match(ui.document.querySelector('.suggestion-label').textContent, /Model 3.*84%/);
     assert.match(ui.document.querySelector('.suggestion-label').textContent, /視覺/);
-    const evidence = ui.document.querySelector('.evidence-link');
-    assert.equal(evidence.href, record.evidenceUrl);
-    assert.equal(evidence.getAttribute('aria-label'), `查看 ${when} 的充電紀錄相片`);
     const select = ui.document.querySelector('#ownerPending select');
     const adopt = ui.document.querySelector('.owner-suggestion');
     const ignore = ui.document.querySelector('.owner-ignore');
@@ -503,19 +498,7 @@ test('owner UI: engine labels and the manual-selection fallback', { timeout: 200
     const limitedRow = Array.from(ui.document.querySelectorAll('#ownerPending > li'))
       .find((row) => row.textContent.includes(formatHkTime12(limited.startAt)));
     assert.match(limitedRow.querySelector('.suggestion-label').textContent, /辨識失敗/);
-    assert.equal(ui.document.querySelectorAll('#ownerPending .evidence-link').length, 5);
     assert.equal(ui.document.querySelectorAll('#ownerPending .owner-ignore').length, 6);
-    const thumbnails = Array.from(
-      ui.document.querySelectorAll('#ownerPending .evidence-thumb'),
-      (image) => image.getAttribute('src'),
-    );
-    assert.equal(thumbnails.length, 4);
-    assert.ok(thumbnails.includes('https://drive.google.com/thumbnail?id=file-plate&sz=w480'));
-    assert.ok(thumbnails.includes('https://drive.google.com/thumbnail?id=file-limited&sz=w480'));
-    const linkFallback = Array.from(ui.document.querySelectorAll('#ownerPending .evidence-link'))
-      .find((link) => link.href === 'https://drive.google.com/file/view');
-    assert.equal(linkFallback.textContent, '查看相片');
-    assert.equal(linkFallback.querySelector('img'), null);
   } finally {
     ui.close();
     await harness.close();
@@ -603,40 +586,49 @@ test('owner UI: cancelling the ignore confirmation leaves the session untouched'
   }
 });
 
-test('owner UI: assigned rows keep compact evidence and reassign through the API', { timeout: 20000 }, async () => {
+test('owner UI: record photos open the revote overlay and reassign', { timeout: 20000 }, async () => {
   const startAt = `${monthKey(new Date().toISOString())}-01T04:00:00.000Z`;
+  const capturedAt = new Date(Date.parse(startAt) + 3 * 60 * 1000).toISOString();
   const record = {
     ...assignedRecord('assigned-1', startAt),
-    evidenceUrl: 'https://drive.google.com/file/d/assigned-file/view',
     suggestedCar: 'model3',
     suggestionConfidence: 0.98,
     suggestionPlate: 'AB1234',
     suggestionStatus: 'matched',
     identifiedAt: startAt,
     suggestionEngine: 'plate',
-    suggestionSnapshotId: 'snap-1',
+    suggestionSnapshotId: 'snap-photo',
   };
-  const sheets = defaultSheets({ records: [record], feedback: [] });
+  const sheets = {
+    ...defaultSheets({ records: [record], feedback: [] }),
+    Snapshots: [
+      ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'],
+      ['snap-photo', capturedAt, 'file-photo', 'https://drive.google.com/file/d/file-photo/view',
+        960, 750, 100, 'pi', capturedAt, '0:550:960:750'],
+    ],
+  };
   const harness = await createHarness({ sheets });
+  harness.env.driveFiles.push({ id: 'file-photo', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
   try {
-    await waitFor(() => ui.document.querySelector('#ownerAssigned .evidence-link'), 12000);
-    const link = ui.document.querySelector('#ownerAssigned .evidence-link');
-    assert.equal(link.href, record.evidenceUrl);
-    const thumbnail = link.querySelector('.evidence-thumb');
-    assert.equal(thumbnail.getAttribute('src'), 'https://drive.google.com/thumbnail?id=assigned-file&sz=w480');
-    const select = ui.document.querySelector('#ownerAssigned select');
-    await waitFor(() => !select.disabled);
-    select.value = 'leaf';
-    ui.document.querySelector('#ownerAssigned .owner-reassign').click();
+    await waitFor(() => ui.document.querySelector('#ownerAssigned .record-photo-button:not([hidden])'), 12000);
+    const photo = ui.document.querySelector('#ownerAssigned .record-photo-button');
+    assert.match(photo.querySelector('img').src, /^data:image\/jpeg;base64,/);
+    photo.click();
+    const overlay = ui.document.querySelector('.photo-overlay');
+    assert.ok(overlay);
+    assert.match(overlay.querySelector('.photo-large').src, /^data:image\/jpeg;base64,/);
+    const picker = overlay.querySelector('.photo-actions select');
+    picker.value = 'leaf';
+    overlay.querySelector('.photo-actions button').click();
     await waitFor(() => harness.env.call('readLog_').some((row) => row.car === 'leaf'), 12000);
+    assert.equal(ui.document.querySelector('.photo-overlay'), null);
     assert.match(ui.document.getElementById('ownerToast').textContent, /已改派/);
     const feedback = harness.env.call('readFeedback_');
     assert.equal(feedback.length, 1);
     assert.equal(feedback[0].recordId, record.id);
-    assert.equal(feedback[0].suggestedCar, 'model3');
     assert.equal(feedback[0].chosenCar, 'leaf');
-    assert.equal(feedback[0].engine, 'plate');
+    assert.equal(feedback[0].actor, 'owner');
   } finally {
     ui.close();
     await harness.close();
@@ -674,21 +666,40 @@ test('owner UI: every assigned record in the period is rendered and reassignable
   }
 });
 
-test('owner UI: non-http evidence URLs render as plain text, never as links', { timeout: 20000 }, async () => {
+test('family UI: record photos open the revote overlay and reassign with family feedback', { timeout: 20000 }, async () => {
+  const startAt = '2026-11-21T04:00:00.000Z';
+  const capturedAt = new Date(Date.parse(startAt) + 2 * 60 * 1000).toISOString();
   const record = {
-    ...unassignedRecord('u-js', '2026-11-21T04:00:00.000Z', 'din:js'),
-    evidenceUrl: 'javascript:alert(document.cookie)',
-    suggestionStatus: 'unknown',
+    ...assignedRecord('fam-photo', startAt),
+    suggestionSnapshotId: 'snap-fam',
   };
-  const harness = await createHarness({ sheets: defaultSheets({ records: [record] }) });
-  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1' });
+  const sheets = {
+    ...defaultSheets({ records: [record] }),
+    Snapshots: [
+      ['id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height', 'bytes', 'source', 'createdAt', 'crop'],
+      ['snap-fam', capturedAt, 'file-fam', 'https://drive.google.com/file/d/file-fam/view',
+        960, 750, 100, 'pi', capturedAt, '0:550:960:750'],
+    ],
+  };
+  const harness = await createHarness({ sheets });
+  harness.env.driveFiles.push({ id: 'file-fam', getBlob: () => ({ getBytes: () => [0xff, 0xd8, 0xff, 0xd9] }) });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
-    await waitFor(() => ui.document.querySelector('#ownerPending .evidence-link'), 12000);
-    const fallback = ui.document.querySelector('#ownerPending .evidence-link');
-    assert.equal(fallback.tagName, 'SPAN');
-    assert.equal(fallback.hasAttribute('href'), false);
-    assert.equal(fallback.textContent, '查看相片');
-    assert.equal(ui.document.querySelector('#ownerPending a[href^="javascript:"]'), null);
+    await waitFor(() => ui.document.querySelector('#recentList .record-photo-button:not([hidden])'), 12000);
+    ui.document.querySelector('#recentList .record-photo-button').click();
+    const overlay = ui.document.querySelector('.photo-overlay');
+    assert.ok(overlay);
+    const picker = overlay.querySelector('.photo-actions select');
+    assert.deepEqual(Array.from(picker.options, (option) => option.value), ['', 'leaf']);
+    picker.value = 'leaf';
+    overlay.querySelector('.photo-actions button').click();
+    await waitFor(() => harness.env.call('readLog_').some((row) => row.car === 'leaf'), 12000);
+    assert.match(ui.document.getElementById('familyToast').textContent, /已改派/);
+    const feedback = harness.env.call('readFeedback_');
+    assert.equal(feedback.length, 1);
+    assert.equal(feedback[0].recordId, record.id);
+    assert.equal(feedback[0].chosenCar, 'leaf');
+    assert.equal(feedback[0].actor, 'family');
   } finally {
     ui.close();
     await harness.close();

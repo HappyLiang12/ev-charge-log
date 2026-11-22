@@ -20,7 +20,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - A family member taps one button when charging starts. The start time is stored in the shared Google Sheet. A pending start disables the button until it is matched or deleted.
 - The owner opens the owner URL (`?owner`), presses `同步紀錄`, and the Apps Script matches Tesla Wall Connector sessions to the manual start times.
 - If a driver forgot to press start, the family view lists unassigned Tesla sessions and lets that driver claim the matching one. The owner can also assign unassigned sessions. Each car gets an estimated cost from the CLP EV residential time-of-use tariff.
-- A Raspberry Pi relay crops the charging slot from the Tapo CCTV stream and uploads only that crop every 5 minutes. The owner view shows the crop and a plate/vision suggestion; the family view sees only a suggestion hint, never the image.
+- A Raspberry Pi relay crops the charging slot from the Tapo CCTV stream and uploads only that crop every 5 minutes. The owner view shows the crop and a plate/vision suggestion; every record row carries a small snapshot thumbnail, and tapping it opens the photo with a revote action. Family links can view the same photos through the Apps Script proxy.
 - Capture settings live in the Sheet's `Config` tab. The Pi pulls them every cycle, so interval, crop, quality, queue cap, and cleanup cadence are tuned remotely without SSH or a restart.
 - The family view never receives Tesla credentials. The owner view has no key or login; its URL is a mode flag.
 
@@ -44,8 +44,8 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 - Owner bill reconciliation: upload a CLP PDF, extract the bill in the browser, store the numbers in the `Bills` tab, and split the bill across cars by logged kWh share. Saving a bill with peak/off-peak also learns a per-car `peakFactor` from all usable bills, so later peak/off-peak estimates track the meter's actual split.
 - Bill shares are gated: a bill stays unpublished (and invisible to family links) until the owner presses `發布分攤`. Publishing is blocked while any `unassigned` session starts inside the bill period, and the server re-checks the same rule. Saving or changing a bill clears `publishedAt`, so it must be published again. If a new unassigned session later lands in a published period, family links hide that bill again until it is resolved and republished.
 - Offline-friendly family queue; pending starts retry automatically.
-- Private CCTV evidence: the Pi uploads only a cropped charging-slot JPEG, stored in a private Drive folder and linked from new unassigned sessions. The owner view shows the crop, engine (`車牌`/`視覺`), confidence, and adopt/manual/ignore/reassign controls; family links get a hint only.
-- Owner live snapshot: the owner view loads the newest `Snapshots` row and refreshes it every 60 seconds while the tab is visible. The Pi still captures every 5 minutes, and the thumbnail loads through the owner's Google Drive session. Family payloads remain image-free.
+- Private CCTV evidence: the Pi uploads only a cropped charging-slot JPEG, stored in a private Drive folder and attached to new unassigned sessions. The owner view shows the crop, engine (`車牌`/`視覺`), confidence, and adopt/manual/ignore/reassign controls. Family links see the same record photos but not the Drive link or engine internals, and can reassign a record from its photo.
+- Live snapshot: owner and family views load the newest `Snapshots` row and refresh it every 60 seconds while the tab is visible. The Pi still captures every 5 minutes, and the image loads as base64 through the Apps Script `?latestImage=1` proxy, so no Google Drive session is needed. Record thumbnails use the same no-login approach through `?recordImage=<recordId>`.
 - Plate OCR first (Cloud Vision), then an optional DeepSeek vision VLM. A unique plate match or a VLM match made against reference photos (`CarPhotos`) assigns the session automatically; a text-only VLM match stays a suggestion. An owner correction records Feedback and updates the plate map, and low-precision VLM combinations are suppressed.
 - Ignoring a non-household session asks for confirmation, records `guest` feedback, and persists its Tesla key in the `Ignored` tab, so a later sync does not re-import it.
 - Snapshot retention is 30 days by default. The Pi triggers a signed, hourly, batched cleanup; no ScriptApp trigger is installed.
@@ -53,7 +53,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 
 ## CCTV evidence and remote config
 
-The Pi relay opens a short RTSP connection each cycle and uploads one cropped JPEG. Apps Script verifies the HMAC, stores the file in a private Drive folder, appends a `Snapshots` row, and attaches the nearest snapshot to a new unassigned Tesla session. The owner view shows that crop and a suggestion; family payloads never include the evidence URL.
+The Pi relay opens a short RTSP connection each cycle and uploads one cropped JPEG. Apps Script verifies the HMAC, stores the file in a private Drive folder, appends a `Snapshots` row, and attaches the nearest snapshot to a new unassigned Tesla session. The owner view shows that crop and a suggestion. Family payloads never include the evidence URL; photos are served through the record-image proxy instead.
 
 ### Crop and fail-closed capture
 
@@ -125,7 +125,9 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 When a family page opens while the charger is charging, it calls `liveClaim` once per page load. The server returns an existing claim first, dedupes per snapshot, checks that the charger is charging, and only then runs plate OCR and the reference-photo VLM against the latest crop. A match for that car writes a `source=live` row (visible as a pending record); a match for another car, an unknown verdict, low confidence, or the policy gate leaves no row. When the Tesla session completes, sync matches a claim by time containment (claim time inside the session) and fills it (`source=tesla+live`), which is the same end state as a manual start plus merge without the late-start window problem. Claims expire with `manual.pendingMaxAgeHours`.
 
-Family links show the live crop through `?latestImage=1` (base64 JPEG served by Apps Script); the page fetches the bytes only when the snapshot id changes, so no Google Drive session is needed on family devices.
+Family links show the live crop through `?latestImage=1` (base64 JPEG served by Apps Script); the page fetches the bytes only when the snapshot id changes, so no Google Drive session is needed on family devices. Record thumbnails use `?recordImage=<recordId>`, which resolves the snapshot used for identification (or the nearest capture inside `snapshot.windowMinutes`) and returns a 480 px base64 JPEG through a server-side Drive thumbnail link, cached for six hours.
+
+Tapping a record photo opens a preview with the row's action: family members can claim an unassigned session, reassign their own record to another active car (feedback is recorded with `actor=family`, so the plate map is never tuned), or release it back to unassigned; the owner gets the same picker plus the existing assign/reassign controls.
 
 ### Retention and cleanup
 
@@ -327,7 +329,7 @@ Deploy the static files to GitHub Pages. The owner view gets its Sheet link from
 2. **Script Properties:** keep the existing values. Add `CLOUD_VISION_API_KEY` when ready; add `DEEPSEEK_API_KEY` only if the VLM is used. Enter them manually; never in chat, a report, the Sheet, or git.
 3. **Config seeding:** run `setup()` once from the Apps Script editor to seed the Config defaults. Set `relay.crop` to the ROI; use `full` only for the test camera. Leave `snapshot.retentionDays=30` unless a different retention is intended.
 4. **Pi:** run `sudo ev-relay-update` (or copy the new `tapo_relay.py` to `/opt/ev-relay/`), then confirm success with observable evidence rather than a log line (the relay logs config errors, capture/cleanup errors, a one-time `crop required` warning, and the cleanup `deleted`/`failed` counts; use these to diagnose, but verify the artifacts): `systemctl status ev-relay` shows the service running, `/var/lib/ev-relay/config.json` exists and its modification time advances after the first cycle (the Pi rewrites it only after a successful signed config response), and a cropped snapshot appears in the owner view (or the private Drive snapshot folder) at the next `relay.intervalSeconds`. After the first scheduled cleanup, the Pi log shows `cleanup deleted: <n> failed: <m>`; `failed` must stay 0, and a nonzero count or a `cleanup warning` line means Drive trash is failing and retention is stalling. Later tuning needs no SSH.
-5. **Verify:** after plates and the Vision key are set, run one owner `同步紀錄` and confirm plate OCR on one session. Enable the VLM only after the DeepSeek provider trial. Confirm the owner UI shows the crop/suggestion, the family view shows a hint but no image, and an owner correction appends Feedback and updates `Plates` (a family claim appends Feedback only).
+5. **Verify:** after plates and the Vision key are set, run one owner `同步紀錄` and confirm plate OCR on one session. Enable the VLM only after the DeepSeek provider trial. Confirm the owner UI shows the crop/suggestion, family record photos load without a Google login, and an owner correction appends Feedback and updates `Plates` (a family claim or reassignment appends Feedback only).
 6. **Physical and evaluation:** install/aim the camera, capture day and night frames, set the ROI, and confirm the guest car stays outside the crop. Run at least 20 real sessions covering day/night and a guest car, review precision and unknown rates, and keep human confirmation. A 95% precision threshold is a future auto-assign gate, not enabled now.
 
 ## Local development
@@ -378,7 +380,7 @@ The response envelope is `{ ok: true, ... }` or `{ ok: false, error }`. Apps Scr
 - A car QR encodes the same family URL plus `start=1`; anyone who scans it can start a charge for that car. Treat the QR like the family link.
 - The owner view is selected by `?owner` and has no key or login. Anyone who has the app URL and adds `?owner` can sync Tesla, refresh rates, assign sessions, and export. Keep the owner URL private; this is an accepted trade-off for a family-only app.
 - Tesla credentials live only in Script Properties.
-- Snapshot JPEGs are stored in a private Drive folder; nothing is published. Family payloads omit `evidenceUrl`, so a family link never receives the image or its Drive link.
+- Snapshot JPEGs are stored in a private Drive folder; nothing is published. Family payloads omit `evidenceUrl`, so a family link never receives the Drive link. Record images are served through `?recordImage=<recordId>` without authentication, the same capability model as the rest of the API.
 - Only the cropped charging-slot image is uploaded. The full CCTV frame stays on the camera's own recording; `relay.crop=full` is a controlled-test exception.
 - Cloud Vision and DeepSeek credentials live only in Script Properties. The `Config` tab holds non-secret tunables; plates and car descriptions stay in the Sheet. Never commit or paste any of them.
 - Snapshot, config, and cleanup requests use HMAC-SHA256 with a ±10-minute timestamp window; snapshot ingest also enforces body/image limits, JPEG magic, and idempotency.
