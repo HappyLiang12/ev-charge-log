@@ -113,24 +113,26 @@ function referenceFolder_() {
   return DriveApp.createFolder('EV Charge References');
 }
 
-function addCarPhotoFromFile_(carId, fileId, lighting) {
+function addCarPhotoFromFile_(carId, fileId, lighting, view) {
   var car = findCar_(carId);
   if (!car) throw new Error('Unknown car: ' + carId);
   var file = DriveApp.getFileById(String(fileId || ''));
   if (!file) throw new Error('Unknown file: ' + fileId);
   var level = normalizeCarPhotoLighting_(lighting);
-  var copy = file.makeCopy('ref-' + car.id + '-' + level + '-' + Date.now(), referenceFolder_());
+  var viewLevel = normalizeCarPhotoView_(view);
+  var copy = file.makeCopy('ref-' + car.id + '-' + level + '-' + viewLevel + '-' + Date.now(), referenceFolder_());
   appendCarPhoto_({
     carId: car.id,
     fileId: copy.getId(),
     lighting: level,
+    view: viewLevel,
     active: 'TRUE',
     createdAt: new Date().toISOString(),
   });
-  return { carId: car.id, fileId: copy.getId(), lighting: level };
+  return { carId: car.id, fileId: copy.getId(), lighting: level, view: viewLevel };
 }
 
-function addCarPhotoFromSnapshot_(carId, snapshotId, lighting) {
+function addCarPhotoFromSnapshot_(carId, snapshotId, lighting, view) {
   var snapshots = readSnapshots_();
   var snapshot = null;
   for (var i = 0; i < snapshots.length; i += 1) {
@@ -141,7 +143,7 @@ function addCarPhotoFromSnapshot_(carId, snapshotId, lighting) {
   }
   if (!snapshot) throw new Error('Unknown snapshot: ' + snapshotId);
   // The copy lives in the reference folder so snapshot retention cannot trash it.
-  return addCarPhotoFromFile_(carId, snapshot.driveFileId, lighting);
+  return addCarPhotoFromFile_(carId, snapshot.driveFileId, lighting, view);
 }
 
 function snapshotAction_(data) {

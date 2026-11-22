@@ -52,20 +52,25 @@ function plateIdentify_(imageBase64, plates) {
   }
 }
 
-function selectCarPhoto_(photos, carId, lighting) {
+function selectCarPhotos_(photos, carId, lighting) {
   var mine = (photos || []).filter(function (photo) {
     return photo.carId === carId && photo.active !== false;
   });
-  if (!mine.length) return null;
-  var newest = function (list) {
-    if (!list.length) return null;
-    return list.slice().sort(function (a, b) {
-      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-    })[0];
-  };
-  var exact = mine.filter(function (photo) { return photo.lighting === lighting; });
-  var any = mine.filter(function (photo) { return photo.lighting === 'any'; });
-  return newest(exact) || newest(any);
+  var byView = {};
+  for (var i = 0; i < mine.length; i += 1) {
+    var photo = mine[i];
+    if (photo.lighting !== lighting && photo.lighting !== 'any') continue;
+    var view = photo.view || 'any';
+    var score = photo.lighting === lighting ? 2 : 1;
+    var current = byView[view];
+    if (!current || score > current.score
+        || (score === current.score && String(photo.createdAt || '') > String(current.photo.createdAt || ''))) {
+      byView[view] = { photo: photo, score: score };
+    }
+  }
+  // One photo per view (front/rear/side), at most two per car, so either
+  // parking direction can match.
+  return Object.keys(byView).map(function (view) { return byView[view].photo; }).slice(0, 2);
 }
 
 // Reference photos are optional: when a car has no usable photo the caller
@@ -73,19 +78,22 @@ function selectCarPhoto_(photos, carId, lighting) {
 // matching the session lighting) keeps provider payloads and cost bounded.
 function buildVlmContent_(cars, photos, queryBase64, lighting, prompt, maxRefs, readImage) {
   var load = readImage || readDriveImageBase64_;
-  var cap = Math.max(0, maxRefs === undefined ? 3 : Number(maxRefs) || 0);
+  var cap = Math.max(0, maxRefs === undefined ? 6 : Number(maxRefs) || 0);
   var content = [];
   var used = 0;
   for (var i = 0; i < cars.length && used < cap; i += 1) {
     if (!cars[i] || !cars[i].active) continue;
-    var photo = selectCarPhoto_(photos, cars[i].id, String(lighting || ''));
-    if (!photo) continue;
-    content.push({ type: 'text', text: 'Reference photo of ' + cars[i].id + ':' });
-    content.push({
-      type: 'image_url',
-      image_url: { url: 'data:image/jpeg;base64,' + load(photo.fileId), detail: 'original' },
-    });
-    used += 1;
+    var picks = selectCarPhotos_(photos, cars[i].id, String(lighting || ''));
+    for (var j = 0; j < picks.length && used < cap; j += 1) {
+      var view = picks[j].view || 'any';
+      var label = 'Reference photo of ' + cars[i].id + (view === 'any' ? '' : ' (' + view + ')') + ':';
+      content.push({ type: 'text', text: label });
+      content.push({
+        type: 'image_url',
+        image_url: { url: 'data:image/jpeg;base64,' + load(picks[j].fileId), detail: 'original' },
+      });
+      used += 1;
+    }
   }
   if (!used) return null;
   content.push({ type: 'text', text: prompt });

@@ -17,7 +17,7 @@ var FEEDBACK_COLUMNS = [
 ];
 var IGNORED_COLUMNS = ['teslaKey', 'createdAt', 'actor', LOCAL_STAMP_COLUMN];
 var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description', LOCAL_STAMP_COLUMN];
-var CAR_PHOTOS_COLUMNS = ['carId', 'fileId', 'lighting', 'active', 'createdAt', LOCAL_STAMP_COLUMN];
+var CAR_PHOTOS_COLUMNS = ['carId', 'fileId', 'lighting', 'view', 'active', 'createdAt', LOCAL_STAMP_COLUMN];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
@@ -249,6 +249,11 @@ function normalizeCarPhotoLighting_(value) {
   return text === 'day' || text === 'night' ? text : 'any';
 }
 
+function normalizeCarPhotoView_(value) {
+  var text = String(value || '').trim().toLowerCase();
+  return text === 'front' || text === 'rear' || text === 'side' ? text : 'any';
+}
+
 function readCarPhotos_() {
   var sheet = sheetNamed_(openSpreadsheet_(), 'CarPhotos', CAR_PHOTOS_COLUMNS);
   return readObjects_(sheet, CAR_PHOTOS_COLUMNS).map(function (row) {
@@ -256,6 +261,7 @@ function readCarPhotos_() {
       carId: String(row.carId || '').trim(),
       fileId: String(row.fileId || '').trim(),
       lighting: normalizeCarPhotoLighting_(row.lighting),
+      view: normalizeCarPhotoView_(row.view),
       active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
       createdAt: String(row.createdAt || '').trim(),
     };
