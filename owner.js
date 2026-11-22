@@ -76,6 +76,7 @@ export function initOwner({ apiUrl }) {
     links: byId('ownerLinks'),
     toast: byId('ownerToast'),
     livePanel: byId('ownerLivePanel'),
+    liveHint: byId('ownerLiveHint'),
     liveState: byId('ownerLiveState'),
     livePower: byId('ownerLivePower'),
     liveKwh: byId('ownerLiveKwh'),
@@ -1092,8 +1093,11 @@ export function initOwner({ apiUrl }) {
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
     els.liveState.dataset.state = charging ? 'charging' : 'idle';
     els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.kWh.toFixed(3);
-    els.liveCost.textContent = live.cost === null ? '—' : `$${live.cost.toFixed(3)}`;
+    els.liveKwh.textContent = live.active ? live.kWh.toFixed(3) : '—';
+    els.liveCost.textContent = live.active && live.cost !== null ? `$${live.cost.toFixed(3)}` : '—';
+    els.liveHint.textContent = live.active
+      ? '每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。'
+      : '充電樁充電中；完成後會自動配對，唔需要按開始。';
   }
 
   function onExport() {

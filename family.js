@@ -12,6 +12,7 @@ import {
   mergeRecords,
   monthsWithRecords,
   defaultMonth,
+  recentRecords,
   billPeriodValue,
   filterByPeriod,
   selectRate,
@@ -71,6 +72,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     rates: normalizeRates(cachedRates.value),
     bills: [],
     unassigned: [],
+    live: null,
     syncedOnce: false,
     connecting: Boolean(apiUrl),
     syncing: false,
@@ -101,6 +103,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     liveCost: byId('familyLiveCost'),
     unassigned: byId('familyUnassigned'),
     unassignedEmpty: byId('familyUnassignedEmpty'),
+    liveHint: byId('familyLiveHint'),
     bills: byId('familyBills'),
     billsPanel: byId('familyBillsPanel'),
     recentList: byId('recentList'),
@@ -297,11 +300,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     setStatus(els.status, status);
     const records = mergeRecords(state.server, state.pending);
     const pendingStart = pendingStartRecord(records);
-    setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
-    if (pendingStart && !state.starting) {
-      els.startBtn.disabled = true;
-      els.startBtn.textContent = '已記錄開始時間';
-    }
+    updateStartButton(pendingStart);
     setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '更新充電樁');
 
     const bills = state.bills;
@@ -349,10 +348,15 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.empty.hidden = records.length > 0;
     els.empty.textContent = apiUrl ? '未有紀錄。' : '未設定 Google Sheet；紀錄只會存喺呢部機。';
 
+    const recentUnassigned = recentRecords(state.unassigned, 30);
     els.unassigned.replaceChildren();
-    appendPendingRows(els.unassigned, state.unassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
-    els.unassignedEmpty.hidden = state.unassigned.length > 0;
-    els.unassignedEmpty.textContent = apiUrl ? '冇未配對充電樁紀錄。' : '未設定 Google Sheet。';
+    appendPendingRows(els.unassigned, recentUnassigned, makeUnassignedRow, Date.now(), state.openUnassigned);
+    els.unassignedEmpty.hidden = recentUnassigned.length > 0;
+    els.unassignedEmpty.textContent = !apiUrl
+      ? '未設定 Google Sheet。'
+      : state.unassigned.length > recentUnassigned.length
+        ? '最近 30 日冇未配對紀錄；更早嘅由車主處理。'
+        : '冇未配對充電樁紀錄。';
   }
 
   async function retryPending() {
@@ -408,7 +412,30 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     }
   }
 
+  function updateStartButton(pendingStart) {
+    const pending = pendingStart !== undefined
+      ? pendingStart
+      : pendingStartRecord(mergeRecords(state.server, state.pending));
+    setBusy(els.startBtn, state.starting, '儲存中…', '⚡ 開始充電');
+    if (state.starting) return;
+    if (pending) {
+      els.startBtn.disabled = true;
+      els.startBtn.textContent = '已記錄開始時間';
+      els.startBtn.title = '';
+      return;
+    }
+    if (state.live && state.live.available && state.live.charging) {
+      els.startBtn.disabled = true;
+      els.startBtn.textContent = '充電樁充電中…';
+      els.startBtn.title = '充電樁而家充緊電；完成後會自動配對，唔需要按開始。';
+      return;
+    }
+    els.startBtn.title = '';
+  }
+
   function renderLive(live) {
+    state.live = live;
+    updateStartButton();
     if (!live) {
       els.livePanel.hidden = true;
       return;
@@ -418,8 +445,11 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     els.liveState.textContent = !live.available ? '狀態不可用' : charging ? '充電中' : '未充電';
     els.liveState.dataset.state = charging ? 'charging' : 'idle';
     els.livePower.textContent = live.powerW > 0 ? `${(live.powerW / 1000).toFixed(1)} kW` : '—';
-    els.liveKwh.textContent = live.kWh.toFixed(3);
-    els.liveCost.textContent = live.cost === null ? '—' : `$${live.cost.toFixed(3)}`;
+    els.liveKwh.textContent = live.active ? live.kWh.toFixed(3) : '—';
+    els.liveCost.textContent = live.active && live.cost !== null ? `$${live.cost.toFixed(3)}` : '—';
+    els.liveHint.textContent = live.active
+      ? '每 5 分鐘向充電樁更新；數字為功率估算，完成後以 Tesla session 為準。'
+      : '充電樁充電中；完成後會自動配對，唔需要按開始。';
   }
 
   async function load() {

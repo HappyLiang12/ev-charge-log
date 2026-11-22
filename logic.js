@@ -312,6 +312,14 @@ export function filterByMonth(records, month) {
   return normalized.filter((record) => monthKey(record.startAt) === month);
 }
 
+export function recentRecords(records, days, now = Date.now()) {
+  const cutoff = Number(now) - Number(days) * 86400000;
+  return (records || []).filter((record) => {
+    const at = Date.parse(record && record.startAt);
+    return !Number.isNaN(at) && at >= cutoff;
+  });
+}
+
 export function billPeriodValue(bill) {
   return `bill:${bill.periodStart}:${bill.periodEnd}`;
 }
