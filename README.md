@@ -27,7 +27,7 @@ Both screenshots are real WKWebView captures of the family and owner views at a 
 ## Features
 
 - One-tap start recording with a per-car URL; no login and no car picker. While a manual start is pending, the start button is disabled and a QR auto-start does not create a second record. It re-enables after the session is matched or the pending record is deleted.
-- On-demand Tesla sync; no scheduled background sync. The family page syncs once when it loads.
+- Owner on-demand Tesla sync plus a 30-minute scheduled background sync. The family page syncs once when it loads and has no sync button; reopening the page refreshes it.
 - Manual starts are matched to Tesla sessions within `MATCH_WINDOW_MINUTES` (default 30 minutes).
 - Unmatched Tesla sessions appear as `unassigned` for the family or owner to assign.
 - The family view shows unassigned Tesla sessions with a `認領` button, so a forgotten start can be recovered without entering a time. The latest 24 hours stay open; older sessions are grouped by month, then by day, and collapsed.

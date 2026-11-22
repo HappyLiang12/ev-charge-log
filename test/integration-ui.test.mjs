@@ -219,11 +219,11 @@ test('family UI: start=1 does not duplicate an existing pending start', { timeou
 test('family UI: start, sync Tesla, and delete through the live API contract', { timeout: 20000 }, async () => {
   const sessionStart = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const harness = await createHarness({ teslaSessions: [teslaSession(sessionStart)] });
-  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  let ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
   try {
     await waitFor(() => ui.document.getElementById('familyStatus').textContent === '已連接');
     await waitFor(() => !ui.document.getElementById('startBtn').disabled);
-    assert.equal(ui.document.getElementById('syncBtn').textContent, '同步紀錄');
+    assert.equal(ui.document.getElementById('syncBtn'), null);
     assert.ok(
       Array.from(ui.document.querySelectorAll('#familyView h2'))
         .some((heading) => /充電樁紀錄/.test(heading.textContent)),
@@ -243,7 +243,9 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(harness.env.call('readLog_').length, 1);
 
-    ui.document.getElementById('syncBtn').click();
+    // The family page syncs on load; reopening it picks up the completed session.
+    ui.close();
+    ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
     await waitFor(() => ui.document.getElementById('familyKwh').textContent === '12.0');
     assert.equal(ui.document.getElementById('familyCount').textContent, '1');
     assert.match(ui.document.getElementById('recentList').textContent, /12\.00 kWh/);
