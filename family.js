@@ -73,6 +73,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   const state = {
     car: { id: carId, name: carId, active: true },
     cars: [],
+    coverage: null,
     server: normalizeRecords(cached.value),
     pending: normalizeRecords(queued.value),
     rates: normalizeRates(cachedRates.value),
@@ -231,6 +232,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       record,
       when: `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`,
       buildActions: (close) => buildRecordActions(record, close),
+      coverage: state.coverage,
     });
     if (photo) li.append(photo);
     const content = document.createElement('div');
@@ -299,6 +301,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       record,
       when: `${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)}`,
       buildActions: (close) => buildRecordActions(record, close),
+      coverage: state.coverage,
     });
     if (photo) head.prepend(photo);
 
@@ -482,6 +485,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     state.server = data.records.filter((record) => !state.deleting.has(record.id));
     state.car = data.car;
     if (data.cars.length) state.cars = data.cars;
+    state.coverage = data.coverage;
     state.rates = data.rates;
     state.bills = normalizeBillShares(data.bills);
     state.unassigned = mergeRecords(data.unassigned, []);

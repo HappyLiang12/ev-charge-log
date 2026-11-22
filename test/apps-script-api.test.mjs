@@ -2894,3 +2894,86 @@ test('family reassign records family feedback and leaves the plate map alone', (
   assert.equal(feedback[0].chosenCar, 'ix3');
   assert.deepEqual(plain(env.call('readPlates_')), [{ plate: 'AB1234', car: 'model3', active: true }]);
 });
+
+test('payloads expose cached snapshot coverage', () => {
+  const env = setup({
+    sheets: {
+      Snapshots: [
+        SNAPSHOT_HEADER,
+        snapshotRow('s1', '2026-11-22T00:00:00.000Z', 'f1'),
+        snapshotRow('s2', '2026-11-22T02:00:00.000Z', 'f2'),
+      ],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const family = receive(env, { car: 'model3' });
+  assert.deepEqual(family.snapshotCoverage, {
+    from: '2026-11-22T00:00:00.000Z',
+    to: '2026-11-22T02:00:00.000Z',
+    windowMinutes: 10,
+  });
+  const owner = receive(env, { owner: '1' });
+  assert.deepEqual(owner.snapshotCoverage, family.snapshotCoverage);
+  env.spreadsheet.getSheetByName('Snapshots').appendRow(
+    snapshotRow('s3', '2026-11-22T03:00:00.000Z', 'f3'),
+  );
+  const again = receive(env, { owner: '1' });
+  assert.equal(again.snapshotCoverage.to, '2026-11-22T02:00:00.000Z');
+});
+
+test('record image resolution is cached per record', () => {
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-rc', 4: 'model3', 11: 'din:rc', 12: 'tesla' })],
+      Snapshots: [SNAPSHOT_HEADER, snapshotRow('snap-rc', '2026-11-14T05:03:00.000Z', 'file-rc')],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+    fetch: (url) => {
+      if (url.indexOf('/drive/v3/files/file-rc?') !== -1) {
+        return response(200, JSON.stringify({ thumbnailLink: 'https://lh3.googleusercontent.com/d/file-rc=s220' }));
+      }
+      if (url === 'https://lh3.googleusercontent.com/d/file-rc=s480') return imageResponse();
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push(snapshotDriveFile('file-rc'));
+  const first = receive(env, { recordImage: 'rec-rc' });
+  assert.equal(first.snapshot.id, 'snap-rc');
+  env.spreadsheet.getSheetByName('Snapshots').deleteRow(2);
+  const second = receive(env, { recordImage: 'rec-rc' });
+  assert.equal(second.snapshot.id, 'snap-rc');
+
+  const missEnv = setup({
+    sheets: {
+      Log: [LOG_HEADER, row({ 0: 'rec-none2', 4: 'model3', 11: 'din:none2', 12: 'tesla' })],
+      Snapshots: [SNAPSHOT_HEADER],
+      Cars: [CARS_HEADER, ['model3', 'Model 3', 'TRUE', 'x']],
+    },
+  });
+  const miss1 = receive(missEnv, { recordImage: 'rec-none2' });
+  assert.equal(miss1.snapshot, null);
+  missEnv.spreadsheet.getSheetByName('Snapshots').appendRow(
+    snapshotRow('snap-late', '2026-11-14T05:03:00.000Z', 'file-late'),
+  );
+  const miss2 = receive(missEnv, { recordImage: 'rec-none2' });
+  assert.equal(miss2.snapshot, null);
+});
+
+test('family sync skips within five minutes of a full sync', () => {
+  const env = setup();
+  env.props.LAST_SYNC_AT = new Date(Date.now() - 60 * 1000).toISOString();
+  let teslaCalls = 0;
+  env.context.syncTesla_ = () => {
+    teslaCalls += 1;
+    return { skipped: false };
+  };
+  const skipped = send(env, { action: 'sync', family: true });
+  assert.equal(skipped.ok, true);
+  assert.equal(skipped.skipped, true);
+  assert.equal(skipped.reason, 'recent');
+  assert.equal(teslaCalls, 0);
+  env.props.LAST_SYNC_AT = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+  const ran = send(env, { action: 'sync', family: true });
+  assert.equal(ran.ok, true);
+  assert.equal(teslaCalls, 1);
+});
