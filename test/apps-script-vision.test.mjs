@@ -121,6 +121,24 @@ test('buildVlmContent_ prefers the newest exact-lighting reference and caps tota
   ]);
 });
 
+test('buildVlmContent_ includes both parking directions per car', () => {
+  const env = setupVision();
+  const cars = [{ id: 'ix3', name: 'iX3', active: true }];
+  const photos = [
+    { carId: 'ix3', fileId: 'ref-front', lighting: 'night', view: 'front', active: true, createdAt: '2026-11-22T10:05:00Z' },
+    { carId: 'ix3', fileId: 'ref-rear', lighting: 'night', view: 'rear', active: true, createdAt: '2026-11-21T10:00:00Z' },
+  ];
+  const content = JSON.parse(JSON.stringify(env.call(
+    'buildVlmContent_', cars, photos, 'query', 'night', 'PROMPT', 6, (id) => `b64-${id}`,
+  )));
+  assert.deepEqual(content.slice(0, 4), [
+    { type: 'text', text: 'Reference photo of ix3 (front):' },
+    { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,b64-ref-front', detail: 'original' } },
+    { type: 'text', text: 'Reference photo of ix3 (rear):' },
+    { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,b64-ref-rear', detail: 'original' } },
+  ]);
+});
+
 test('buildVlmContent_ returns null without usable reference photos', () => {
   const env = setupVision();
   const cars = [{ id: 'ix3', name: 'iX3', active: true }];
@@ -275,9 +293,10 @@ test('identifySession_ auto-assigns a plate match', () => {
 
 test('addCarPhotoFromSnapshot_ copies the file outside the snapshots folder', () => {
   const env = setupIdentify();
-  const result = env.call('addCarPhotoFromSnapshot_', 'ix3', 'snap-1', 'day');
+  const result = env.call('addCarPhotoFromSnapshot_', 'ix3', 'snap-1', 'night', 'front');
   assert.equal(result.carId, 'ix3');
-  assert.equal(result.lighting, 'day');
+  assert.equal(result.lighting, 'night');
+  assert.equal(result.view, 'front');
   assert.notEqual(result.fileId, '');
   const folder = env.driveFolders.find((item) => item.name === 'EV Charge References');
   assert.ok(folder);
@@ -287,7 +306,8 @@ test('addCarPhotoFromSnapshot_ copies the file outside the snapshots folder', ()
   const last = rows[rows.length - 1];
   assert.equal(last[header.indexOf('carId')], 'ix3');
   assert.equal(last[header.indexOf('fileId')], result.fileId);
-  assert.equal(last[header.indexOf('lighting')], 'day');
+  assert.equal(last[header.indexOf('lighting')], 'night');
+  assert.equal(last[header.indexOf('view')], 'front');
 });
 
 test('addCarPhotoFromSnapshot_ rejects unknown cars', () => {
