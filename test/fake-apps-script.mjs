@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 
-const sources = ['Logic.gs', 'SheetRepo.gs', 'Tesla.gs', 'Rates.gs', 'Vision.gs'].map((name) => (
+const sources = ['Logic.gs', 'SheetRepo.gs', 'Tesla.gs', 'Rates.gs', 'Vision.gs', 'Code.gs'].map((name) => (
   readFileSync(new URL(`../apps-script/${name}`, import.meta.url), 'utf8')
 ));
 
@@ -78,6 +78,10 @@ export function createAppsScriptEnv({ sheets = {}, props = {}, fetch: fetchHandl
         getBlob: () => ({ getBytes: () => [...file.bytes] }),
         setTrashed(value) { file.trashed = Boolean(value); },
         isTrashed: () => file.trashed,
+        makeCopy: (name, folder) => folder.createFile({
+          getName: () => name,
+          getBytes: () => [...file.bytes],
+        }),
       };
       driveFiles.push(file);
       this.files.push(file);

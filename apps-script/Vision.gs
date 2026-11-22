@@ -52,9 +52,53 @@ function plateIdentify_(imageBase64, plates) {
   }
 }
 
+function selectCarPhoto_(photos, carId, lighting) {
+  var mine = (photos || []).filter(function (photo) {
+    return photo.carId === carId && photo.active !== false;
+  });
+  if (!mine.length) return null;
+  var newest = function (list) {
+    if (!list.length) return null;
+    return list.slice().sort(function (a, b) {
+      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+    })[0];
+  };
+  var exact = mine.filter(function (photo) { return photo.lighting === lighting; });
+  var any = mine.filter(function (photo) { return photo.lighting === 'any'; });
+  return newest(exact) || newest(any);
+}
+
+// Reference photos are optional: when a car has no usable photo the caller
+// falls back to the text-only prompt. At most one photo per car (newest photo
+// matching the session lighting) keeps provider payloads and cost bounded.
+function buildVlmContent_(cars, photos, queryBase64, lighting, prompt, maxRefs, readImage) {
+  var load = readImage || readDriveImageBase64_;
+  var cap = Math.max(0, maxRefs === undefined ? 3 : Number(maxRefs) || 0);
+  var content = [];
+  var used = 0;
+  for (var i = 0; i < cars.length && used < cap; i += 1) {
+    if (!cars[i] || !cars[i].active) continue;
+    var photo = selectCarPhoto_(photos, cars[i].id, String(lighting || ''));
+    if (!photo) continue;
+    content.push({ type: 'text', text: 'Reference photo of ' + cars[i].id + ':' });
+    content.push({
+      type: 'image_url',
+      image_url: { url: 'data:image/jpeg;base64,' + load(photo.fileId), detail: 'original' },
+    });
+    used += 1;
+  }
+  if (!used) return null;
+  content.push({ type: 'text', text: prompt });
+  content.push({
+    type: 'image_url',
+    image_url: { url: 'data:image/jpeg;base64,' + queryBase64, detail: 'original' },
+  });
+  return content;
+}
+
 // The VLM model id is read under the script lock in prepareIdentify_ and passed
 // in; this stage performs only provider calls and must not touch the Sheet.
-function vlmIdentify_(imageBase64, cars, minConfidence, model) {
+function vlmIdentify_(imageBase64, cars, minConfidence, model, photos, lighting) {
   try {
     var key = scriptProperty_('DEEPSEEK_API_KEY');
     var modelId = String(model || '');
@@ -65,19 +109,23 @@ function vlmIdentify_(imageBase64, cars, minConfidence, model) {
     var prompt = 'Identify the car parked in the charging slot. Choose exactly one: '
       + choices + '; guest = any other car; unknown = unclear. Only the car in the charging slot counts; ignore other parked cars. '
       + 'Return JSON only: {"carId":"<id>","confidence":0..1,"reason":"<short>"}';
+    var refPrompt = 'The images before the final one are reference photos of household cars; the final image is the charging slot. '
+      + 'Compare the final image with the reference photos. ' + prompt;
+    var content = buildVlmContent_(cars, photos || [], imageBase64, lighting || '', refPrompt);
+    var usedReferences = Boolean(content);
+    if (!content) {
+      content = [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + imageBase64, detail: 'original' } },
+      ];
+    }
     var response = UrlFetchApp.fetch('https://api.deepseek.com/chat/completions', {
       method: 'post',
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + key },
       payload: JSON.stringify({
         model: modelId,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + imageBase64, detail: 'original' } },
-          ],
-        }],
+        messages: [{ role: 'user', content: content }],
         temperature: 0,
       }),
       muteHttpExceptions: true,
@@ -100,9 +148,9 @@ function vlmIdentify_(imageBase64, cars, minConfidence, model) {
     if (isFinite(confidence)) confidence = Math.min(1, Math.max(0, confidence));
     var valid = cars.some(function (car) { return car.active && car.id === carId; });
     if (!valid || carId === 'guest' || carId === 'unknown' || !isFinite(confidence) || confidence < minConfidence) {
-      return { engine: 'vlm', car: '', confidence: isFinite(confidence) ? confidence : 0, plate: '', status: 'unknown', reason: String(data.reason || 'not confident') };
+      return { engine: 'vlm', car: '', confidence: isFinite(confidence) ? confidence : 0, plate: '', status: 'unknown', reason: String(data.reason || 'not confident'), usedReferences: usedReferences };
     }
-    return { engine: 'vlm', car: carId, confidence: confidence, plate: '', status: 'matched', reason: String(data.reason || '') };
+    return { engine: 'vlm', car: carId, confidence: confidence, plate: '', status: 'matched', reason: String(data.reason || ''), usedReferences: usedReferences };
   } catch (error) {
     return { engine: 'vlm', car: '', confidence: 0, plate: '', status: 'error', reason: String(error.message || error) };
   }
@@ -184,6 +232,7 @@ function prepareIdentify_(recordId, force) {
     lighting: lightingFor_(record.teslaStartAt || record.startAt),
     vlm: vlmEnabled ? {
       cars: readCars_(),
+      photos: readCarPhotos_(),
       minConfidence: configNumber_(config, 'vision.minConfidence', 0.8, 0.5, 0.99),
       model: String(configRaw_(config, 'vision.vlmModel', '') || ''),
     } : null,
@@ -231,7 +280,7 @@ function identifySession_(record, force) {
     // The VLM inspects the closest candidate and, only when nothing has
     // matched yet, the second one. At most two visual calls per session.
     if (!plan.vlm || i > 1) continue;
-    var vlm = vlmIdentify_(image, plan.vlm.cars, plan.vlm.minConfidence, plan.vlm.model);
+    var vlm = vlmIdentify_(image, plan.vlm.cars, plan.vlm.minConfidence, plan.vlm.model, plan.vlm.photos, plan.lighting);
     if (vlm.status === 'matched') {
       if (policyAllowsRows_(plan.feedback, plan.policy.minSamples, plan.policy.minPrecision, 'vlm', vlm.car, plan.lighting)) {
         result = vlm;
@@ -272,14 +321,36 @@ function identifySession_(record, force) {
     suggestionSnapshotId: snapshotId,
     identifiedAt: new Date().toISOString(),
   };
+  // Only evidence-backed matches assign themselves: a unique plate or a VLM
+  // match made against reference photos. Text-only VLM matches stay suggestions
+  // so the owner can confirm them.
+  var autoAssign = result.status === 'matched' && (result.engine === 'plate' || result.usedReferences);
+  var assigned = false;
+  var assignError = '';
   var written = withScriptLock_(function () {
     var fresh = findRecord_(readLog_(), recordId);
     if (!fresh || fresh.car !== 'unassigned') return false;
     if (!force && (fresh.suggestionStatus === 'matched' || fresh.suggestionStatus === 'unknown')) return false;
-    return Boolean(updateLog_(recordId, patch));
+    if (!updateLog_(recordId, patch)) return false;
+    if (autoAssign) {
+      try {
+        var car = findCar_(result.car);
+        if (car && car.active) {
+          assignUnassigned_(fresh, car, readLog_(), 'auto');
+          assigned = true;
+        }
+      } catch (error) {
+        assignError = String(error.message || error);
+      }
+    }
+    return true;
   });
   if (!written) {
     return { engine: '', car: '', confidence: 0, plate: '', status: 'unknown', snapshotId: '', reason: 'superseded' };
+  }
+  if (autoAssign) {
+    result.assigned = assigned;
+    if (assignError) result.assignError = assignError;
   }
   return result;
 }

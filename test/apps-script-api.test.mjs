@@ -1575,7 +1575,7 @@ test('setup seeds the Config tab with defaults', () => {
   assert.ok(rows.some((row) => row[0] === 'snapshot.retentionDays' && row[1] === '30'));
 });
 
-test('identify stores a plate suggestion without assigning the car', () => {
+test('identify auto-assigns a plate match and stores the suggestion', () => {
   const at = SESSION_START;
   const env = setup({
     props: { RELAY_HMAC_SECRET: SNAPSHOT_SECRET, CLOUD_VISION_API_KEY: 'key-1' },
@@ -1602,8 +1602,9 @@ test('identify stores a plate suggestion without assigning the car', () => {
   const result = send(env, { action: 'identify', id: 'u-1' });
   assert.equal(result.ok, true);
   assert.equal(result.status, 'matched');
+  assert.equal(result.assigned, true);
   const record = plain(env.call('readLog_'))[0];
-  assert.equal(record.car, 'unassigned');
+  assert.equal(record.car, 'model3');
   assert.equal(record.suggestedCar, 'model3');
   assert.equal(record.suggestionEngine, 'plate');
 });
@@ -1677,7 +1678,7 @@ test('identify skips a stored result unless force is set', () => {
   assert.equal(forced.car, 'model3');
   assert.equal(visionCalls, 1);
   const record = plain(env.call('readLog_'))[0];
-  assert.equal(record.car, 'unassigned');
+  assert.equal(record.car, 'model3');
   assert.equal(record.suggestionStatus, 'matched');
   assert.equal(record.suggestionEngine, 'plate');
   assert.equal(record.suggestedCar, 'model3');
@@ -1787,6 +1788,8 @@ test('identify keeps a VLM match when a later candidate plate is unknown', () =>
   assert.equal(result.engine, 'vlm');
   assert.equal(result.car, 'model3');
   assert.equal(result.snapshotId, 'snap-1');
+  assert.equal(result.usedReferences, false);
+  assert.ok(!result.assigned);
   assert.equal(visionCalls, 1);
   assert.equal(vlmCalls, 1);
   const record = plain(env.call('readLog_'))[0];
@@ -1833,7 +1836,7 @@ test('identify stores the snapshot that produced a later plate match', () => {
   assert.equal(result.snapshotId, 'snap-3');
   assert.equal(visionCalls, 3);
   const record = plain(env.call('readLog_'))[0];
-  assert.equal(record.car, 'unassigned');
+  assert.equal(record.car, 'model3');
   assert.equal(record.suggestionSnapshotId, 'snap-3');
   assert.equal(record.evidenceUrl, 'https://drive.google.com/file/d/file-3/view');
 });
