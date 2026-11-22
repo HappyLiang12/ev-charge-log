@@ -249,6 +249,164 @@ test('charger status returns live power and charging state', () => {
   assert.equal(waits, 0);
 });
 
+test('liveClaim creates one evidence-backed claim without repeated provider calls', () => {
+  let visionCalls = 0;
+  let vlmCalls = 0;
+  const env = setup({
+    props: { DEEPSEEK_API_KEY: 'key-1', CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
+      ],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x']],
+      CarPhotos: [['carId', 'fileId', 'lighting', 'active', 'createdAt'], ['ix3', 'ref-1', 'any', 'TRUE', '']],
+      Snapshots: [['id', 'capturedAt', 'driveFileId'], ['snap-1', new Date().toISOString(), 'file-1']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) return response(200, JSON.stringify({ access_token: 'a', expires_in: 3600 }));
+      if (url.includes('/charger_live_status')) {
+        return response(200, JSON.stringify({
+          response: { wall_connectors: [{ wall_connector_state: 1, wall_connector_power: 7000 }] },
+        }));
+      }
+      if (url.includes('vision.googleapis.com')) {
+        visionCalls += 1;
+        return response(200, JSON.stringify({ responses: [{}] }));
+      }
+      if (url.includes('api.deepseek.com')) {
+        vlmCalls += 1;
+        return response(200, JSON.stringify({
+          choices: [{ message: { content: '{"carId":"ix3","confidence":0.99,"reason":"reference match"}' } }],
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [255, 216, 1] }) });
+  env.driveFiles.push({ id: 'ref-1', getBlob: () => ({ getBytes: () => [255, 216, 2] }) });
+  const first = plain(env.call('liveClaimAction_', { car: 'ix3' }));
+  assert.equal(first.status, 'claimed');
+  assert.equal(first.existing, false);
+  assert.equal(vlmCalls, 1);
+  const log = plain(env.call('readLog_'));
+  assert.equal(log.length, 1);
+  assert.equal(log[0].source, 'live');
+  assert.equal(log[0].car, 'ix3');
+  assert.equal(log[0].kWh, null);
+  const second = plain(env.call('liveClaimAction_', { car: 'ix3' }));
+  assert.equal(second.existing, true);
+  assert.equal(vlmCalls, 1);
+  assert.equal(visionCalls, 1);
+});
+
+test('liveClaim refuses when the charger is not charging', () => {
+  let vlmCalls = 0;
+  const env = setup({
+    props: { DEEPSEEK_API_KEY: 'key-1', CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
+      ],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x']],
+      Snapshots: [['id', 'capturedAt', 'driveFileId'], ['snap-1', new Date().toISOString(), 'file-1']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) return response(200, JSON.stringify({ access_token: 'a', expires_in: 3600 }));
+      if (url.includes('/charger_live_status')) {
+        return response(200, JSON.stringify({ response: { wall_connectors: [{ wall_connector_state: 0, wall_connector_power: 0 }] } }));
+      }
+      if (url.includes('vision.googleapis.com') || url.includes('api.deepseek.com')) {
+        vlmCalls += 1;
+        throw new Error('provider must not be called when idle');
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [255, 216, 1] }) });
+  const result = plain(env.call('liveClaimAction_', { car: 'ix3' }));
+  assert.equal(result.status, 'not_charging');
+  assert.equal(vlmCalls, 0);
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('liveClaim refuses a match for another car', () => {
+  const env = setup({
+    props: { DEEPSEEK_API_KEY: 'key-1', CLOUD_VISION_API_KEY: 'key-1' },
+    sheets: {
+      Config: [
+        ['key', 'value', 'updatedAt', 'notes'],
+        ['vision.engine', 'plate+vlm', '', ''],
+        ['vision.vlmModel', 'deepseek-flash', '', ''],
+      ],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x'], ['vigo', 'Vigo', 'TRUE', 'x']],
+      Snapshots: [['id', 'capturedAt', 'driveFileId'], ['snap-1', new Date().toISOString(), 'file-1']],
+    },
+    fetch: (url) => {
+      if (url === TOKEN_URL) return response(200, JSON.stringify({ access_token: 'a', expires_in: 3600 }));
+      if (url.includes('/charger_live_status')) {
+        return response(200, JSON.stringify({ response: { wall_connectors: [{ wall_connector_state: 1, wall_connector_power: 7000 }] } }));
+      }
+      if (url.includes('vision.googleapis.com')) return response(200, JSON.stringify({ responses: [{}] }));
+      if (url.includes('api.deepseek.com')) {
+        return response(200, JSON.stringify({
+          choices: [{ message: { content: '{"carId":"vigo","confidence":0.97,"reason":"silver suv"}' } }],
+        }));
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [255, 216, 1] }) });
+  const result = plain(env.call('liveClaimAction_', { car: 'ix3' }));
+  assert.equal(result.status, 'other_car');
+  assert.equal(result.car, 'vigo');
+  assert.equal(plain(env.call('readLog_')).length, 0);
+});
+
+test('sync fills a live claim whose time falls inside the session', () => {
+  const now = Date.now();
+  const sessionStart = new Date(now - 3 * 3600 * 1000).toISOString();
+  const sessionEnd = new Date(now - 2 * 3600 * 1000).toISOString();
+  const claimAt = new Date(now - 2.5 * 3600 * 1000).toISOString();
+  const claimParts = hkParts(claimAt);
+  const env = setup({
+    sheets: {
+      Log: [LOG_HEADER, ['live-1', claimAt, claimParts.date, claimParts.time, 'ix3', '', '', '', '', '', '', '', 'live']],
+      Cars: [CARS_HEADER, ['ix3', 'iX3', 'TRUE', 'x', 1, '']],
+      Rates: [RATES_HEADER, rateRowFor(claimAt)],
+      Snapshots: [SNAPSHOTS_HEADER],
+    },
+  });
+  const result = plain(env.call('syncApply_', [{
+    startAt: sessionStart,
+    endAt: sessionEnd,
+    kWh: 10,
+    durationSec: 3600,
+    teslaKey: 'k-live',
+  }], new Date(now).toISOString()));
+  assert.equal(result.matched, 1);
+  const records = plain(env.call('readLog_'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'live-1');
+  assert.equal(records[0].car, 'ix3');
+  assert.equal(records[0].source, 'tesla+live');
+  assert.equal(records[0].startAt, sessionStart);
+  assert.equal(records[0].kWh, 10);
+});
+
+test('latestImage returns the latest snapshot bytes', () => {
+  const env = setup({ sheets: {
+    Snapshots: [['id', 'capturedAt', 'driveFileId'], ['snap-1', new Date().toISOString(), 'file-1']],
+  } });
+  env.driveFiles.push({ id: 'file-1', getBlob: () => ({ getBytes: () => [255, 216, 9] }) });
+  const result = plain(receive(env, { latestImage: '1' }));
+  assert.equal(result.snapshot.id, 'snap-1');
+  assert.equal(Buffer.from(result.image, 'base64')[0], 255);
+});
+
 test('hkStamp_ converts UTC into Hong Kong local time', () => {
   const env = setup();
   assert.equal(env.call('hkStamp_', '2026-11-22T09:33:20.000Z'), '2026-11-22 17:33:20');

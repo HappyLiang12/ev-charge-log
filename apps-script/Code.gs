@@ -15,6 +15,7 @@ function doGet(e) {
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
+      if (params.latestImage !== undefined) return json_(latestImagePayload_());
       if (params.latest !== undefined) return json_(latestSnapshotPayload_());
       if (params.owner !== undefined) return json_(ownerPayload_());
       if (params.car) return json_(familyPayload_(params.car));
@@ -39,6 +40,9 @@ function doPost(e) {
     // Identify reads Drive and calls Vision/VLM outside the lock; identifySession_
     // takes short locks for its own Sheet reads and the final suggestion write.
     if (action === 'identify') return json_(merge_({ ok: true }, identifyAction_(data)));
+    // The live claim runs Vision/VLM outside the sheet lock and takes short
+    // locks for its own reads and the claim write.
+    if (action === 'liveClaim') return json_(merge_({ ok: true }, liveClaimAction_(data)));
     if (action === 'snapshot') {
       var snapshotLock = LockService.getScriptLock();
       snapshotLock.waitLock(30000);
@@ -369,6 +373,23 @@ function latestSnapshotPayload_() {
   };
 }
 
+function latestImagePayload_() {
+  var snapshot = readLatestSnapshot_();
+  if (!snapshot) return { ok: true, snapshot: null };
+  var bytes = DriveApp.getFileById(snapshot.driveFileId).getBlob().getBytes();
+  return {
+    ok: true,
+    snapshot: {
+      id: snapshot.id,
+      capturedAt: snapshot.capturedAt,
+      width: snapshot.width,
+      height: snapshot.height,
+      crop: snapshot.crop,
+    },
+    image: Utilities.base64Encode(bytes),
+  };
+}
+
 function ownerPayload_() {
   return {
     ok: true,
@@ -386,7 +407,9 @@ function chargerStatusPayload_() {
 }
 
 function isPendingManual_(record) {
-  return Boolean(record) && record.source === 'manual' && record.kWh === null && !record.teslaKey;
+  return Boolean(record)
+    && (record.source === 'manual' || record.source === 'live')
+    && record.kWh === null && !record.teslaKey;
 }
 
 function pendingMaxAgeMs_() {
@@ -468,7 +491,7 @@ function deleteAction_(data) {
   if (!target) return { deleted: false, released: false };
   // Manual starts have no Tesla key, and an unassigned leftover has no car
   // page to delete it from, so any car context may clear it.
-  if (target.source === 'manual' && !target.teslaKey) {
+  if ((target.source === 'manual' || target.source === 'live') && !target.teslaKey) {
     if (target.car !== 'unassigned' && target.car !== String(data.car || '')) {
       throw new Error('Record does not belong to this car');
     }
@@ -540,6 +563,132 @@ function removeScheduledSync() {
 
 function readDriveImageBase64_(fileId) {
   return Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes());
+}
+
+var LIVE_CLAIM_CACHE_SECONDS_ = 1800;
+
+function cacheLiveClaim_(cache, key, payload) {
+  if (cache) cache.put(key, JSON.stringify(payload), LIVE_CLAIM_CACHE_SECONDS_);
+  return payload;
+}
+
+// The family page runs this once when it opens while the charger is charging.
+// It returns an existing claim or a cached verdict without provider calls, and
+// matches the latest crop against the requested car only.
+function liveClaimAction_(data) {
+  var car = findCar_(String(data.car || ''));
+  if (!car || !car.active) throw new Error('Unknown or inactive car: ' + data.car);
+  var cache = typeof CacheService !== 'undefined' ? CacheService.getScriptCache() : null;
+  var nowMs = Date.now();
+  var plan = withScriptLock_(function () {
+    prunePendingStarts_(nowMs, car.id);
+    var records = readLog_();
+    for (var i = 0; i < records.length; i += 1) {
+      var record = records[i];
+      if (record.source === 'live' && record.car === car.id && record.kWh === null && !record.teslaKey) {
+        return { existing: record };
+      }
+    }
+    var snapshot = readLatestSnapshot_();
+    if (!snapshot) return { result: { status: 'no_snapshot', reason: 'no snapshot' } };
+    var cacheKey = 'liveClaim:' + car.id + ':' + snapshot.id;
+    if (cache) {
+      var cached = cache.get(cacheKey);
+      if (cached) {
+        try {
+          return { result: JSON.parse(cached) };
+        } catch (error) {
+          // fall through to a fresh check
+        }
+      }
+    }
+    return {
+      snapshot: snapshot,
+      cacheKey: cacheKey,
+      config: readConfigMap_().values,
+      cars: readCars_(),
+      photos: readCarPhotos_(),
+      plates: readPlates_(),
+      feedback: readFeedback_(),
+    };
+  });
+  if (plan.existing) {
+    return { status: 'claimed', existing: true, claimId: plan.existing.id, snapshotId: '', confidence: null, reason: 'already claimed' };
+  }
+  if (plan.result) return plan.result;
+  var snapshot = plan.snapshot;
+  var charger = chargerLiveStatus_();
+  if (!charger.available) return { status: 'unavailable', reason: 'charger status unavailable', snapshotId: snapshot.id };
+  if (!charger.charging) return { status: 'not_charging', reason: 'charger is not charging', snapshotId: snapshot.id };
+  var image = readDriveImageBase64_(snapshot.driveFileId);
+  var plate = plateIdentify_(image, plan.plates);
+  var lighting = lightingFor_(snapshot.capturedAt);
+  var result = null;
+  if (plate.status === 'matched') {
+    if (plate.car !== car.id) {
+      return cacheLiveClaim_(cache, plan.cacheKey, {
+        status: 'other_car', car: plate.car, engine: 'plate', confidence: plate.confidence,
+        plate: plate.plate, reason: 'plate matched another car', snapshotId: snapshot.id,
+      });
+    }
+    result = { engine: 'plate', confidence: plate.confidence, plate: plate.plate, reason: plate.reason };
+  } else {
+    var minConfidence = configNumber_(plan.config, 'vision.minConfidence', 0.8, 0.5, 0.99);
+    var model = String(configRaw_(plan.config, 'vision.vlmModel', '') || '');
+    var vlm = vlmIdentify_(image, plan.cars, minConfidence, model, plan.photos, lighting);
+    if (vlm.status !== 'matched' || vlm.car !== car.id) {
+      return cacheLiveClaim_(cache, plan.cacheKey, {
+        status: vlm.status === 'matched' ? 'other_car' : vlm.status,
+        car: vlm.car, engine: vlm.engine || 'vlm', confidence: vlm.confidence,
+        plate: vlm.plate, reason: vlm.reason, snapshotId: snapshot.id,
+      });
+    }
+    var minSamples = configInt_(plan.config, 'policy.minSamples', 5);
+    var minPrecision = configNumber_(plan.config, 'policy.minPrecision', 0.9, 0.5, 0.99);
+    if (!policyAllowsRows_(plan.feedback, minSamples, minPrecision, 'vlm', vlm.car, lighting)) {
+      return cacheLiveClaim_(cache, plan.cacheKey, {
+        status: 'policy_blocked', car: vlm.car, engine: 'vlm', confidence: vlm.confidence,
+        plate: '', reason: 'policy gate', snapshotId: snapshot.id,
+      });
+    }
+    result = { engine: 'vlm', confidence: vlm.confidence, plate: '', reason: vlm.reason };
+  }
+  var created = withScriptLock_(function () {
+    var records = readLog_();
+    for (var j = 0; j < records.length; j += 1) {
+      var record = records[j];
+      if (record.source === 'live' && record.car === car.id && record.kWh === null && !record.teslaKey) {
+        return { existing: record };
+      }
+    }
+    var nowIso = new Date().toISOString();
+    var claim = {
+      id: 'live-' + nowMs + '-' + Math.floor(Math.random() * 100000),
+      car: car.id,
+      startAt: nowIso,
+      date: hkDateString_(nowIso),
+      time: hkTimeString_(nowIso),
+      kWh: null,
+      durationSec: null,
+      teslaStartAt: null,
+      teslaEndAt: null,
+      peakKWh: null,
+      offPeakKWh: null,
+      teslaKey: null,
+      source: 'live',
+      evidenceUrl: snapshot.driveUrl,
+    };
+    appendLog_(claim);
+    return { claim: claim };
+  });
+  if (created.existing) {
+    return { status: 'claimed', existing: true, claimId: created.existing.id, snapshotId: snapshot.id, confidence: null, reason: 'already claimed' };
+  }
+  return cacheLiveClaim_(cache, plan.cacheKey, {
+    status: 'claimed', existing: false, claimId: created.claim.id, car: car.id,
+    engine: result.engine, confidence: result.confidence, plate: result.plate,
+    reason: result.reason, snapshotId: snapshot.id,
+  });
 }
 
 function identifyAction_(data) {

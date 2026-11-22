@@ -121,6 +121,12 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 
 `installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `同步紀錄` button, so a completed session imports and auto-assigns without a manual press. Each run costs one Tesla charging-history request (about 1,440/month, inside the $10 monthly discount for normal use); plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
 
+### Live claim and family snapshot
+
+When a family page opens while the charger is charging, it calls `liveClaim` once per page load. The server returns an existing claim first, dedupes per snapshot, checks that the charger is charging, and only then runs plate OCR and the reference-photo VLM against the latest crop. A match for that car writes a `source=live` row (visible as a pending record); a match for another car, an unknown verdict, low confidence, or the policy gate leaves no row. When the Tesla session completes, sync matches a claim by time containment (claim time inside the session) and fills it (`source=tesla+live`), which is the same end state as a manual start plus merge without the late-start window problem. Claims expire with `manual.pendingMaxAgeHours`.
+
+Family links show the live crop through `?latestImage=1` (base64 JPEG served by Apps Script); the page fetches the bytes only when the snapshot id changes, so no Google Drive session is needed on family devices.
+
 ### Retention and cleanup
 
 - `snapshot.retentionDays` defaults to 30 (range 1–365) and controls both the Drive file and its `Snapshots` row.

@@ -100,6 +100,23 @@ test('family UI: start=1 records a start and clears the query parameter', { time
   }
 });
 
+test('family UI: a live claim shows the auto-claim state', { timeout: 20000 }, async () => {
+  const startAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const sheets = defaultSheets({
+    records: [{ id: 'live-claim', car: 'model3', startAt, kWh: null, source: 'live' }],
+  });
+  const harness = await createHarness({ sheets, livePowerW: 7200 });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.getElementById('startBtn').textContent === '已自動認領', 12000);
+    assert.equal(ui.document.getElementById('startBtn').disabled, true);
+    assert.match(ui.document.getElementById('familyStartHintText').textContent, /自動認領 · 完成後自動入帳 · 24 小時後失效/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('family UI: QR start is refused while the charger is charging', { timeout: 20000 }, async () => {
   const harness = await createHarness({ livePowerW: 7200 });
   const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3&start=1' });
@@ -214,7 +231,7 @@ test('family UI: start, sync Tesla, and delete through the live API contract', {
     await waitFor(() => ui.document.querySelectorAll('#familyRates .owner-card').length === 1);
     assert.deepEqual(
       Array.from(ui.document.querySelectorAll('#familyView main > section h2')).map((h) => h.textContent),
-      ['充電狀態', '帳單', '未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
+      ['充電狀態', '即時快照', '帳單', '未配對充電樁紀錄', '最近紀錄', '費率與拆分', '匯出'],
     );
     assert.equal(ui.document.querySelectorAll('#familyRates .owner-card a').length, 2);
 

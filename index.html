@@ -83,6 +83,18 @@
         <p id="familyLiveHint" class="hint">每 5 分鐘讀取充電樁狀態；估算按現時電價計算，完成後以 Tesla 紀錄為準。</p>
       </section>
 
+      <section id="familySnapshotPanel" class="panel snapshot-panel" hidden>
+        <div class="owner-toolbar">
+          <h2>即時快照</h2>
+          <span id="familySnapshotTime" class="hint"></span>
+        </div>
+        <div class="snapshot-link">
+          <img id="familySnapshotImg" class="snapshot-image" alt="充電位最新快照" hidden />
+        </div>
+        <p id="familySnapshotWarning" class="hint snapshot-warning" hidden></p>
+        <p id="familySnapshotHint" class="hint">每 60 秒更新；相機每 5 分鐘拍攝一次。</p>
+      </section>
+
       <section id="familyBillsPanel" class="panel" hidden>
         <h2>帳單</h2>
         <div id="familyBills" class="bill-list"></div>
