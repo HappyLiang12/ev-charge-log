@@ -5,22 +5,29 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from tapo_relay import (
     CROP_REQUIRED_MESSAGE,
     CropRequired,
+    PENDING_MAX_AGE_SECONDS,
+    SNAPSHOT_TIMEOUT_SECONDS,
     build_capture_command,
     build_cleanup_payload,
     build_relay_config_payload,
     canonical,
     cleanup_due,
+    drain_pending,
     load_cached_config,
     log_once,
     parse_cleanup_result,
     parse_crop,
+    pending_epoch,
     prune_queue,
     save_cached_config,
     sign,
+    upload_pending,
+    upload_with_retry,
     validate_relay_config,
 )
 
@@ -188,6 +195,136 @@ class RelayCleanupLogTest(unittest.TestCase):
             # A later recurrence (after a valid crop reset) logs again.
             last = log_once(None, CROP_REQUIRED_MESSAGE)
         self.assertEqual(buffer.getvalue().count(CROP_REQUIRED_MESSAGE), 2)
+
+
+class RelayPendingRetryTest(unittest.TestCase):
+    def test_pending_upload_uses_file_epoch_and_deletes_after_success(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pending-1795284558.jpg"
+            path.write_bytes(b"jpeg")
+            captured = {}
+
+            def fake_post(url, payload, timeout=30):
+                captured["url"] = url
+                captured["payload"] = payload
+                captured["timeout"] = timeout
+                return {"ok": True, "stored": True, "existing": True}
+
+            with patch("tapo_relay.probe_size", return_value=(1920, 1080)):
+                result = upload_pending("https://api", "secret", path, post=fake_post)
+
+            self.assertTrue(result["existing"])
+            self.assertFalse(path.exists())
+            self.assertEqual(captured["url"], "https://api")
+            self.assertEqual(captured["timeout"], SNAPSHOT_TIMEOUT_SECONDS)
+            payload = captured["payload"]
+            self.assertEqual(payload["id"], "snap-1795284558")
+            self.assertEqual(payload["capturedAt"], "2026-11-21T18:09:18Z")
+            self.assertEqual(payload["width"], 1920)
+            self.assertEqual(payload["height"], 1080)
+            self.assertEqual(payload["signature"], sign("secret", canonical(payload)))
+
+    def test_upload_with_retry_succeeds_after_timeouts(self):
+        calls = []
+        sleeps = []
+
+        def fake_upload(api_url, secret, path):
+            calls.append(path)
+            if len(calls) < 3:
+                raise RuntimeError("The read operation timed out")
+            return {"ok": True}
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pending-1.jpg"
+            path.write_bytes(b"jpg")
+            result = upload_with_retry(
+                "https://api", "secret", path,
+                sleep_func=sleeps.append, upload_func=fake_upload,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(calls, [path, path, path])
+        self.assertEqual(sleeps, [5, 15])
+
+    def test_upload_with_retry_logs_final_failure(self):
+        calls = []
+        sleeps = []
+        buffer = io.StringIO()
+
+        def fake_upload(api_url, secret, path):
+            calls.append(path)
+            raise RuntimeError("The read operation timed out")
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pending-1.jpg"
+            path.write_bytes(b"jpg")
+            with redirect_stdout(buffer):
+                result = upload_with_retry(
+                    "https://api", "secret", path,
+                    sleep_func=sleeps.append, upload_func=fake_upload,
+                )
+
+        self.assertFalse(result)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(sleeps, [5, 15, 30])
+        self.assertIn("relay error:", buffer.getvalue())
+        self.assertIn("timed out", buffer.getvalue())
+
+    def test_drain_pending_uploads_recent_and_moves_expired(self):
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue"
+            queue.mkdir()
+            now = 1_800_000_000
+            recent = queue / f"pending-{now - 60}.jpg"
+            expired = queue / f"pending-{now - PENDING_MAX_AGE_SECONDS - 120}.jpg"
+            recent.write_bytes(b"recent")
+            expired.write_bytes(b"expired")
+            uploaded = []
+
+            def fake_upload(api_url, secret, path):
+                uploaded.append(path.name)
+                path.unlink()
+                return {"ok": True}
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                result = drain_pending(
+                    "https://api", "secret", queue, now=now, upload_func=fake_upload,
+                )
+
+            self.assertEqual(uploaded, [recent.name])
+            self.assertFalse(recent.exists())
+            self.assertFalse(expired.exists())
+            self.assertTrue((Path(tmp) / "expired" / expired.name).exists())
+            self.assertEqual(result, {"uploaded": 1, "expired": 1, "failed": 0})
+            self.assertIn("pending expired:", buffer.getvalue())
+
+    def test_drain_pending_keeps_recent_failure(self):
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue"
+            queue.mkdir()
+            now = 1_800_000_000
+            recent = queue / f"pending-{now - 30}.jpg"
+            recent.write_bytes(b"recent")
+            buffer = io.StringIO()
+
+            def fake_upload(api_url, secret, path):
+                raise RuntimeError("The read operation timed out")
+
+            with redirect_stdout(buffer):
+                result = drain_pending(
+                    "https://api", "secret", queue, now=now, upload_func=fake_upload,
+                )
+
+            self.assertTrue(recent.exists())
+            self.assertFalse((Path(tmp) / "expired" / recent.name).exists())
+            self.assertEqual(result, {"uploaded": 0, "expired": 0, "failed": 1})
+            self.assertIn("pending retry failed:", buffer.getvalue())
+
+    def test_pending_epoch_parses_only_valid_names(self):
+        self.assertEqual(pending_epoch(Path("pending-123.jpg")), 123)
+        self.assertIsNone(pending_epoch(Path("pending-abc.jpg")))
+        self.assertIsNone(pending_epoch(Path("other-123.jpg")))
 
 
 if __name__ == "__main__":

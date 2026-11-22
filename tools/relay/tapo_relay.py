@@ -46,6 +46,12 @@ RELAY_CONFIG_LIMITS = {
     "relay.cleanupBatch": (10, 1000),
 }
 
+PENDING_PREFIX = "pending-"
+PENDING_SUFFIX = ".jpg"
+PENDING_MAX_AGE_SECONDS = 9 * 60
+SNAPSHOT_TIMEOUT_SECONDS = 60
+RETRY_DELAYS = (5, 15, 30)
+
 
 def build_relay_config_payload(at, secret):
     return {
@@ -233,6 +239,81 @@ def prune_queue(queue_dir, keep):
         path.unlink(missing_ok=True)
 
 
+def pending_epoch(path):
+    match = re.fullmatch(r"pending-(\d+)", Path(path).stem)
+    return int(match.group(1)) if match else None
+
+
+def captured_at_for_epoch(epoch):
+    return datetime.fromtimestamp(int(epoch), timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def upload_pending(api_url, secret, path, timeout=SNAPSHOT_TIMEOUT_SECONDS, post=post_json):
+    path = Path(path)
+    epoch = pending_epoch(path)
+    if epoch is None:
+        raise ValueError("invalid pending filename")
+    width, height = probe_size(path)
+    payload = build_payload(path.read_bytes(), captured_at_for_epoch(epoch), width, height, secret)
+    result = post(api_url, payload, timeout=timeout)
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "snapshot rejected")
+    path.unlink(missing_ok=True)
+    return result
+
+
+def upload_with_retry(api_url, secret, path, attempts=len(RETRY_DELAYS) + 1, delays=RETRY_DELAYS, sleep_func=time.sleep, upload_func=upload_pending):
+    last_error = None
+    for index in range(attempts):
+        try:
+            upload_func(api_url, secret, path)
+            return True
+        except Exception as error:
+            last_error = error
+            if index < attempts - 1:
+                sleep_func(delays[min(index, len(delays) - 1)])
+    print("relay error:", last_error, flush=True)
+    return False
+
+
+def move_pending_to_expired(path):
+    path = Path(path)
+    expired_dir = path.parent.parent / "expired"
+    expired_dir.mkdir(parents=True, exist_ok=True)
+    target = expired_dir / path.name
+    path.replace(target)
+    print("pending expired:", path.name, flush=True)
+    return target
+
+
+def drain_pending(api_url, secret, queue_dir, now=None, max_age=PENDING_MAX_AGE_SECONDS, upload_func=upload_pending):
+    now = time.time() if now is None else now
+    paths = sorted(
+        Path(queue_dir).glob("pending-*.jpg"),
+        key=lambda path: pending_epoch(path) or 0,
+    )
+    uploaded = 0
+    expired = 0
+    failed = 0
+    for path in paths:
+        epoch = pending_epoch(path)
+        if epoch is None or now - epoch > max_age:
+            try:
+                move_pending_to_expired(path)
+                expired += 1
+            except OSError as error:
+                failed += 1
+                print("pending expire error:", error, flush=True)
+            continue
+        try:
+            upload_func(api_url, secret, path)
+            uploaded += 1
+        except Exception as error:
+            failed += 1
+            print("pending retry failed:", error, flush=True)
+    return {"uploaded": uploaded, "expired": expired, "failed": failed}
+
+
 def main():
     env = {
         "RTSP_URL": os.environ["RTSP_URL"],
@@ -260,6 +341,7 @@ def main():
     last_cleanup = 0.0
     last_config_error = None
     last_crop_error = None
+    last_pending_error = None
     while True:
         if env["API_URL"]:
             at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -275,26 +357,30 @@ def main():
                 if message != last_config_error:
                     print("config error:", error, flush=True)
                     last_config_error = message
+        if env["API_URL"]:
+            try:
+                drain_pending(env["API_URL"], env["RELAY_HMAC_SECRET"], queue)
+                last_pending_error = None
+            except Exception as error:
+                message = str(error)
+                if message != last_pending_error:
+                    print("pending error:", error, flush=True)
+                    last_pending_error = message
         if config["relay.enabled"]:
             crop, full_mode = parse_crop(config["relay.crop"])
             if not crop and not full_mode:
                 last_crop_error = log_once(last_crop_error, CROP_REQUIRED_MESSAGE)
             else:
                 last_crop_error = None
-                captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-                image_path = queue / ("pending-" + str(int(time.time())) + ".jpg")
+                captured_epoch = int(time.time())
+                image_path = queue / (PENDING_PREFIX + str(captured_epoch) + PENDING_SUFFIX)
                 try:
                     capture_frame(
                         env["RTSP_URL"], image_path, config["relay.imageWidth"], config["relay.jpegQuality"],
                         crop, full_mode, config["relay.captureTimeoutSeconds"],
                     )
-                    width, height = probe_size(image_path)
                     if env["API_URL"]:
-                        payload = build_payload(image_path.read_bytes(), captured_at, width, height, env["RELAY_HMAC_SECRET"])
-                        result = post_json(env["API_URL"], payload)
-                        if not result.get("ok"):
-                            raise RuntimeError(result.get("error") or "snapshot rejected")
-                        image_path.unlink(missing_ok=True)
+                        upload_with_retry(env["API_URL"], env["RELAY_HMAC_SECRET"], image_path)
                 except Exception as error:
                     print("relay error:", error, flush=True)
         if env["API_URL"]:
