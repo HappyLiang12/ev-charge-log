@@ -16,6 +16,7 @@ import {
   syncTesla,
   refreshRates,
   assignSession,
+  deleteRecord,
   ignoreSession,
   reassignSession,
   saveBill,
@@ -655,63 +656,78 @@ export function initOwner({ apiUrl }) {
     kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
     head.append(when, kwh);
 
+    // Manual rows have no Tesla session to claim; only removing them makes sense.
+    const manual = !record.teslaKey;
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
     const end = sessionEndIso(record);
     const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
-    meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
-
-    const select = document.createElement('select');
-    select.setAttribute('aria-label', '分配車輛');
-    fillCarOptions(select, { placeholder: '選擇車輛' });
-    select.disabled = state.busy;
-
-    let suggestion = null;
-    if (record.suggestedCar && record.suggestionStatus === 'matched') {
-      suggestion = document.createElement('div');
-      suggestion.className = 'suggestion-row';
-      const label = document.createElement('span');
-      label.className = 'suggestion-label';
-      label.textContent = suggestionLabel(record);
-      const adopt = document.createElement('button');
-      adopt.type = 'button';
-      adopt.className = 'owner-suggestion';
-      adopt.textContent = '採用建議';
-      adopt.setAttribute('aria-label', `採用建議（${recordWhen(record)}）`);
-      adopt.disabled = state.busy
-        || !state.cars.some((car) => car.active && car.id === record.suggestedCar);
-      adopt.addEventListener('click', () => { select.value = record.suggestedCar; });
-      suggestion.append(label, adopt);
-    } else if (record.evidenceUrl) {
-      suggestion = document.createElement('span');
-      suggestion.className = 'suggestion-label';
-      suggestion.textContent = record.suggestionStatus === 'error'
-        || record.suggestionStatus === 'rate_limited'
-        ? '辨識失敗，請人手選擇'
-        : '未能辨識，請人手選擇';
-    }
+    meta.textContent = manual
+      ? `開始 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} · 手動開始，未能配對充電樁`
+      : `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
 
     const actions = document.createElement('div');
     actions.className = 'owner-row-actions';
-    const assign = document.createElement('button');
-    assign.type = 'button';
-    assign.textContent = '分配';
-    assign.disabled = state.busy;
-    assign.addEventListener('click', () => { void onAssign(record, select); });
+    if (!manual) {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', '分配車輛');
+      fillCarOptions(select, { placeholder: '選擇車輛' });
+      select.disabled = state.busy;
+
+      let suggestion = null;
+      if (record.suggestedCar && record.suggestionStatus === 'matched') {
+        suggestion = document.createElement('div');
+        suggestion.className = 'suggestion-row';
+        const label = document.createElement('span');
+        label.className = 'suggestion-label';
+        label.textContent = suggestionLabel(record);
+        const adopt = document.createElement('button');
+        adopt.type = 'button';
+        adopt.className = 'owner-suggestion';
+        adopt.textContent = '採用建議';
+        adopt.setAttribute('aria-label', `採用建議（${recordWhen(record)}）`);
+        adopt.disabled = state.busy
+          || !state.cars.some((car) => car.active && car.id === record.suggestedCar);
+        adopt.addEventListener('click', () => { select.value = record.suggestedCar; });
+        suggestion.append(label, adopt);
+      } else if (record.evidenceUrl) {
+        suggestion = document.createElement('span');
+        suggestion.className = 'suggestion-label';
+        suggestion.textContent = record.suggestionStatus === 'error'
+          || record.suggestionStatus === 'rate_limited'
+          ? '辨識失敗，請人手選擇'
+          : '未能辨識，請人手選擇';
+      }
+
+      const assign = document.createElement('button');
+      assign.type = 'button';
+      assign.textContent = '分配';
+      assign.disabled = state.busy;
+      assign.addEventListener('click', () => { void onAssign(record, select); });
+      actions.append(select, assign);
+      li.append(head, meta);
+      if (suggestion) li.append(suggestion);
+    } else {
+      li.append(head, meta);
+      const note = document.createElement('span');
+      note.className = 'suggestion-label';
+      note.textContent = '手動開始紀錄，未能配對充電樁；可忽略刪除。';
+      li.append(note);
+    }
+
+    const evidence = makeEvidenceLink(record);
+    if (evidence) li.append(evidence);
     const ignore = document.createElement('button');
     ignore.type = 'button';
     ignore.className = 'owner-ignore';
-    ignore.textContent = '非家中車輛（忽略）';
-    ignore.setAttribute('aria-label', `非家中車輛（忽略，${recordWhen(record)}）`);
+    ignore.textContent = manual ? '刪除此紀錄' : '非家中車輛（忽略）';
+    ignore.setAttribute('aria-label', manual
+      ? `刪除 ${recordWhen(record)} 的手動開始紀錄`
+      : `非家中車輛（忽略，${recordWhen(record)}）`);
     ignore.disabled = state.busy;
     ignore.addEventListener('click', () => { void onIgnore(record); });
-    actions.append(select, assign, ignore);
-
-    li.append(head, meta);
-    if (suggestion) li.append(suggestion);
-    const evidence = makeEvidenceLink(record);
-    if (evidence) li.append(evidence);
+    actions.append(ignore);
     li.append(actions);
     return li;
   }
@@ -765,7 +781,17 @@ export function initOwner({ apiUrl }) {
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     meta.textContent = '手動開始紀錄，等待充電樁紀錄配對。';
-    li.append(head, meta);
+    const actions = document.createElement('div');
+    actions.className = 'owner-row-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'owner-ignore';
+    cancel.textContent = '取消開始';
+    cancel.setAttribute('aria-label', `取消 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} 的手動開始紀錄`);
+    cancel.disabled = state.busy;
+    cancel.addEventListener('click', () => { void onCancelPending(record); });
+    actions.append(cancel);
+    li.append(head, meta, actions);
     return li;
   }
 
@@ -984,6 +1010,24 @@ export function initOwner({ apiUrl }) {
     } catch (error) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '忽略失敗，請檢查網絡後重試。'));
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  async function onCancelPending(record) {
+    if (!apiUrl || state.busy) return;
+    if (!window.confirm('取消呢次手動開始？紀錄會刪除。')) return;
+    state.busy = true;
+    render();
+    try {
+      await deleteRecord(apiUrl, record.id, { car: record.car });
+      showToast(els.toast, '已取消手動開始。');
+      await refreshOrWarn('已取消，但未能載入最新資料，請重新載入。');
+    } catch (error) {
+      state.offline = true;
+      showToast(els.toast, friendlyError(error, '取消失敗，請檢查網絡後重試。'));
     } finally {
       state.busy = false;
       render();
