@@ -235,6 +235,46 @@ test('family sees a suggestion hint and no evidence', { timeout: 20000 }, async 
   }
 });
 
+test('family UI: charging without a manual start shows the live panel and blocks start', { timeout: 20000 }, async () => {
+  const harness = await createHarness({ livePowerW: 6500 });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => ui.document.getElementById('familyLivePanel').hidden === false, 12000);
+    assert.match(ui.document.getElementById('familyLiveState').textContent, /充電中/);
+    assert.match(ui.document.getElementById('familyLivePower').textContent, /6\.5 kW/);
+    assert.equal(ui.document.getElementById('familyLiveKwh').textContent, '—');
+    assert.match(ui.document.getElementById('familyLiveHint').textContent, /完成後會自動配對/);
+    const start = ui.document.getElementById('startBtn');
+    assert.equal(start.disabled, true);
+    assert.match(start.textContent, /充電樁充電中/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
+test('family UI: unassigned list only shows the last 30 days', { timeout: 20000 }, async () => {
+  const oldIso = new Date(Date.now() - 60 * 86400000).toISOString();
+  const recentIso = new Date(Date.now() - 2 * 86400000).toISOString();
+  const sheets = defaultSheets({
+    records: [
+      unassignedRecord('u-old', oldIso, 'din:old'),
+      unassignedRecord('u-recent', recentIso, 'din:recent'),
+    ],
+  });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?car=model3' });
+  try {
+    await waitFor(() => /11 月/.test(ui.document.getElementById('familyUnassigned').textContent), 12000);
+    const text = ui.document.getElementById('familyUnassigned').textContent;
+    assert.doesNotMatch(text, /9 月/);
+    assert.doesNotMatch(text, /u-old/);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('owner sees the latest snapshot card with capture time and mode', { timeout: 20000 }, async () => {
   const snapshotsHeader = [
     'id', 'capturedAt', 'driveFileId', 'driveUrl', 'width', 'height',
@@ -652,6 +692,7 @@ test('owner UI: one pending list includes manual starts and unassigned charger s
     assert.equal(ui.document.querySelectorAll('#ownerPending select').length, 1);
     await waitFor(() => ui.document.getElementById('ownerLiveState').textContent === '充電中');
     assert.equal(ui.document.getElementById('ownerLivePower').textContent, '7.2 kW');
+    await waitFor(() => Number(ui.document.getElementById('ownerLiveKwh').textContent) > 0, 12000);
     const firstKwh = Number(ui.document.getElementById('ownerLiveKwh').textContent);
     assert.ok(firstKwh > 0);
     await new Promise((resolve) => setTimeout(resolve, 1100));

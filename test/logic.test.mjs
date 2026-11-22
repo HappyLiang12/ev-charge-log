@@ -27,6 +27,7 @@ import {
   monthsWithRecords,
   defaultMonth,
   filterByMonth,
+  recentRecords,
   billPeriodValue,
   filterByPeriod,
   selectRate,
@@ -423,4 +424,15 @@ test('normalizeRecord keeps evidence and suggestion fields', () => {
   assert.equal(record.identifiedAt, '2026-11-15T04:01:00.000Z');
   assert.equal(record.suggestionEngine, 'vlm');
   assert.equal(record.suggestionSnapshotId, 'snap-1');
+});
+
+test('recentRecords keeps only records inside the day window', () => {
+  const now = Date.parse('2026-11-22T00:00:00.000Z');
+  const records = [
+    { id: 'old', startAt: '2026-10-01T00:00:00.000Z' },
+    { id: 'edge', startAt: '2026-10-23T00:00:00.000Z' },
+    { id: 'new', startAt: '2026-11-20T00:00:00.000Z' },
+    { id: 'bad', startAt: '' },
+  ];
+  assert.deepEqual(recentRecords(records, 30, now).map((record) => record.id), ['edge', 'new']);
 });

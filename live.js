@@ -3,7 +3,6 @@ import { costForKwh } from './logic.js';
 
 export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollMs = 300000 }) {
   let stopped = false;
-  let active = false;
   let lastSampleAt = null;
   let lastPowerW = 0;
   let accumulatedKwh = 0;
@@ -18,8 +17,21 @@ export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollM
     sampledAt: '',
   };
 
+  function neutralSnapshot() {
+    return {
+      active: false,
+      charging: live.charging,
+      powerW: live.powerW,
+      available: live.available,
+      state: live.state,
+      sampledAt: live.sampledAt,
+      kWh: null,
+      cost: null,
+    };
+  }
+
   function snapshot(now = Date.now()) {
-    if (!active) return null;
+    if (!startedFor) return live.charging ? neutralSnapshot() : null;
     const hours = lastSampleAt === null ? 0 : Math.max(0, now - lastSampleAt) / 3600000;
     const kwh = accumulatedKwh + lastPowerW * hours / 1000;
     return {
@@ -35,44 +47,40 @@ export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollM
   }
 
   function emit(now = Date.now()) {
-    const value = snapshot(now);
-    if (value) onChange(value);
+    onChange(snapshot(now));
+  }
+
+  function resetEstimate(start) {
+    startedFor = start;
+    lastSampleAt = null;
+    lastPowerW = 0;
+    accumulatedKwh = 0;
   }
 
   async function poll() {
     if (stopped || polling) return;
-    const start = getStartAt();
-    if (!start) {
-      if (active) {
-        active = false;
-        onChange(null);
-      }
-      return;
-    }
-    if (!active) {
-      active = true;
-      startedFor = start;
-      lastSampleAt = null;
-      lastPowerW = 0;
-      accumulatedKwh = 0;
-    }
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     polling = true;
     try {
       const next = await fetchChargerStatus(apiUrl);
       const now = Date.now();
-      if (lastSampleAt === null) {
-        const elapsedHours = Math.max(0, now - Date.parse(start)) / 3600000;
-        accumulatedKwh = next.energyWh !== null
-          ? next.energyWh / 1000
-          : next.powerW * elapsedHours / 1000;
-      } else {
-        const hours = Math.max(0, now - lastSampleAt) / 3600000;
-        accumulatedKwh += (lastPowerW + next.powerW) / 2 * hours / 1000;
-        if (next.energyWh !== null) accumulatedKwh = next.energyWh / 1000;
+      const start = getStartAt();
+      if (!start) resetEstimate(null);
+      else if (start !== startedFor) resetEstimate(start);
+      if (startedFor) {
+        if (lastSampleAt === null) {
+          const elapsedHours = Math.max(0, now - Date.parse(startedFor)) / 3600000;
+          accumulatedKwh = next.energyWh !== null
+            ? next.energyWh / 1000
+            : next.powerW * elapsedHours / 1000;
+        } else {
+          const hours = Math.max(0, now - lastSampleAt) / 3600000;
+          accumulatedKwh += (lastPowerW + next.powerW) / 2 * hours / 1000;
+          if (next.energyWh !== null) accumulatedKwh = next.energyWh / 1000;
+        }
+        lastSampleAt = now;
+        lastPowerW = next.powerW;
       }
-      lastSampleAt = now;
-      lastPowerW = next.powerW;
       live = next;
     } catch {
       live = { ...live, available: false };
@@ -87,21 +95,14 @@ export function startChargerLive({ apiUrl, getStartAt, getRates, onChange, pollM
     if (stopped) return;
     const start = getStartAt();
     if (!start) {
-      if (active) {
-        active = false;
-        onChange(null);
-      }
+      if (startedFor) resetEstimate(null);
+      emit();
       return;
     }
-    if (!active) {
+    if (start !== startedFor) {
+      resetEstimate(start);
       void poll();
       return;
-    }
-    if (startedFor !== start) {
-      startedFor = start;
-      lastSampleAt = null;
-      lastPowerW = 0;
-      accumulatedKwh = 0;
     }
     emit();
   }, 1000);
