@@ -117,10 +117,14 @@ Secrets live only in Apps Script Script Properties; non-secret tunables live in 
 - Pending manual starts (`source=manual`, empty kWh, no Tesla key) expire after `manual.pendingMaxAgeHours` (default 24, range 6–72). They are pruned when that car's next start is recorded and, after the session merge phase, on every sync; a session inside the pending window still fills the row before pruning.
 - The owner view has a `取消開始` button on pending rows. An unassigned leftover manual row can also be deleted or ignored; neither path writes Feedback.
 
+### Scheduled sync
+
+`installScheduledSync()` installs one time-driven trigger that runs `scheduledSync` every 30 minutes; `removeScheduledSync()` removes it. The handler runs the same sync and identify path as the owner's `更新充電樁` button, so a completed session imports and auto-assigns without a manual press. Each run costs one Tesla charging-history request (about 1,440/month, inside the $10 monthly discount for normal use); plate/VLM calls only happen for new sessions, and provider errors are retried at most every six hours. The manual button keeps working. Installing twice replaces the existing trigger instead of adding a second one.
+
 ### Retention and cleanup
 
 - `snapshot.retentionDays` defaults to 30 (range 1–365) and controls both the Drive file and its `Snapshots` row.
-- There is no ScriptApp trigger. The Pi sends a signed `cleanup` request every `relay.cleanupIntervalSeconds` (default hourly) with `relay.cleanupBatch` (default 500). Apps Script trashes the oldest expired Drive files, then deletes the `Snapshots` rows whose file was trashed or is already missing; the response reports `deleted` and `failed` counts.
+- Cleanup has no ScriptApp trigger: the Pi sends a signed `cleanup` request every `relay.cleanupIntervalSeconds` (default hourly) with `relay.cleanupBatch` (default 500). Apps Script trashes the oldest expired Drive files, then deletes the `Snapshots` rows whose file was trashed or is already missing; the response reports `deleted` and `failed` counts.
 - A Drive trash failure keeps that `Snapshots` row so the next cleanup run retries it; failures are logged with `console.warn` in the Apps Script execution log. After every successful cleanup response the Pi logs `cleanup deleted: <n> failed: <m>`, and when `failed > 0` it also prints one warning line, so a stalled privacy retention is visible on the Pi rather than only in Apps Script. A partial failure is not a config error and does not stop later cleanup cycles. A failed cleanup request (network or rejected) is retried on the next capture cycle, because the Pi only advances `last_cleanup` on a successful response. The operation is idempotent. Log and Feedback rows are never deleted by retention. Old Log `evidenceUrl` values become stale after their snapshot is removed; this is accepted.
 
 ## Data model

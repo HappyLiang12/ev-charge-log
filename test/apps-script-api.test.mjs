@@ -249,6 +249,35 @@ test('charger status returns live power and charging state', () => {
   assert.equal(waits, 0);
 });
 
+test('scheduled sync installs one idempotent trigger and can be removed', () => {
+  const env = setup();
+  const first = plain(env.call('installScheduledSync'));
+  assert.equal(first.ok, true);
+  assert.equal(first.minutes, 30);
+  const second = plain(env.call('installScheduledSync'));
+  assert.equal(second.replaced, 1);
+  const triggers = env.context.ScriptApp._triggers;
+  assert.equal(triggers.length, 1);
+  assert.equal(triggers[0].getHandlerFunction(), 'scheduledSync');
+  assert.equal(triggers[0].minutes, 30);
+  const removed = plain(env.call('removeScheduledSync'));
+  assert.equal(removed.removed, 1);
+  assert.equal(env.context.ScriptApp._triggers.length, 0);
+});
+
+test('scheduled sync runs the normal sync path', () => {
+  const env = setup();
+  let calls = 0;
+  env.context.syncAction_ = (data) => {
+    calls += 1;
+    return { matched: 0, scheduledArgs: Object.keys(data).length };
+  };
+  const result = plain(env.call('scheduledSync'));
+  assert.equal(calls, 1);
+  assert.equal(result.matched, 0);
+  assert.equal(result.scheduledArgs, 0);
+});
+
 test('charger status is cached across concurrent polls', () => {
   let statusCalls = 0;
   const env = setup({
