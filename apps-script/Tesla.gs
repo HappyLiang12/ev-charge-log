@@ -285,12 +285,23 @@ function normalizeChargerLive_(payload) {
 }
 
 function chargerLiveStatus_() {
+  var cache = typeof CacheService !== 'undefined' ? CacheService.getScriptCache() : null;
+  var cached = cache ? cache.get('chargerLiveStatus') : null;
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (error) {
+      // fall through to a fresh read
+    }
+  }
   var siteId = discoverSiteId_();
   var payload = teslaGet_(
     '/api/1/energy_sites/' + encodeURIComponent(siteId) + '/charger_live_status',
     {},
   );
-  return normalizeChargerLive_(payload);
+  var status = normalizeChargerLive_(payload);
+  if (cache) cache.put('chargerLiveStatus', JSON.stringify(status), 240);
+  return status;
 }
 
 function withScriptLock_(fn) {
