@@ -413,6 +413,28 @@ test('owner UI: ignoring an unassigned session deletes it and records guest feed
   }
 });
 
+test('owner UI: cancelling a manual pending start deletes the record', { timeout: 20000 }, async () => {
+  const startAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const sheets = defaultSheets({
+    records: [{ id: 'manual-pending', car: 'model3', startAt, kWh: null, source: 'manual' }],
+  });
+  const harness = await createHarness({ sheets });
+  const ui = await loadUi({ apiUrl: harness.apiUrl, query: '?owner=1', confirm: () => true });
+  try {
+    await waitFor(() => ui.document.querySelector('#ownerPending .owner-ignore'), 12000);
+    const cancel = ui.document.querySelector('#ownerPending .owner-ignore');
+    assert.match(cancel.textContent, /取消開始/);
+    assert.match(cancel.getAttribute('aria-label'), /取消.*手動開始紀錄/);
+    cancel.click();
+    await waitFor(() => ui.document.querySelectorAll('#ownerPending > li').length === 0, 12000);
+    assert.match(ui.document.getElementById('ownerToast').textContent, /已取消手動開始/);
+    assert.equal(harness.env.call('readLog_').length, 0);
+  } finally {
+    ui.close();
+    await harness.close();
+  }
+});
+
 test('owner UI: cancelling the ignore confirmation leaves the session untouched', { timeout: 20000 }, async () => {
   const record = {
     ...unassignedRecord('u-ignore-cancel', '2026-11-21T04:00:00.000Z', 'din:cancel'),

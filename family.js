@@ -212,12 +212,23 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     kwh.textContent = record.kWh === null ? '—' : `${record.kWh.toFixed(2)} kWh`;
     head.append(when, kwh);
 
+    const manual = !record.teslaKey;
     const meta = document.createElement('div');
     meta.className = 'owner-row-meta';
     const duration = record.durationSec ? `${Math.round(record.durationSec / 60)} 分鐘` : '—';
     const end = sessionEndIso(record);
     const endLabel = end ? `${formatHkDate(end)} ${formatHkTime12(end)}` : '—';
-    meta.textContent = `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+    meta.textContent = manual
+      ? `開始 ${formatHkDate(record.startAt)} ${formatHkTime12(record.startAt)} · 手動開始，未能配對充電樁`
+      : `結束 ${endLabel} · 充電樁紀錄 · ${duration} · 非高峰 ${(record.offPeakKWh || 0).toFixed(2)} / 高峰 ${(record.peakKWh || 0).toFixed(2)} kWh`;
+
+    if (manual) {
+      const note = document.createElement('span');
+      note.className = 'suggestion-label';
+      note.textContent = '手動開始紀錄，未能配對充電樁；如需更正請聯絡車主。';
+      li.append(head, meta, note);
+      return li;
+    }
 
     let hint = null;
     if (record.suggestedCar === state.car.id && record.suggestionStatus === 'matched') {

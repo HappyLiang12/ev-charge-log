@@ -363,6 +363,7 @@ test('syncTesla_ fills the nearest manual row and advances SYNC_CURSOR to the fe
     reconciled: 0,
     skippedExisting: 0,
     pendingManual: 0,
+    pendingPruned: 0,
   });
   const records = plain(env.call('readLog_'));
   assert.equal(records.length, 1);
@@ -441,7 +442,11 @@ test('syncTesla_ keeps the unassigned row when the manual reconcile write fails'
     teslaKey: SESSION_KEY,
     source: 'tesla',
   });
-  const manual = logRow({ id: 'm1', startAt: MANUAL_START, car: 'carB' });
+  const manual = logRow({
+    id: 'm1',
+    startAt: new Date(Date.now() - 3600 * 1000).toISOString(),
+    car: 'carB',
+  });
   const env = createAppsScriptEnv({
     props: cachedTeslaProps({ SYNC_FROM: '2026-11-01T00:00:00.000Z' }),
     sheets: {

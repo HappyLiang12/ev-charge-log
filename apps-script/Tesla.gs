@@ -486,6 +486,10 @@ function syncApply_(sessions, nowIso) {
       unassigned += 1;
     }
 
+    // Runs after the merge loop: a session that matched still fills its
+    // pending start; anything older than the configured age is dropped.
+    var pendingPruned = prunePendingStarts_(Date.parse(nowIso), '');
+
     // A concurrent, later-started sync must not move the cursor backwards.
     var previousCursor = props.getProperty('SYNC_CURSOR');
     if (!previousCursor || !validIso_(previousCursor) || Date.parse(nowIso) > Date.parse(previousCursor)) {
@@ -499,6 +503,7 @@ function syncApply_(sessions, nowIso) {
       reconciled: reconciled,
       skippedExisting: skippedExisting,
       pendingManual: manualRows.length,
+      pendingPruned: pendingPruned,
     };
   });
 }
