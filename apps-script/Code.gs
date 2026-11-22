@@ -98,6 +98,45 @@ function snapshotFolder_() {
   return DriveApp.createFolder('EV Charge Snapshots');
 }
 
+function referenceFolder_() {
+  var configured = PropertiesService.getScriptProperties().getProperty('REFERENCE_FOLDER_ID');
+  if (configured) return DriveApp.getFolderById(configured);
+  var folders = DriveApp.getFoldersByName('EV Charge References');
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder('EV Charge References');
+}
+
+function addCarPhotoFromFile_(carId, fileId, lighting) {
+  var car = findCar_(carId);
+  if (!car) throw new Error('Unknown car: ' + carId);
+  var file = DriveApp.getFileById(String(fileId || ''));
+  if (!file) throw new Error('Unknown file: ' + fileId);
+  var level = normalizeCarPhotoLighting_(lighting);
+  var copy = file.makeCopy('ref-' + car.id + '-' + level + '-' + Date.now(), referenceFolder_());
+  appendCarPhoto_({
+    carId: car.id,
+    fileId: copy.getId(),
+    lighting: level,
+    active: 'TRUE',
+    createdAt: new Date().toISOString(),
+  });
+  return { carId: car.id, fileId: copy.getId(), lighting: level };
+}
+
+function addCarPhotoFromSnapshot_(carId, snapshotId, lighting) {
+  var snapshots = readSnapshots_();
+  var snapshot = null;
+  for (var i = 0; i < snapshots.length; i += 1) {
+    if (snapshots[i].id === String(snapshotId)) {
+      snapshot = snapshots[i];
+      break;
+    }
+  }
+  if (!snapshot) throw new Error('Unknown snapshot: ' + snapshotId);
+  // The copy lives in the reference folder so snapshot retention cannot trash it.
+  return addCarPhotoFromFile_(carId, snapshot.driveFileId, lighting);
+}
+
 function snapshotAction_(data) {
   var secret = PropertiesService.getScriptProperties().getProperty('RELAY_HMAC_SECRET');
   if (!secret) throw new Error('Missing RELAY_HMAC_SECRET');
@@ -447,6 +486,9 @@ function recordCorrectionFeedback_(target, chosenCar) {
 
 function recordFeedbackRow_(target, chosenCar, actor) {
   if (!target) return;
+  // Auto-assignment is not a human correction; counting it would bias the
+  // precision gate that learns from owner/family choices.
+  if (actor === 'auto') return;
   appendFeedback_({
     id: 'fb-' + target.id + '-' + Date.now(),
     recordId: target.id,

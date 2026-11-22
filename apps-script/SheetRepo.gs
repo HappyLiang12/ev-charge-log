@@ -15,6 +15,7 @@ var FEEDBACK_COLUMNS = [
 ];
 var IGNORED_COLUMNS = ['teslaKey', 'createdAt', 'actor'];
 var CARS_COLUMNS = ['id', 'name', 'active', 'createdAt', 'peakFactor', 'description'];
+var CAR_PHOTOS_COLUMNS = ['carId', 'fileId', 'lighting', 'active', 'createdAt'];
 var RATES_COLUMNS = [
   'month', 'basicOffPeak', 'basicPeak', 'fuelAdjustment', 'rebate',
   'peakStart', 'peakEnd', 'sourceUrl', 'fetchedAt', 'manualOverride',
@@ -238,6 +239,35 @@ function readCars_() {
     if (car) cars.push(car);
   }
   return cars;
+}
+
+function normalizeCarPhotoLighting_(value) {
+  var text = String(value || '').trim().toLowerCase();
+  return text === 'day' || text === 'night' ? text : 'any';
+}
+
+function readCarPhotos_() {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'CarPhotos', CAR_PHOTOS_COLUMNS);
+  return readObjects_(sheet, CAR_PHOTOS_COLUMNS).map(function (row) {
+    return {
+      carId: String(row.carId || '').trim(),
+      fileId: String(row.fileId || '').trim(),
+      lighting: normalizeCarPhotoLighting_(row.lighting),
+      active: String(row.active).toUpperCase() !== 'FALSE' && row.active !== false,
+      createdAt: String(row.createdAt || '').trim(),
+    };
+  }).filter(function (photo) {
+    return photo.active && photo.fileId && validCarId_(photo.carId) && photo.carId !== 'unassigned';
+  });
+}
+
+function appendCarPhoto_(photo) {
+  var sheet = sheetNamed_(openSpreadsheet_(), 'CarPhotos', CAR_PHOTOS_COLUMNS);
+  var row = headerRow_(sheet).map(function (column) {
+    var value = photo[column];
+    return value === undefined || value === null ? '' : value;
+  });
+  sheet.appendRow(row);
 }
 
 function updateCarPeakFactor_(carId, factor) {
