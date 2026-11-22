@@ -106,7 +106,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     errorText: byId('familyErrorText'),
     errorRetry: byId('familyErrorRetry'),
     updatedAt: byId('familyUpdatedAt'),
-    syncBtn: byId('syncBtn'),
     status: byId('familyStatus'),
     carName: byId('familyCarName'),
     kwh: byId('familyKwh'),
@@ -311,7 +310,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
 
   function render() {
     els.carName.textContent = state.car.name || carId;
-    els.syncBtn.hidden = !apiUrl;
     const status = !apiUrl
       ? '未設定'
       : state.connecting || state.syncing
@@ -330,7 +328,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     const records = mergeRecords(state.server, state.pending);
     const pendingStart = pendingStartRecord(records);
     updateStartButton(pendingStart);
-    setBusy(els.syncBtn, state.syncing || !apiUrl, '更新中…', '同步紀錄');
 
     const bills = state.bills;
     const months = monthsWithRecords(records);
@@ -434,17 +431,13 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
     render();
   }
 
-  async function runSync(auto) {
+  async function runSync() {
     if (!apiUrl || state.syncing) return;
     state.syncing = true;
     render();
     try {
-      const result = await syncTesla(apiUrl, { car: carId });
+      await syncTesla(apiUrl, { car: carId });
       await fetchData();
-      if (!auto) {
-        const matched = Number(result.matched) || 0;
-        showToast(els.toast, matched > 0 ? `已配對 ${matched} 個充電時段。` : '冇新嘅充電時段。');
-      }
     } catch (error) {
       state.offline = true;
       showToast(els.toast, friendlyError(error, '充電樁同步失敗，請檢查網絡後重試。'));
@@ -617,7 +610,7 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
       render();
       void maybeClaimLive();
       await maybeAutoStart();
-      if (!state.offline) void runSync(true);
+      if (!state.offline) void runSync();
     } catch (error) {
       state.connecting = false;
       state.loadError = friendlyError(error, '未能連接，請檢查網絡後重試。');
@@ -799,7 +792,6 @@ export function initFamily({ apiUrl, carId, autoStart = false }) {
   }
 
   els.startBtn.addEventListener('click', onStart);
-  els.syncBtn.addEventListener('click', () => { void runSync(false); });
   els.exportBtn.addEventListener('click', onExport);
   els.errorRetry.addEventListener('click', () => { if (apiUrl) void load(); });
   els.startCancel.addEventListener('click', () => {
